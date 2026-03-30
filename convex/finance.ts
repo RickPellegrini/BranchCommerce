@@ -110,6 +110,41 @@ export const addTransaction = mutation({
   },
 });
 
+export const updateTransaction = mutation({
+  args: {
+    userId: v.string(),
+    transactionId: v.id("transactions"),
+    kind: v.union(v.literal("income"), v.literal("expense")),
+    amount: v.number(),
+    date: v.string(),
+    description: v.string(),
+    categoryId: v.id("categories"),
+    origin: v.optional(v.string()),
+    expenseType: v.optional(v.union(v.literal("fixed"), v.literal("variable"))),
+  },
+  handler: async (ctx, args) => {
+    const transaction = await ctx.db.get(args.transactionId);
+    if (!transaction || transaction.userId !== args.userId) {
+      throw new Error("Lancamento nao encontrado.");
+    }
+
+    const category = await ctx.db.get(args.categoryId);
+    if (!category || category.userId !== args.userId) {
+      throw new Error("Categoria invalida para o lancamento.");
+    }
+
+    await ctx.db.patch(args.transactionId, {
+      kind: args.kind,
+      amount: args.amount,
+      date: args.date,
+      description: args.description,
+      categoryId: args.categoryId,
+      origin: args.origin,
+      expenseType: args.expenseType,
+    });
+  },
+});
+
 export const addBill = mutation({
   args: {
     userId: v.string(),
