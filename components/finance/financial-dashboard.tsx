@@ -1,843 +1,871 @@
-"use client";
+"use client"
 
-import { UserButton } from "@clerk/nextjs";
-import { BarChart3, Landmark, TrendingDown, TrendingUp, Wallet } from "lucide-react";
-import { useMemo, useState } from "react";
+import { UserButton, useUser } from "@clerk/nextjs"
+import { useMutation, useQuery } from "convex/react"
+import {
+  BarChart3,
+  Boxes,
+  CircleDollarSign,
+  FolderTree,
+  LayoutDashboard,
+  PackagePlus,
+  ReceiptText,
+  Repeat,
+  TrendingDown,
+  Wallet,
+} from "lucide-react"
+import { useEffect, useMemo, useState } from "react"
 
-import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { Input } from "@/components/ui/input";
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { api } from "@/convex/_generated/api"
+import type { Id } from "@/convex/_generated/dataModel"
+import { Badge } from "@/components/ui/badge"
+import { Button } from "@/components/ui/button"
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
+import { Input } from "@/components/ui/input"
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select"
+import { Separator } from "@/components/ui/separator"
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import {
   cashFlowByPeriod,
-  expensesByCategory,
   filterTransactions,
   formatCurrency,
   formatDate,
   monthlyEvolution,
   summarizeTransactions,
-} from "@/lib/finance/calculations";
-import { initialBills, initialCategories, initialTransactions } from "@/lib/finance/mock-data";
+} from "@/lib/finance/calculations"
 import type {
-  BillStatus,
   ExpenseType,
-  FinancialBill,
   FinancialCategory,
   FinancialPeriod,
   FinancialTransaction,
   TransactionFilters,
-} from "@/lib/finance/types";
-import { cn } from "@/lib/utils";
+} from "@/lib/finance/types"
+import { cn } from "@/lib/utils"
 
-const today = new Date().toISOString().slice(0, 10);
+type ModuleKey = "home" | "finance" | "stock"
+type FinanceSection = "overview" | "expenses" | "categories" | "reports" | "history"
+type StockSection = "overview" | "products" | "movements" | "history"
 
-function buildId(prefix: string) {
-  return `${prefix}-${Math.random().toString(36).slice(2, 10)}`;
+type StockProduct = {
+  id: string
+  name: string
+  sku: string
+  category: string
+  quantity: number
+  minStock: number
+  unitCost: number
+  sellingPrice?: number
 }
 
-function statusBadgeVariant(status: BillStatus): "success" | "warning" | "danger" {
-  if (status === "paid") return "success";
-  if (status === "pending") return "warning";
-  return "danger";
+type StockMovement = {
+  id: string
+  productId: string
+  type: "in" | "out" | "adjustment" | "sale"
+  quantity: number
+  date: string
+  unitPrice?: number
+  note?: string
+}
+
+const today = new Date().toISOString().slice(0, 10)
+
+function movementLabel(type: StockMovement["type"]) {
+  if (type === "in") return "Entrada"
+  if (type === "out") return "Saida"
+  if (type === "sale") return "Venda"
+  return "Ajuste"
 }
 
 export function FinancialDashboard() {
-  const [transactions, setTransactions] = useState<FinancialTransaction[]>(initialTransactions);
-  const [categories, setCategories] = useState<FinancialCategory[]>(initialCategories);
-  const [bills, setBills] = useState<FinancialBill[]>(initialBills);
-  const [period, setPeriod] = useState<FinancialPeriod>("month");
-  const [filters, setFilters] = useState<TransactionFilters>({ kind: "all" });
-  const [editingCategoryId, setEditingCategoryId] = useState<string | null>(null);
-  const [editingCategoryName, setEditingCategoryName] = useState("");
+  const { user, isLoaded } = useUser()
+  const userId = user?.id
 
-  const [incomeForm, setIncomeForm] = useState({
-    amount: "",
-    date: today,
-    description: "",
-    categoryId: initialCategories.find((item) => item.kind === "income")?.id ?? "",
-    origin: "Vendas",
-  });
+  const [activeModule, setActiveModule] = useState<ModuleKey>("home")
+  const [activeFinanceSection, setActiveFinanceSection] = useState<FinanceSection>("overview")
+  const [activeStockSection, setActiveStockSection] = useState<StockSection>("overview")
+  const [period, setPeriod] = useState<FinancialPeriod>("month")
+  const [filters, setFilters] = useState<TransactionFilters>({ kind: "all" })
+  const [isSetupDone, setIsSetupDone] = useState(false)
 
   const [expenseForm, setExpenseForm] = useState({
     amount: "",
     date: today,
     description: "",
-    categoryId: initialCategories.find((item) => item.kind === "expense")?.id ?? "",
+    categoryId: "" as Id<"categories"> | "",
     expenseType: "variable" as ExpenseType,
-  });
-
-  const [billForm, setBillForm] = useState({
-    title: "",
-    amount: "",
-    dueDate: today,
-    status: "pending" as BillStatus,
-    kind: "payable" as FinancialBill["kind"],
-    categoryId: initialCategories.find((item) => item.kind === "expense")?.id ?? "",
-  });
-
+  })
   const [newCategory, setNewCategory] = useState({
     name: "",
     kind: "expense" as FinancialCategory["kind"],
-  });
+  })
+  const [editingCategoryId, setEditingCategoryId] = useState<Id<"categories"> | null>(null)
+  const [editingCategoryName, setEditingCategoryName] = useState("")
 
-  const incomeCategories = useMemo(
-    () => categories.filter((category) => category.kind === "income"),
+  const [productForm, setProductForm] = useState({
+    name: "",
+    sku: "",
+    category: "",
+    quantity: "",
+    minStock: "",
+    unitCost: "",
+    sellingPrice: "",
+  })
+  const [movementForm, setMovementForm] = useState({
+    productId: "" as Id<"stockProducts"> | "",
+    type: "sale" as StockMovement["type"],
+    quantity: "",
+    date: today,
+    unitPrice: "",
+    note: "",
+  })
+
+  const financeData = useQuery(
+    api.finance.getDashboardData,
+    userId
+      ? {
+          userId,
+          startDate: filters.startDate,
+          endDate: filters.endDate,
+          kind: filters.kind,
+          categoryId: filters.categoryId ? (filters.categoryId as Id<"categories">) : undefined,
+        }
+      : "skip",
+  )
+
+  const stockData = useQuery(api.stock.getDashboardData, userId ? { userId } : "skip")
+
+  const ensureEcommerceSetup = useMutation(api.finance.ensureEcommerceSetup)
+  const addCategory = useMutation(api.finance.addCategory)
+  const updateCategory = useMutation(api.finance.updateCategory)
+  const addTransaction = useMutation(api.finance.addTransaction)
+  const addProduct = useMutation(api.stock.addProduct)
+  const addMovement = useMutation(api.stock.addMovement)
+
+  useEffect(() => {
+    if (!userId || isSetupDone) return
+    void ensureEcommerceSetup({ userId }).then(() => setIsSetupDone(true))
+  }, [ensureEcommerceSetup, isSetupDone, userId])
+
+  const categories = useMemo<FinancialCategory[]>(
+    () =>
+      (financeData?.categories ?? []).map((item) => ({
+        id: item._id,
+        name: item.name,
+        kind: item.kind,
+      })),
+    [financeData?.categories],
+  )
+
+  const transactions = useMemo<FinancialTransaction[]>(
+    () =>
+      (financeData?.transactions ?? []).map((item) => ({
+        id: item._id,
+        kind: item.kind,
+        amount: item.amount,
+        date: item.date,
+        description: item.description,
+        categoryId: item.categoryId,
+        origin: item.origin,
+        expenseType: item.expenseType,
+      })),
+    [financeData?.transactions],
+  )
+
+  const products = useMemo<StockProduct[]>(
+    () =>
+      (stockData?.products ?? []).map((item) => ({
+        id: item._id,
+        name: item.name,
+        sku: item.sku,
+        category: item.category,
+        quantity: item.quantity,
+        minStock: item.minStock,
+        unitCost: item.unitCost,
+        sellingPrice: item.sellingPrice,
+      })),
+    [stockData?.products],
+  )
+
+  const movements = useMemo<StockMovement[]>(
+    () =>
+      (stockData?.movements ?? []).map((item) => ({
+        id: item._id,
+        productId: item.productId,
+        type: item.type,
+        quantity: item.quantity,
+        date: item.date,
+        unitPrice: item.unitPrice,
+        note: item.note,
+      })),
+    [stockData?.movements],
+  )
+
+  const productMap = useMemo(() => new Map(products.map((p) => [p.id, p])), [products])
+  const expenseCategories = categories.filter((category) => category.kind === "expense")
+  const categoryMap = useMemo(
+    () => new Map(categories.map((category) => [category.id, category])),
     [categories],
-  );
-  const expenseCategories = useMemo(
-    () => categories.filter((category) => category.kind === "expense"),
-    [categories],
-  );
+  )
 
   const filteredTransactions = useMemo(
     () => filterTransactions(transactions, filters),
     [transactions, filters],
-  );
-  const summary = useMemo(
-    () => summarizeTransactions(filteredTransactions),
-    [filteredTransactions],
-  );
+  )
+  const summary = useMemo(() => summarizeTransactions(filteredTransactions), [filteredTransactions])
   const monthlyReport = useMemo(() => {
-    const currentMonth = today.slice(0, 7);
+    const currentMonth = today.slice(0, 7)
     return summarizeTransactions(
       transactions.filter((transaction) => transaction.date.startsWith(currentMonth)),
-    );
-  }, [transactions]);
-
+    )
+  }, [transactions])
   const flowData = useMemo(
     () => cashFlowByPeriod(filteredTransactions, period),
     [filteredTransactions, period],
-  );
-  const expensesReport = useMemo(
-    () => expensesByCategory(filteredTransactions, categories),
-    [filteredTransactions, categories],
-  );
-  const evolutionReport = useMemo(
-    () => monthlyEvolution(transactions),
-    [transactions],
-  );
+  )
+  const evolutionReport = useMemo(() => monthlyEvolution(transactions), [transactions])
+  const maxBarValue = Math.max(summary.income, summary.expense, 1)
 
-  const categoryMap = useMemo(
-    () => new Map(categories.map((category) => [category.id, category])),
-    [categories],
-  );
+  const salesInFilter = filteredTransactions
+    .filter((item) => item.kind === "income" && item.origin === "Venda online")
+    .reduce((total, item) => total + item.amount, 0)
+  const expensesInFilter = filteredTransactions
+    .filter((item) => item.kind === "expense")
+    .reduce((total, item) => total + item.amount, 0)
+  const operatingResult = salesInFilter - expensesInFilter
 
-  const addIncome = () => {
-    if (!incomeForm.amount || !incomeForm.description || !incomeForm.categoryId) return;
-    setTransactions((previous) => [
-      {
-        id: buildId("tx"),
-        kind: "income",
-        amount: Number(incomeForm.amount),
-        date: incomeForm.date,
-        description: incomeForm.description,
-        categoryId: incomeForm.categoryId,
-        origin: incomeForm.origin,
-      },
-      ...previous,
-    ]);
-    setIncomeForm((previous) => ({
-      ...previous,
-      amount: "",
-      description: "",
-      origin: "Vendas",
-    }));
-  };
+  const stockSummary = useMemo(() => {
+    const totalProducts = products.length
+    const totalUnits = products.reduce((total, item) => total + item.quantity, 0)
+    const lowStockCount = products.filter((item) => item.quantity <= item.minStock).length
+    const stockValue = products.reduce((total, item) => total + item.quantity * item.unitCost, 0)
+    return { totalProducts, totalUnits, lowStockCount, stockValue }
+  }, [products])
 
-  const addExpense = () => {
-    if (!expenseForm.amount || !expenseForm.description || !expenseForm.categoryId) return;
-    setTransactions((previous) => [
-      {
-        id: buildId("tx"),
-        kind: "expense",
-        amount: Number(expenseForm.amount),
-        date: expenseForm.date,
-        description: expenseForm.description,
-        categoryId: expenseForm.categoryId,
-        expenseType: expenseForm.expenseType,
-      },
-      ...previous,
-    ]);
-    setExpenseForm((previous) => ({
-      ...previous,
-      amount: "",
-      description: "",
-      expenseType: "variable",
-    }));
-  };
+  const saveExpense = async () => {
+    if (!userId || !expenseForm.amount || !expenseForm.description || !expenseForm.categoryId) return
+    await addTransaction({
+      userId,
+      kind: "expense",
+      amount: Number(expenseForm.amount),
+      date: expenseForm.date,
+      description: expenseForm.description,
+      categoryId: expenseForm.categoryId,
+      expenseType: expenseForm.expenseType,
+    })
+    setExpenseForm((previous) => ({ ...previous, amount: "", description: "" }))
+  }
 
-  const addBill = () => {
-    if (!billForm.title || !billForm.amount || !billForm.categoryId) return;
-    setBills((previous) => [
-      {
-        id: buildId("bill"),
-        title: billForm.title,
-        amount: Number(billForm.amount),
-        dueDate: billForm.dueDate,
-        status: billForm.status,
-        kind: billForm.kind,
-        categoryId: billForm.categoryId,
-      },
-      ...previous,
-    ]);
-    setBillForm((previous) => ({
-      ...previous,
-      title: "",
-      amount: "",
-      status: "pending",
-    }));
-  };
+  const saveCategory = async () => {
+    const name = newCategory.name.trim()
+    if (!userId || !name) return
+    await addCategory({
+      userId,
+      name,
+      kind: newCategory.kind,
+    })
+    setNewCategory({ name: "", kind: "expense" })
+  }
 
-  const addCategory = () => {
-    const name = newCategory.name.trim();
-    if (!name) return;
-    setCategories((previous) => [
-      ...previous,
-      { id: buildId("cat"), name, kind: newCategory.kind },
-    ]);
-    setNewCategory({ name: "", kind: "expense" });
-  };
+  const saveCategoryEdit = async () => {
+    const name = editingCategoryName.trim()
+    if (!userId || !editingCategoryId || !name) return
+    await updateCategory({
+      userId,
+      categoryId: editingCategoryId,
+      name,
+    })
+    setEditingCategoryId(null)
+    setEditingCategoryName("")
+  }
 
-  const saveCategoryEdit = () => {
-    const name = editingCategoryName.trim();
-    if (!editingCategoryId || !name) return;
-    setCategories((previous) =>
-      previous.map((category) =>
-        category.id === editingCategoryId ? { ...category, name } : category,
-      ),
-    );
-    setEditingCategoryId(null);
-    setEditingCategoryName("");
-  };
+  const saveProduct = async () => {
+    if (
+      !userId ||
+      !productForm.name ||
+      !productForm.sku ||
+      !productForm.category ||
+      !productForm.quantity ||
+      !productForm.minStock ||
+      !productForm.unitCost
+    ) {
+      return
+    }
 
-  const maxBarValue = Math.max(summary.income, summary.expense, 1);
+    await addProduct({
+      userId,
+      name: productForm.name,
+      sku: productForm.sku,
+      category: productForm.category,
+      quantity: Number(productForm.quantity),
+      minStock: Number(productForm.minStock),
+      unitCost: Number(productForm.unitCost),
+      sellingPrice: productForm.sellingPrice ? Number(productForm.sellingPrice) : undefined,
+    })
+
+    setProductForm({
+      name: "",
+      sku: "",
+      category: "",
+      quantity: "",
+      minStock: "",
+      unitCost: "",
+      sellingPrice: "",
+    })
+  }
+
+  const saveMovement = async () => {
+    if (!userId || !movementForm.productId || !movementForm.quantity) return
+    await addMovement({
+      userId,
+      productId: movementForm.productId,
+      type: movementForm.type,
+      quantity: Number(movementForm.quantity),
+      date: movementForm.date,
+      unitPrice: movementForm.unitPrice ? Number(movementForm.unitPrice) : undefined,
+      note: movementForm.note || undefined,
+    })
+    setMovementForm((previous) => ({ ...previous, quantity: "", unitPrice: "", note: "" }))
+  }
+
+  if (!isLoaded) {
+    return (
+      <main className="mx-auto flex min-h-screen w-full max-w-7xl items-center justify-center p-6">
+        <Card className="w-full max-w-md">
+          <CardHeader>
+            <CardTitle>Carregando dashboard</CardTitle>
+            <CardDescription>Preparando ambiente de e-commerce.</CardDescription>
+          </CardHeader>
+        </Card>
+      </main>
+    )
+  }
 
   return (
-    <main className="mx-auto flex min-h-screen w-full max-w-7xl flex-col gap-6 p-4 md:p-8">
-      <header className="flex flex-wrap items-start justify-between gap-4">
-        <div className="space-y-1">
-          <h1 className="text-2xl font-semibold tracking-tight md:text-3xl">
-            Dashboard financeiro
-          </h1>
-          <p className="text-sm text-muted-foreground">
-            Controle completo de receitas, despesas, fluxo de caixa e relatorios.
-          </p>
+    <main className="mx-auto flex min-h-screen w-full max-w-[1500px] gap-4 p-4 md:p-6">
+      <aside className="hidden w-72 shrink-0 flex-col gap-2 rounded-none border bg-card p-4 lg:flex">
+        <div className="mb-2 flex items-center justify-between">
+          <h2 className="text-sm font-semibold">E-commerce</h2>
+          <UserButton />
         </div>
-        <UserButton />
-      </header>
+        <Separator />
+        <p className="text-xs text-muted-foreground">Modulos</p>
+        <div className="grid grid-cols-3 gap-2">
+          <Button variant={activeModule === "home" ? "default" : "outline"} size="sm" onClick={() => setActiveModule("home")}>
+            Home
+          </Button>
+          <Button variant={activeModule === "finance" ? "default" : "outline"} size="sm" onClick={() => setActiveModule("finance")}>
+            Financeiro
+          </Button>
+          <Button variant={activeModule === "stock" ? "default" : "outline"} size="sm" onClick={() => setActiveModule("stock")}>
+            Estoque
+          </Button>
+        </div>
+        <Separator />
+        {activeModule === "finance" && (
+          <>
+            <p className="text-xs text-muted-foreground">Financeiro</p>
+            <SidebarButton icon={LayoutDashboard} label="Visao geral" isActive={activeFinanceSection === "overview"} onClick={() => setActiveFinanceSection("overview")} />
+            <SidebarButton icon={TrendingDown} label="Despesas" isActive={activeFinanceSection === "expenses"} onClick={() => setActiveFinanceSection("expenses")} />
+            <SidebarButton icon={FolderTree} label="Categorias" isActive={activeFinanceSection === "categories"} onClick={() => setActiveFinanceSection("categories")} />
+            <SidebarButton icon={BarChart3} label="Relatorios" isActive={activeFinanceSection === "reports"} onClick={() => setActiveFinanceSection("reports")} />
+            <SidebarButton icon={ReceiptText} label="Historico" isActive={activeFinanceSection === "history"} onClick={() => setActiveFinanceSection("history")} />
+          </>
+        )}
+        {activeModule === "stock" && (
+          <>
+            <p className="text-xs text-muted-foreground">Estoque</p>
+            <SidebarButton icon={Boxes} label="Visao geral" isActive={activeStockSection === "overview"} onClick={() => setActiveStockSection("overview")} />
+            <SidebarButton icon={PackagePlus} label="Produtos" isActive={activeStockSection === "products"} onClick={() => setActiveStockSection("products")} />
+            <SidebarButton icon={Repeat} label="Movimentacoes" isActive={activeStockSection === "movements"} onClick={() => setActiveStockSection("movements")} />
+            <SidebarButton icon={ReceiptText} label="Historico" isActive={activeStockSection === "history"} onClick={() => setActiveStockSection("history")} />
+          </>
+        )}
+      </aside>
 
-      <Card>
-        <CardHeader>
-          <CardTitle>Filtros</CardTitle>
-          <CardDescription>Refine os dados por data, categoria e tipo.</CardDescription>
-        </CardHeader>
-        <CardContent className="grid gap-3 md:grid-cols-4">
-          <Input
-            type="date"
-            value={filters.startDate ?? ""}
-            onChange={(event) =>
-              setFilters((previous) => ({ ...previous, startDate: event.target.value || undefined }))
-            }
-          />
-          <Input
-            type="date"
-            value={filters.endDate ?? ""}
-            onChange={(event) =>
-              setFilters((previous) => ({ ...previous, endDate: event.target.value || undefined }))
-            }
-          />
-          <select
-            className="h-10 rounded-lg border border-input bg-background px-3 text-sm"
-            value={filters.categoryId ?? ""}
-            onChange={(event) =>
-              setFilters((previous) => ({
-                ...previous,
-                categoryId: event.target.value || undefined,
-              }))
-            }
-          >
-            <option value="">Todas categorias</option>
-            {categories.map((category) => (
-              <option key={category.id} value={category.id}>
-                {category.name}
-              </option>
-            ))}
-          </select>
-          <select
-            className="h-10 rounded-lg border border-input bg-background px-3 text-sm"
-            value={filters.kind ?? "all"}
-            onChange={(event) =>
-              setFilters((previous) => ({
-                ...previous,
-                kind: event.target.value as TransactionFilters["kind"],
-              }))
-            }
-          >
-            <option value="all">Entradas e saidas</option>
-            <option value="income">Somente entradas</option>
-            <option value="expense">Somente saidas</option>
-          </select>
-        </CardContent>
-      </Card>
+      <section className="flex-1 space-y-4">
+        {activeModule === "home" && (
+          <section className="space-y-4">
+            <Card>
+              <CardHeader>
+                <CardTitle>Home do marketplace</CardTitle>
+                <CardDescription>Panorama de vendas, despesas da empresa e estoque.</CardDescription>
+              </CardHeader>
+            </Card>
+            <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+              <SummaryCard title="Vendas (filtro)" value={salesInFilter} />
+              <SummaryCard title="Despesas (filtro)" value={expensesInFilter} negative />
+              <SummaryCard title="Resultado operacional" value={operatingResult} positive={operatingResult >= 0} negative={operatingResult < 0} />
+              <SummaryCard title="Valor em estoque" value={stockSummary.stockValue} />
+            </div>
+            <div className="grid gap-4 xl:grid-cols-2">
+              <Card>
+                <CardHeader>
+                  <CardTitle>Financeiro</CardTitle>
+                </CardHeader>
+                <CardContent className="space-y-2 text-sm">
+                  <LineItem label="Saldo geral" value={summary.balance} />
+                  <LineItem label="Resultado do mes" value={monthlyReport.balance} />
+                  <LineItem label="Lancamentos" value={transactions.length} format="number" />
+                </CardContent>
+              </Card>
+              <Card>
+                <CardHeader>
+                  <CardTitle>Estoque</CardTitle>
+                </CardHeader>
+                <CardContent className="space-y-2 text-sm">
+                  <LineItem label="Produtos cadastrados" value={stockSummary.totalProducts} format="number" />
+                  <LineItem label="Unidades em estoque" value={stockSummary.totalUnits} format="number" />
+                  <LineItem label="Abaixo do minimo" value={stockSummary.lowStockCount} format="number" />
+                </CardContent>
+              </Card>
+            </div>
+          </section>
+        )}
 
-      <section className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
-        <Card>
-          <CardHeader>
-            <CardDescription>Saldo atual</CardDescription>
-            <CardTitle>{formatCurrency(summary.balance)}</CardTitle>
-          </CardHeader>
-        </Card>
-        <Card>
-          <CardHeader>
-            <CardDescription>Total de entradas</CardDescription>
-            <CardTitle className="text-success">{formatCurrency(summary.income)}</CardTitle>
-          </CardHeader>
-        </Card>
-        <Card>
-          <CardHeader>
-            <CardDescription>Total de saidas</CardDescription>
-            <CardTitle className="text-danger">{formatCurrency(summary.expense)}</CardTitle>
-          </CardHeader>
-        </Card>
-        <Card>
-          <CardHeader>
-            <CardDescription>Lucro/prejuizo mensal</CardDescription>
-            <CardTitle>{formatCurrency(monthlyReport.balance)}</CardTitle>
-          </CardHeader>
-        </Card>
-      </section>
+        {activeModule === "finance" && (
+          <>
+            <Card>
+              <CardHeader>
+                <CardTitle>Filtros financeiros</CardTitle>
+              </CardHeader>
+              <CardContent className="grid gap-3 md:grid-cols-4">
+                <Input type="date" value={filters.startDate ?? ""} onChange={(event) => setFilters((prev) => ({ ...prev, startDate: event.target.value || undefined }))} />
+                <Input type="date" value={filters.endDate ?? ""} onChange={(event) => setFilters((prev) => ({ ...prev, endDate: event.target.value || undefined }))} />
+                <Select value={filters.categoryId ?? "all-categories"} onValueChange={(value) => setFilters((prev) => ({ ...prev, categoryId: value === "all-categories" ? undefined : value }))}>
+                  <SelectTrigger className="w-full"><SelectValue placeholder="Categoria" /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all-categories">Todas categorias</SelectItem>
+                    {categories.map((category) => <SelectItem key={category.id} value={category.id}>{category.name}</SelectItem>)}
+                  </SelectContent>
+                </Select>
+                <Select value={filters.kind ?? "all"} onValueChange={(value) => setFilters((prev) => ({ ...prev, kind: value as TransactionFilters["kind"] }))}>
+                  <SelectTrigger className="w-full"><SelectValue placeholder="Tipo" /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">Entradas e saidas</SelectItem>
+                    <SelectItem value="income">Entradas</SelectItem>
+                    <SelectItem value="expense">Saidas</SelectItem>
+                  </SelectContent>
+                </Select>
+              </CardContent>
+            </Card>
 
-      <section className="grid gap-4 xl:grid-cols-3">
-        <Card className="xl:col-span-2">
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2">
-              <BarChart3 className="h-4 w-4" />
-              Entradas vs saidas
-            </CardTitle>
-            <CardDescription>Visualizacao comparativa no periodo filtrado.</CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-5">
-            <div className="grid grid-cols-2 gap-4">
-              <div className="space-y-2">
-                <div className="text-sm text-muted-foreground">Entradas</div>
-                <div className="h-3 w-full rounded-full bg-muted">
-                  <div
-                    className="h-3 rounded-full bg-success"
-                    style={{ width: `${(summary.income / maxBarValue) * 100}%` }}
-                  />
+            {activeFinanceSection === "overview" && (
+              <section className="space-y-4">
+                <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+                  <SummaryCard title="Vendas online" value={salesInFilter} />
+                  <SummaryCard title="Despesas empresa" value={expensesInFilter} negative />
+                  <SummaryCard title="Resultado operacional" value={operatingResult} positive={operatingResult >= 0} negative={operatingResult < 0} />
+                  <SummaryCard title="Saldo financeiro" value={summary.balance} />
                 </div>
-                <p className="text-sm font-medium">{formatCurrency(summary.income)}</p>
-              </div>
-              <div className="space-y-2">
-                <div className="text-sm text-muted-foreground">Saidas</div>
-                <div className="h-3 w-full rounded-full bg-muted">
-                  <div
-                    className="h-3 rounded-full bg-danger"
-                    style={{ width: `${(summary.expense / maxBarValue) * 100}%` }}
-                  />
+                <div className="grid gap-4 xl:grid-cols-3">
+                  <Card className="xl:col-span-2">
+                    <CardHeader><CardTitle>Entradas vs saidas</CardTitle></CardHeader>
+                    <CardContent className="grid gap-4 sm:grid-cols-2">
+                      <ProgressBlock label="Entradas" value={summary.income} maxValue={maxBarValue} barClassName="bg-primary" />
+                      <ProgressBlock label="Saidas" value={summary.expense} maxValue={maxBarValue} barClassName="bg-destructive" />
+                    </CardContent>
+                  </Card>
+                  <Card>
+                    <CardHeader><CardTitle>Resumo mensal</CardTitle></CardHeader>
+                    <CardContent className="space-y-2 text-sm">
+                      <LineItem label="Receitas" value={monthlyReport.income} />
+                      <LineItem label="Despesas" value={monthlyReport.expense} />
+                      <Separator />
+                      <LineItem label="Resultado" value={monthlyReport.balance} strong />
+                    </CardContent>
+                  </Card>
                 </div>
-                <p className="text-sm font-medium">{formatCurrency(summary.expense)}</p>
-              </div>
-            </div>
-            <Badge variant={summary.balance >= 0 ? "success" : "danger"}>
-              {summary.balance >= 0 ? "Resultado positivo" : "Resultado negativo"}
-            </Badge>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardHeader>
-            <CardTitle>Resumo mensal</CardTitle>
-            <CardDescription>Consolidado do mes atual.</CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-3 text-sm">
-            <div className="flex items-center justify-between">
-              <span className="text-muted-foreground">Receitas</span>
-              <span>{formatCurrency(monthlyReport.income)}</span>
-            </div>
-            <div className="flex items-center justify-between">
-              <span className="text-muted-foreground">Despesas</span>
-              <span>{formatCurrency(monthlyReport.expense)}</span>
-            </div>
-            <div className="flex items-center justify-between border-t border-border pt-3 font-medium">
-              <span>Resultado</span>
-              <span>{formatCurrency(monthlyReport.balance)}</span>
-            </div>
-          </CardContent>
-        </Card>
-      </section>
+              </section>
+            )}
 
-      <section className="grid gap-4 xl:grid-cols-2">
-        <Card>
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2">
-              <TrendingUp className="h-4 w-4" />
-              Cadastro de entradas
-            </CardTitle>
-          </CardHeader>
-          <CardContent className="grid gap-3 md:grid-cols-2">
-            <Input
-              type="number"
-              placeholder="Valor"
-              value={incomeForm.amount}
-              onChange={(event) =>
-                setIncomeForm((previous) => ({ ...previous, amount: event.target.value }))
-              }
-            />
-            <Input
-              type="date"
-              value={incomeForm.date}
-              onChange={(event) =>
-                setIncomeForm((previous) => ({ ...previous, date: event.target.value }))
-              }
-            />
-            <Input
-              placeholder="Descricao"
-              className="md:col-span-2"
-              value={incomeForm.description}
-              onChange={(event) =>
-                setIncomeForm((previous) => ({ ...previous, description: event.target.value }))
-              }
-            />
-            <select
-              className="h-10 rounded-lg border border-input bg-background px-3 text-sm"
-              value={incomeForm.categoryId}
-              onChange={(event) =>
-                setIncomeForm((previous) => ({ ...previous, categoryId: event.target.value }))
-              }
-            >
-              {incomeCategories.map((category) => (
-                <option key={category.id} value={category.id}>
-                  {category.name}
-                </option>
-              ))}
-            </select>
-            <Input
-              placeholder="Origem da receita (ex: vendas)"
-              value={incomeForm.origin}
-              onChange={(event) =>
-                setIncomeForm((previous) => ({ ...previous, origin: event.target.value }))
-              }
-            />
-            <Button className="md:col-span-2" onClick={addIncome}>
-              Adicionar entrada
-            </Button>
-          </CardContent>
-        </Card>
+            {activeFinanceSection === "expenses" && (
+              <Card>
+                <CardHeader>
+                  <CardTitle>Registrar despesa da empresa</CardTitle>
+                  <CardDescription>Ferramentas, investimentos, saques e outros custos operacionais.</CardDescription>
+                </CardHeader>
+                <CardContent className="grid gap-3 md:grid-cols-2">
+                  <Input type="number" placeholder="Valor" value={expenseForm.amount} onChange={(event) => setExpenseForm((prev) => ({ ...prev, amount: event.target.value }))} />
+                  <Input type="date" value={expenseForm.date} onChange={(event) => setExpenseForm((prev) => ({ ...prev, date: event.target.value }))} />
+                  <Input className="md:col-span-2" placeholder="Descricao" value={expenseForm.description} onChange={(event) => setExpenseForm((prev) => ({ ...prev, description: event.target.value }))} />
+                  <Select value={expenseForm.categoryId || undefined} onValueChange={(value) => setExpenseForm((prev) => ({ ...prev, categoryId: value as Id<"categories"> }))}>
+                    <SelectTrigger className="w-full"><SelectValue placeholder="Categoria de despesa" /></SelectTrigger>
+                    <SelectContent>
+                      {expenseCategories.map((category) => <SelectItem key={category.id} value={category.id}>{category.name}</SelectItem>)}
+                    </SelectContent>
+                  </Select>
+                  <Select value={expenseForm.expenseType} onValueChange={(value) => setExpenseForm((prev) => ({ ...prev, expenseType: value as ExpenseType }))}>
+                    <SelectTrigger className="w-full"><SelectValue placeholder="Tipo" /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="fixed">Fixo</SelectItem>
+                      <SelectItem value="variable">Variavel</SelectItem>
+                    </SelectContent>
+                  </Select>
+                  <Button className="md:col-span-2" onClick={saveExpense}>Salvar despesa</Button>
+                </CardContent>
+              </Card>
+            )}
 
-        <Card>
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2">
-              <TrendingDown className="h-4 w-4" />
-              Cadastro de gastos
-            </CardTitle>
-          </CardHeader>
-          <CardContent className="grid gap-3 md:grid-cols-2">
-            <Input
-              type="number"
-              placeholder="Valor"
-              value={expenseForm.amount}
-              onChange={(event) =>
-                setExpenseForm((previous) => ({ ...previous, amount: event.target.value }))
-              }
-            />
-            <Input
-              type="date"
-              value={expenseForm.date}
-              onChange={(event) =>
-                setExpenseForm((previous) => ({ ...previous, date: event.target.value }))
-              }
-            />
-            <Input
-              placeholder="Descricao"
-              className="md:col-span-2"
-              value={expenseForm.description}
-              onChange={(event) =>
-                setExpenseForm((previous) => ({ ...previous, description: event.target.value }))
-              }
-            />
-            <select
-              className="h-10 rounded-lg border border-input bg-background px-3 text-sm"
-              value={expenseForm.categoryId}
-              onChange={(event) =>
-                setExpenseForm((previous) => ({ ...previous, categoryId: event.target.value }))
-              }
-            >
-              {expenseCategories.map((category) => (
-                <option key={category.id} value={category.id}>
-                  {category.name}
-                </option>
-              ))}
-            </select>
-            <select
-              className="h-10 rounded-lg border border-input bg-background px-3 text-sm"
-              value={expenseForm.expenseType}
-              onChange={(event) =>
-                setExpenseForm((previous) => ({
-                  ...previous,
-                  expenseType: event.target.value as ExpenseType,
-                }))
-              }
-            >
-              <option value="fixed">Fixo</option>
-              <option value="variable">Variavel</option>
-            </select>
-            <Button className="md:col-span-2" onClick={addExpense}>
-              Adicionar gasto
-            </Button>
-          </CardContent>
-        </Card>
-      </section>
-
-      <Card>
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2">
-            <Wallet className="h-4 w-4" />
-            Fluxo de caixa
-          </CardTitle>
-          <CardDescription>Visualizacao por dia, semana ou mes, com historico completo.</CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          <div className="flex flex-wrap gap-2">
-            {(["day", "week", "month"] as FinancialPeriod[]).map((value) => (
-              <Button
-                key={value}
-                variant={period === value ? "default" : "outline"}
-                size="sm"
-                onClick={() => setPeriod(value)}
-              >
-                {value === "day" ? "Dia" : value === "week" ? "Semana" : "Mes"}
-              </Button>
-            ))}
-          </div>
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>Periodo</TableHead>
-                <TableHead>Entradas</TableHead>
-                <TableHead>Saidas</TableHead>
-                <TableHead className="text-right">Saldo</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {flowData.map((item) => (
-                <TableRow key={item.label}>
-                  <TableCell>{item.label}</TableCell>
-                  <TableCell>{formatCurrency(item.income)}</TableCell>
-                  <TableCell>{formatCurrency(item.expense)}</TableCell>
-                  <TableCell className="text-right font-medium">
-                    {formatCurrency(item.net)}
-                  </TableCell>
-                </TableRow>
-              ))}
-            </TableBody>
-          </Table>
-        </CardContent>
-      </Card>
-
-      <section className="grid gap-4 xl:grid-cols-2">
-        <Card>
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2">
-              <Landmark className="h-4 w-4" />
-              Contas a pagar e receber
-            </CardTitle>
-          </CardHeader>
-          <CardContent className="grid gap-3 md:grid-cols-2">
-            <Input
-              placeholder="Descricao da conta"
-              className="md:col-span-2"
-              value={billForm.title}
-              onChange={(event) =>
-                setBillForm((previous) => ({ ...previous, title: event.target.value }))
-              }
-            />
-            <Input
-              type="number"
-              placeholder="Valor"
-              value={billForm.amount}
-              onChange={(event) =>
-                setBillForm((previous) => ({ ...previous, amount: event.target.value }))
-              }
-            />
-            <Input
-              type="date"
-              value={billForm.dueDate}
-              onChange={(event) =>
-                setBillForm((previous) => ({ ...previous, dueDate: event.target.value }))
-              }
-            />
-            <select
-              className="h-10 rounded-lg border border-input bg-background px-3 text-sm"
-              value={billForm.kind}
-              onChange={(event) =>
-                setBillForm((previous) => ({
-                  ...previous,
-                  kind: event.target.value as FinancialBill["kind"],
-                }))
-              }
-            >
-              <option value="payable">Conta a pagar</option>
-              <option value="receivable">Conta a receber</option>
-            </select>
-            <select
-              className="h-10 rounded-lg border border-input bg-background px-3 text-sm"
-              value={billForm.status}
-              onChange={(event) =>
-                setBillForm((previous) => ({
-                  ...previous,
-                  status: event.target.value as BillStatus,
-                }))
-              }
-            >
-              <option value="pending">Pendente</option>
-              <option value="paid">Pago</option>
-              <option value="overdue">Atrasado</option>
-            </select>
-            <select
-              className="h-10 rounded-lg border border-input bg-background px-3 text-sm md:col-span-2"
-              value={billForm.categoryId}
-              onChange={(event) =>
-                setBillForm((previous) => ({ ...previous, categoryId: event.target.value }))
-              }
-            >
-              {categories.map((category) => (
-                <option key={category.id} value={category.id}>
-                  {category.name}
-                </option>
-              ))}
-            </select>
-            <Button className="md:col-span-2" onClick={addBill}>
-              Adicionar conta
-            </Button>
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardHeader>
-            <CardTitle>Historico de contas</CardTitle>
-            <CardDescription>Status de vencimentos e pagamentos.</CardDescription>
-          </CardHeader>
-          <CardContent>
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Titulo</TableHead>
-                  <TableHead>Vencimento</TableHead>
-                  <TableHead>Status</TableHead>
-                  <TableHead className="text-right">Valor</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {bills.map((bill) => (
-                  <TableRow key={bill.id}>
-                    <TableCell>
-                      <p className="font-medium">{bill.title}</p>
-                      <p className="text-xs text-muted-foreground">
-                        {bill.kind === "payable" ? "A pagar" : "A receber"} -{" "}
-                        {categoryMap.get(bill.categoryId)?.name ?? "Sem categoria"}
-                      </p>
-                    </TableCell>
-                    <TableCell>{formatDate(bill.dueDate)}</TableCell>
-                    <TableCell>
-                      <Badge variant={statusBadgeVariant(bill.status)}>
-                        {bill.status === "paid"
-                          ? "Pago"
-                          : bill.status === "pending"
-                            ? "Pendente"
-                            : "Atrasado"}
-                      </Badge>
-                    </TableCell>
-                    <TableCell className="text-right">{formatCurrency(bill.amount)}</TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
-          </CardContent>
-        </Card>
-      </section>
-
-      <section className="grid gap-4 xl:grid-cols-2">
-        <Card>
-          <CardHeader>
-            <CardTitle>Categorias financeiras</CardTitle>
-            <CardDescription>Crie e edite categorias para despesas e receitas.</CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            <div className="grid gap-3 md:grid-cols-[1fr_160px_auto]">
-              <Input
-                placeholder="Nova categoria"
-                value={newCategory.name}
-                onChange={(event) =>
-                  setNewCategory((previous) => ({ ...previous, name: event.target.value }))
-                }
-              />
-              <select
-                className="h-10 rounded-lg border border-input bg-background px-3 text-sm"
-                value={newCategory.kind}
-                onChange={(event) =>
-                  setNewCategory((previous) => ({
-                    ...previous,
-                    kind: event.target.value as FinancialCategory["kind"],
-                  }))
-                }
-              >
-                <option value="expense">Despesa</option>
-                <option value="income">Receita</option>
-              </select>
-              <Button onClick={addCategory}>Adicionar</Button>
-            </div>
-
-            <div className="space-y-2">
-              {categories.map((category) => (
-                <div
-                  key={category.id}
-                  className="flex flex-wrap items-center gap-2 rounded-lg border border-border p-2"
-                >
-                  {editingCategoryId === category.id ? (
-                    <>
-                      <Input
-                        value={editingCategoryName}
-                        onChange={(event) => setEditingCategoryName(event.target.value)}
-                        className="max-w-xs"
-                      />
-                      <Button size="sm" onClick={saveCategoryEdit}>
-                        Salvar
-                      </Button>
-                      <Button
-                        size="sm"
-                        variant="ghost"
-                        onClick={() => {
-                          setEditingCategoryId(null);
-                          setEditingCategoryName("");
-                        }}
-                      >
-                        Cancelar
-                      </Button>
-                    </>
-                  ) : (
-                    <>
-                      <span className="font-medium">{category.name}</span>
-                      <Badge variant={category.kind === "income" ? "success" : "warning"}>
-                        {category.kind === "income" ? "Receita" : "Despesa"}
-                      </Badge>
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        className="ml-auto"
-                        onClick={() => {
-                          setEditingCategoryId(category.id);
-                          setEditingCategoryName(category.name);
-                        }}
-                      >
-                        Editar
-                      </Button>
-                    </>
-                  )}
-                </div>
-              ))}
-            </div>
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardHeader>
-            <CardTitle>Relatorios</CardTitle>
-            <CardDescription>Lucro/prejuizo, despesas por categoria e evolucao mensal.</CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-5">
-            <div className="grid gap-2">
-              <p className="text-sm text-muted-foreground">Lucro / Prejuizo no filtro atual</p>
-              <p
-                className={cn(
-                  "text-lg font-semibold",
-                  summary.balance >= 0 ? "text-success" : "text-danger",
-                )}
-              >
-                {formatCurrency(summary.balance)}
-              </p>
-            </div>
-
-            <div className="space-y-2">
-              <p className="text-sm text-muted-foreground">Despesas por categoria</p>
-              {expensesReport.map((item) => (
-                <div key={item.categoryId} className="space-y-1">
-                  <div className="flex justify-between text-sm">
-                    <span>{item.categoryName}</span>
-                    <span>{formatCurrency(item.total)}</span>
+            {activeFinanceSection === "categories" && (
+              <Card>
+                <CardHeader>
+                  <CardTitle>Categorias de despesa</CardTitle>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                  <div className="grid gap-3 md:grid-cols-[1fr_200px_auto]">
+                    <Input placeholder="Nome da categoria" value={newCategory.name} onChange={(event) => setNewCategory((prev) => ({ ...prev, name: event.target.value }))} />
+                    <Select value={newCategory.kind} onValueChange={(value) => setNewCategory((prev) => ({ ...prev, kind: value as FinancialCategory["kind"] }))}>
+                      <SelectTrigger className="w-full"><SelectValue /></SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="expense">Despesa</SelectItem>
+                        <SelectItem value="income">Receita</SelectItem>
+                      </SelectContent>
+                    </Select>
+                    <Button onClick={saveCategory}>Salvar categoria</Button>
                   </div>
-                  <div className="h-2 rounded-full bg-muted">
-                    <div
-                      className="h-2 rounded-full bg-primary"
-                      style={{
-                        width: `${(item.total / Math.max(expensesReport[0]?.total ?? 1, 1)) * 100}%`,
-                      }}
-                    />
+                  <div className="space-y-2">
+                    {categories.map((category) => (
+                      <div key={category.id} className="flex flex-wrap items-center gap-2 rounded-none border border-border p-2">
+                        {editingCategoryId === category.id ? (
+                          <>
+                            <Input value={editingCategoryName} onChange={(event) => setEditingCategoryName(event.target.value)} className="max-w-xs" />
+                            <Button size="sm" onClick={saveCategoryEdit}>Salvar</Button>
+                            <Button size="sm" variant="outline" onClick={() => { setEditingCategoryId(null); setEditingCategoryName("") }}>Cancelar</Button>
+                          </>
+                        ) : (
+                          <>
+                            <span className="font-medium">{category.name}</span>
+                            <Badge variant={category.kind === "income" ? "default" : "secondary"}>{category.kind === "income" ? "Receita" : "Despesa"}</Badge>
+                            <Button size="sm" variant="outline" className="ml-auto" onClick={() => { setEditingCategoryId(category.id as Id<"categories">); setEditingCategoryName(category.name) }}>Editar</Button>
+                          </>
+                        )}
+                      </div>
+                    ))}
                   </div>
-                </div>
-              ))}
-            </div>
+                </CardContent>
+              </Card>
+            )}
 
-            <div className="space-y-2">
-              <p className="text-sm text-muted-foreground">Evolucao mensal</p>
-              {evolutionReport.map((item) => (
-                <div key={item.monthLabel} className="flex items-center justify-between text-sm">
-                  <span>{item.monthLabel}</span>
-                  <span>{formatCurrency(item.result)}</span>
+            {activeFinanceSection === "reports" && (
+              <section className="grid gap-4 xl:grid-cols-2">
+                <Card>
+                  <CardHeader><CardTitle>Fluxo de caixa (dia/semana/mes)</CardTitle></CardHeader>
+                  <CardContent className="space-y-4">
+                    <div className="flex flex-wrap gap-2">
+                      {(["day", "week", "month"] as FinancialPeriod[]).map((value) => (
+                        <Button key={value} size="sm" variant={period === value ? "default" : "outline"} onClick={() => setPeriod(value)}>
+                          {value === "day" ? "Dia" : value === "week" ? "Semana" : "Mes"}
+                        </Button>
+                      ))}
+                    </div>
+                    <Table>
+                      <TableHeader>
+                        <TableRow><TableHead>Periodo</TableHead><TableHead>Entradas</TableHead><TableHead>Saidas</TableHead><TableHead className="text-right">Saldo</TableHead></TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        {flowData.map((item) => (
+                          <TableRow key={item.label}>
+                            <TableCell>{item.label}</TableCell>
+                            <TableCell>{formatCurrency(item.income)}</TableCell>
+                            <TableCell>{formatCurrency(item.expense)}</TableCell>
+                            <TableCell className="text-right">{formatCurrency(item.net)}</TableCell>
+                          </TableRow>
+                        ))}
+                      </TableBody>
+                    </Table>
+                  </CardContent>
+                </Card>
+                <Card>
+                  <CardHeader><CardTitle>Evolucao mensal</CardTitle></CardHeader>
+                  <CardContent className="grid gap-2">
+                    {evolutionReport.map((item) => (
+                      <div key={item.monthLabel} className="flex items-center justify-between rounded-none border border-border p-2 text-sm">
+                        <span>{item.monthLabel}</span>
+                        <span>{formatCurrency(item.result)}</span>
+                      </div>
+                    ))}
+                  </CardContent>
+                </Card>
+              </section>
+            )}
+
+            {activeFinanceSection === "history" && (
+              <Card>
+                <CardHeader><CardTitle>Historico financeiro</CardTitle></CardHeader>
+                <CardContent>
+                  <Table>
+                    <TableHeader>
+                      <TableRow><TableHead>Data</TableHead><TableHead>Descricao</TableHead><TableHead>Categoria</TableHead><TableHead>Tipo</TableHead><TableHead className="text-right">Valor</TableHead></TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {filteredTransactions.slice().sort((a, b) => b.date.localeCompare(a.date)).map((transaction) => (
+                        <TableRow key={transaction.id}>
+                          <TableCell>{formatDate(transaction.date)}</TableCell>
+                          <TableCell>{transaction.description}</TableCell>
+                          <TableCell>{categoryMap.get(transaction.categoryId)?.name ?? "Sem categoria"}</TableCell>
+                          <TableCell>
+                            <Badge variant={transaction.kind === "income" ? "default" : "secondary"}>
+                              {transaction.kind === "income" ? "Entrada" : "Despesa"}
+                            </Badge>
+                          </TableCell>
+                          <TableCell className="text-right">{formatCurrency(transaction.amount)}</TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                </CardContent>
+              </Card>
+            )}
+          </>
+        )}
+
+        {activeModule === "stock" && (
+          <>
+            {activeStockSection === "overview" && (
+              <section className="space-y-4">
+                <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+                  <SummaryCard title="Produtos cadastrados" value={stockSummary.totalProducts} format="number" />
+                  <SummaryCard title="Unidades em estoque" value={stockSummary.totalUnits} format="number" />
+                  <SummaryCard title="Abaixo do minimo" value={stockSummary.lowStockCount} format="number" />
+                  <SummaryCard title="Valor em estoque" value={stockSummary.stockValue} />
                 </div>
-              ))}
-            </div>
-          </CardContent>
-        </Card>
+                <Card>
+                  <CardHeader><CardTitle>Produtos criticos</CardTitle></CardHeader>
+                  <CardContent>
+                    <Table>
+                      <TableHeader>
+                        <TableRow><TableHead>Produto</TableHead><TableHead>SKU</TableHead><TableHead>Atual</TableHead><TableHead>Minimo</TableHead></TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        {products.filter((product) => product.quantity <= product.minStock).map((product) => (
+                          <TableRow key={product.id}>
+                            <TableCell>{product.name}</TableCell>
+                            <TableCell>{product.sku}</TableCell>
+                            <TableCell>{product.quantity}</TableCell>
+                            <TableCell>{product.minStock}</TableCell>
+                          </TableRow>
+                        ))}
+                      </TableBody>
+                    </Table>
+                  </CardContent>
+                </Card>
+              </section>
+            )}
+
+            {activeStockSection === "products" && (
+              <section className="grid gap-4 xl:grid-cols-2">
+                <Card>
+                  <CardHeader><CardTitle>Novo produto</CardTitle></CardHeader>
+                  <CardContent className="grid gap-3">
+                    <Input placeholder="Nome do produto" value={productForm.name} onChange={(event) => setProductForm((prev) => ({ ...prev, name: event.target.value }))} />
+                    <Input placeholder="SKU" value={productForm.sku} onChange={(event) => setProductForm((prev) => ({ ...prev, sku: event.target.value }))} />
+                    <Input placeholder="Categoria" value={productForm.category} onChange={(event) => setProductForm((prev) => ({ ...prev, category: event.target.value }))} />
+                    <Input type="number" placeholder="Quantidade inicial" value={productForm.quantity} onChange={(event) => setProductForm((prev) => ({ ...prev, quantity: event.target.value }))} />
+                    <Input type="number" placeholder="Estoque minimo" value={productForm.minStock} onChange={(event) => setProductForm((prev) => ({ ...prev, minStock: event.target.value }))} />
+                    <Input type="number" placeholder="Custo unitario" value={productForm.unitCost} onChange={(event) => setProductForm((prev) => ({ ...prev, unitCost: event.target.value }))} />
+                    <Input type="number" placeholder="Preco de venda (opcional)" value={productForm.sellingPrice} onChange={(event) => setProductForm((prev) => ({ ...prev, sellingPrice: event.target.value }))} />
+                    <Button onClick={saveProduct}>Salvar produto</Button>
+                  </CardContent>
+                </Card>
+                <Card>
+                  <CardHeader><CardTitle>Produtos cadastrados</CardTitle></CardHeader>
+                  <CardContent>
+                    <Table>
+                      <TableHeader>
+                        <TableRow><TableHead>Produto</TableHead><TableHead>SKU</TableHead><TableHead>Categoria</TableHead><TableHead>Qtd</TableHead></TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        {products.map((product) => (
+                          <TableRow key={product.id}>
+                            <TableCell>{product.name}</TableCell>
+                            <TableCell>{product.sku}</TableCell>
+                            <TableCell>{product.category}</TableCell>
+                            <TableCell>
+                              <Badge variant={product.quantity <= product.minStock ? "destructive" : "secondary"}>
+                                {product.quantity}
+                              </Badge>
+                            </TableCell>
+                          </TableRow>
+                        ))}
+                      </TableBody>
+                    </Table>
+                  </CardContent>
+                </Card>
+              </section>
+            )}
+
+            {activeStockSection === "movements" && (
+              <section className="grid gap-4 xl:grid-cols-2">
+                <Card>
+                  <CardHeader>
+                    <CardTitle>Movimentacao de estoque</CardTitle>
+                    <CardDescription>Use "Venda" para registrar a saida e refletir automaticamente no financeiro.</CardDescription>
+                  </CardHeader>
+                  <CardContent className="grid gap-3">
+                    <Select value={movementForm.productId || undefined} onValueChange={(value) => setMovementForm((prev) => ({ ...prev, productId: value as Id<"stockProducts"> }))}>
+                      <SelectTrigger className="w-full"><SelectValue placeholder="Produto" /></SelectTrigger>
+                      <SelectContent>
+                        {products.map((product) => <SelectItem key={product.id} value={product.id}>{product.name} ({product.sku})</SelectItem>)}
+                      </SelectContent>
+                    </Select>
+                    <Select value={movementForm.type} onValueChange={(value) => setMovementForm((prev) => ({ ...prev, type: value as StockMovement["type"] }))}>
+                      <SelectTrigger className="w-full"><SelectValue placeholder="Tipo" /></SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="sale">Venda</SelectItem>
+                        <SelectItem value="in">Entrada</SelectItem>
+                        <SelectItem value="out">Saida</SelectItem>
+                        <SelectItem value="adjustment">Ajuste</SelectItem>
+                      </SelectContent>
+                    </Select>
+                    <Input type="number" placeholder="Quantidade" value={movementForm.quantity} onChange={(event) => setMovementForm((prev) => ({ ...prev, quantity: event.target.value }))} />
+                    <Input type="date" value={movementForm.date} onChange={(event) => setMovementForm((prev) => ({ ...prev, date: event.target.value }))} />
+                    {movementForm.type === "sale" && (
+                      <Input type="number" placeholder="Preco unitario da venda" value={movementForm.unitPrice} onChange={(event) => setMovementForm((prev) => ({ ...prev, unitPrice: event.target.value }))} />
+                    )}
+                    <Input placeholder="Observacao" value={movementForm.note} onChange={(event) => setMovementForm((prev) => ({ ...prev, note: event.target.value }))} />
+                    <Button onClick={saveMovement} disabled={products.length === 0}>Salvar movimentacao</Button>
+                  </CardContent>
+                </Card>
+                <Card>
+                  <CardHeader><CardTitle>Ultimas movimentacoes</CardTitle></CardHeader>
+                  <CardContent>
+                    <Table>
+                      <TableHeader>
+                        <TableRow><TableHead>Data</TableHead><TableHead>Produto</TableHead><TableHead>Tipo</TableHead><TableHead className="text-right">Qtd</TableHead></TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        {movements.slice().sort((a, b) => b.date.localeCompare(a.date)).slice(0, 10).map((movement) => (
+                          <TableRow key={movement.id}>
+                            <TableCell>{formatDate(movement.date)}</TableCell>
+                            <TableCell>{productMap.get(movement.productId)?.name ?? "Produto removido"}</TableCell>
+                            <TableCell>{movementLabel(movement.type)}</TableCell>
+                            <TableCell className="text-right">{movement.quantity}</TableCell>
+                          </TableRow>
+                        ))}
+                      </TableBody>
+                    </Table>
+                  </CardContent>
+                </Card>
+              </section>
+            )}
+
+            {activeStockSection === "history" && (
+              <Card>
+                <CardHeader><CardTitle>Historico de estoque</CardTitle></CardHeader>
+                <CardContent>
+                  <Table>
+                    <TableHeader>
+                      <TableRow><TableHead>Data</TableHead><TableHead>Produto</TableHead><TableHead>Tipo</TableHead><TableHead>Qtd</TableHead><TableHead>Observacao</TableHead></TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {movements.slice().sort((a, b) => b.date.localeCompare(a.date)).map((movement) => (
+                        <TableRow key={movement.id}>
+                          <TableCell>{formatDate(movement.date)}</TableCell>
+                          <TableCell>{productMap.get(movement.productId)?.name ?? "Produto removido"}</TableCell>
+                          <TableCell>{movementLabel(movement.type)}</TableCell>
+                          <TableCell>{movement.quantity}</TableCell>
+                          <TableCell>{movement.note ?? "-"}</TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                </CardContent>
+              </Card>
+            )}
+          </>
+        )}
       </section>
-
-      <Card>
-        <CardHeader>
-          <CardTitle>Historico financeiro completo</CardTitle>
-        </CardHeader>
-        <CardContent>
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>Data</TableHead>
-                <TableHead>Descricao</TableHead>
-                <TableHead>Categoria</TableHead>
-                <TableHead>Tipo</TableHead>
-                <TableHead className="text-right">Valor</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {filteredTransactions
-                .slice()
-                .sort((a, b) => b.date.localeCompare(a.date))
-                .map((transaction) => (
-                  <TableRow key={transaction.id}>
-                    <TableCell>{formatDate(transaction.date)}</TableCell>
-                    <TableCell>
-                      <p className="font-medium">{transaction.description}</p>
-                      <p className="text-xs text-muted-foreground">
-                        {transaction.kind === "income"
-                          ? `Origem: ${transaction.origin ?? "Nao informado"}`
-                          : `Despesa: ${transaction.expenseType === "fixed" ? "Fixa" : "Variavel"}`}
-                      </p>
-                    </TableCell>
-                    <TableCell>
-                      {categoryMap.get(transaction.categoryId)?.name ?? "Sem categoria"}
-                    </TableCell>
-                    <TableCell>
-                      <Badge variant={transaction.kind === "income" ? "success" : "warning"}>
-                        {transaction.kind === "income" ? "Entrada" : "Saida"}
-                      </Badge>
-                    </TableCell>
-                    <TableCell className="text-right font-medium">
-                      {formatCurrency(transaction.amount)}
-                    </TableCell>
-                  </TableRow>
-                ))}
-            </TableBody>
-          </Table>
-        </CardContent>
-      </Card>
     </main>
-  );
+  )
+}
+
+function SidebarButton({
+  icon: Icon,
+  label,
+  isActive,
+  onClick,
+}: {
+  icon: React.ComponentType<{ className?: string }>
+  label: string
+  isActive: boolean
+  onClick: () => void
+}) {
+  return (
+    <Button variant={isActive ? "default" : "ghost"} className="justify-start" onClick={onClick}>
+      <Icon className="size-4" />
+      {label}
+    </Button>
+  )
+}
+
+function SummaryCard({
+  title,
+  value,
+  positive,
+  negative,
+  format = "currency",
+}: {
+  title: string
+  value: number
+  positive?: boolean
+  negative?: boolean
+  format?: "currency" | "number"
+}) {
+  return (
+    <Card>
+      <CardHeader>
+        <CardDescription>{title}</CardDescription>
+        <CardTitle className={cn(positive && "text-primary", negative && "text-destructive")}>
+          {format === "currency" ? formatCurrency(value) : Math.trunc(value)}
+        </CardTitle>
+      </CardHeader>
+    </Card>
+  )
+}
+
+function ProgressBlock({
+  label,
+  value,
+  maxValue,
+  barClassName,
+}: {
+  label: string
+  value: number
+  maxValue: number
+  barClassName: string
+}) {
+  return (
+    <div className="space-y-2">
+      <p className="text-sm text-muted-foreground">{label}</p>
+      <div className="h-3 rounded-none bg-muted">
+        <div className={cn("h-3 rounded-none", barClassName)} style={{ width: `${(value / maxValue) * 100}%` }} />
+      </div>
+      <p className="text-sm font-medium">{formatCurrency(value)}</p>
+    </div>
+  )
+}
+
+function LineItem({
+  label,
+  value,
+  strong,
+  format = "currency",
+}: {
+  label: string
+  value: number
+  strong?: boolean
+  format?: "currency" | "number"
+}) {
+  return (
+    <div className={cn("flex items-center justify-between", strong && "font-semibold")}>
+      <span className="text-muted-foreground">{label}</span>
+      <span>{format === "currency" ? formatCurrency(value) : Math.trunc(value)}</span>
+    </div>
+  )
 }

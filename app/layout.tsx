@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { ClerkProvider } from "@clerk/nextjs";
 import { Geist, Geist_Mono, Inter } from "next/font/google";
+import { ConvexClientProvider } from "@/components/providers/convex-client-provider";
 import "./globals.css";
 import { cn } from "@/lib/utils";
 
@@ -32,7 +33,9 @@ export default function RootLayout({
         lang="pt-BR"
         className={cn("h-full", "antialiased", geistSans.variable, geistMono.variable, "font-sans", inter.variable)}
       >
-        <body className="min-h-full flex flex-col">{children}</body>
+        <body className="min-h-full flex flex-col">
+          <ConvexClientProvider>{children}</ConvexClientProvider>
+        </body>
       </html>
     </ClerkProvider>
   );
