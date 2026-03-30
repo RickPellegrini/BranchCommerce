@@ -14,6 +14,7 @@ import {
   TrendingDown,
   Wallet,
 } from "lucide-react"
+import Image from "next/image"
 import { useEffect, useMemo, useState } from "react"
 
 import { api } from "@/convex/_generated/api"
@@ -432,7 +433,16 @@ export function FinancialDashboard() {
     <main className="mx-auto flex min-h-screen w-full max-w-[1500px] gap-4 p-4 md:p-6">
       <aside className="hidden w-72 shrink-0 flex-col gap-2 rounded-none border bg-card p-4 lg:flex">
         <div className="mb-2 flex items-center justify-between">
-          <h2 className="text-sm font-semibold">E-commerce</h2>
+          <div className="flex items-center gap-2">
+            <Image
+              src="/branch_logo.jpeg"
+              alt="BranchHub logo"
+              width={28}
+              height={28}
+              className="rounded-none object-cover"
+            />
+            <h2 className="text-sm font-semibold">BranchHub</h2>
+          </div>
           <UserButton />
         </div>
         <Separator />
