@@ -93,11 +93,13 @@ export function FinancialDashboard() {
   const [filters, setFilters] = useState<TransactionFilters>({ kind: "all" })
   const [isSetupDone, setIsSetupDone] = useState(false)
 
-  const [expenseForm, setExpenseForm] = useState({
+  const [launchForm, setLaunchForm] = useState({
+    kind: "expense" as FinancialTransaction["kind"],
     amount: "",
     date: today,
     description: "",
     categoryId: "" as Id<"categories"> | "",
+    origin: "",
     expenseType: "variable" as ExpenseType,
   })
   const [newCategory, setNewCategory] = useState({
@@ -155,6 +157,7 @@ export function FinancialDashboard() {
   const updateCategory = useMutation(api.finance.updateCategory)
   const addTransaction = useMutation(api.finance.addTransaction)
   const updateTransaction = useMutation(api.finance.updateTransaction)
+  const deleteTransaction = useMutation(api.finance.deleteTransaction)
   const addProduct = useMutation(api.stock.addProduct)
   const addMovement = useMutation(api.stock.addMovement)
 
@@ -259,18 +262,25 @@ export function FinancialDashboard() {
     return { totalProducts, totalUnits, lowStockCount, stockValue }
   }, [products])
 
-  const saveExpense = async () => {
-    if (!userId || !expenseForm.amount || !expenseForm.description || !expenseForm.categoryId) return
+  const saveLaunch = async () => {
+    if (!userId || !launchForm.amount || !launchForm.description || !launchForm.categoryId) return
     await addTransaction({
       userId,
-      kind: "expense",
-      amount: Number(expenseForm.amount),
-      date: expenseForm.date,
-      description: expenseForm.description,
-      categoryId: expenseForm.categoryId,
-      expenseType: expenseForm.expenseType,
+      kind: launchForm.kind,
+      amount: Number(launchForm.amount),
+      date: launchForm.date,
+      description: launchForm.description,
+      categoryId: launchForm.categoryId,
+      origin: launchForm.kind === "income" ? launchForm.origin || undefined : undefined,
+      expenseType: launchForm.kind === "expense" ? launchForm.expenseType : undefined,
     })
-    setExpenseForm((previous) => ({ ...previous, amount: "", description: "" }))
+    setLaunchForm((previous) => ({
+      ...previous,
+      amount: "",
+      description: "",
+      origin: "",
+      expenseType: "variable",
+    }))
   }
 
   const saveCategory = async () => {
@@ -339,6 +349,21 @@ export function FinancialDashboard() {
     })
 
     setEditingTransactionId(null)
+  }
+
+  const removeTransaction = async (transaction: FinancialTransaction) => {
+    if (!userId) return
+    const confirmed = window.confirm("Deseja realmente excluir este lancamento?")
+    if (!confirmed) return
+
+    await deleteTransaction({
+      userId,
+      transactionId: transaction.id as Id<"transactions">,
+    })
+
+    if (editingTransactionId === transaction.id) {
+      setEditingTransactionId(null)
+    }
   }
 
   const saveProduct = async () => {
@@ -428,7 +453,7 @@ export function FinancialDashboard() {
           <>
             <p className="text-xs text-muted-foreground">Financeiro</p>
             <SidebarButton icon={LayoutDashboard} label="Visao geral" isActive={activeFinanceSection === "overview"} onClick={() => setActiveFinanceSection("overview")} />
-            <SidebarButton icon={TrendingDown} label="Despesas" isActive={activeFinanceSection === "expenses"} onClick={() => setActiveFinanceSection("expenses")} />
+            <SidebarButton icon={TrendingDown} label="Lancamentos" isActive={activeFinanceSection === "expenses"} onClick={() => setActiveFinanceSection("expenses")} />
             <SidebarButton icon={FolderTree} label="Categorias" isActive={activeFinanceSection === "categories"} onClick={() => setActiveFinanceSection("categories")} />
             <SidebarButton icon={BarChart3} label="Relatorios" isActive={activeFinanceSection === "reports"} onClick={() => setActiveFinanceSection("reports")} />
             <SidebarButton icon={ReceiptText} label="Historico" isActive={activeFinanceSection === "history"} onClick={() => setActiveFinanceSection("history")} />
@@ -544,27 +569,53 @@ export function FinancialDashboard() {
             {activeFinanceSection === "expenses" && (
               <Card>
                 <CardHeader>
-                  <CardTitle>Registrar despesa da empresa</CardTitle>
-                  <CardDescription>Ferramentas, investimentos, saques e outros custos operacionais.</CardDescription>
+                  <CardTitle>Registrar lancamento</CardTitle>
+                  <CardDescription>Lance despesas da empresa ou entradas de capital.</CardDescription>
                 </CardHeader>
                 <CardContent className="grid gap-3 md:grid-cols-2">
-                  <Input type="number" placeholder="Valor" value={expenseForm.amount} onChange={(event) => setExpenseForm((prev) => ({ ...prev, amount: event.target.value }))} />
-                  <Input type="date" value={expenseForm.date} onChange={(event) => setExpenseForm((prev) => ({ ...prev, date: event.target.value }))} />
-                  <Input className="md:col-span-2" placeholder="Descricao" value={expenseForm.description} onChange={(event) => setExpenseForm((prev) => ({ ...prev, description: event.target.value }))} />
-                  <Select value={expenseForm.categoryId || undefined} onValueChange={(value) => setExpenseForm((prev) => ({ ...prev, categoryId: value as Id<"categories"> }))}>
-                    <SelectTrigger className="w-full"><SelectValue placeholder="Categoria de despesa" /></SelectTrigger>
+                  <Select
+                    value={launchForm.kind}
+                    onValueChange={(value) =>
+                      setLaunchForm((prev) => ({
+                        ...prev,
+                        kind: value as FinancialTransaction["kind"],
+                        categoryId: "",
+                      }))
+                    }
+                  >
+                    <SelectTrigger className="w-full"><SelectValue placeholder="Tipo do lancamento" /></SelectTrigger>
                     <SelectContent>
-                      {expenseCategories.map((category) => <SelectItem key={category.id} value={category.id}>{category.name}</SelectItem>)}
+                      <SelectItem value="expense">Despesa</SelectItem>
+                      <SelectItem value="income">Entrada de capital</SelectItem>
                     </SelectContent>
                   </Select>
-                  <Select value={expenseForm.expenseType} onValueChange={(value) => setExpenseForm((prev) => ({ ...prev, expenseType: value as ExpenseType }))}>
-                    <SelectTrigger className="w-full"><SelectValue placeholder="Tipo" /></SelectTrigger>
+                  <Input type="number" placeholder="Valor" value={launchForm.amount} onChange={(event) => setLaunchForm((prev) => ({ ...prev, amount: event.target.value }))} />
+                  <Input type="date" value={launchForm.date} onChange={(event) => setLaunchForm((prev) => ({ ...prev, date: event.target.value }))} />
+                  <Input className="md:col-span-2" placeholder="Descricao" value={launchForm.description} onChange={(event) => setLaunchForm((prev) => ({ ...prev, description: event.target.value }))} />
+                  <Select value={launchForm.categoryId || undefined} onValueChange={(value) => setLaunchForm((prev) => ({ ...prev, categoryId: value as Id<"categories"> }))}>
+                    <SelectTrigger className="w-full"><SelectValue placeholder="Categoria" /></SelectTrigger>
                     <SelectContent>
-                      <SelectItem value="fixed">Fixo</SelectItem>
-                      <SelectItem value="variable">Variavel</SelectItem>
+                      {(launchForm.kind === "income" ? incomeCategories : expenseCategories).map((category) => (
+                        <SelectItem key={category.id} value={category.id}>{category.name}</SelectItem>
+                      ))}
                     </SelectContent>
                   </Select>
-                  <Button className="md:col-span-2" onClick={saveExpense}>Salvar despesa</Button>
+                  {launchForm.kind === "expense" ? (
+                    <Select value={launchForm.expenseType} onValueChange={(value) => setLaunchForm((prev) => ({ ...prev, expenseType: value as ExpenseType }))}>
+                      <SelectTrigger className="w-full"><SelectValue placeholder="Tipo da despesa" /></SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="fixed">Fixo</SelectItem>
+                        <SelectItem value="variable">Variavel</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  ) : (
+                    <Input
+                      placeholder="Origem da entrada (ex: aporte)"
+                      value={launchForm.origin}
+                      onChange={(event) => setLaunchForm((prev) => ({ ...prev, origin: event.target.value }))}
+                    />
+                  )}
+                  <Button className="md:col-span-2" onClick={saveLaunch}>Salvar lancamento</Button>
                 </CardContent>
               </Card>
             )}
@@ -778,13 +829,22 @@ export function FinancialDashboard() {
                             {transaction.origin === "Venda online" ? (
                               <Badge variant="secondary">Editar no estoque</Badge>
                             ) : (
-                              <Button
-                                size="sm"
-                                variant="outline"
-                                onClick={() => startEditTransaction(transaction)}
-                              >
-                                Editar
-                              </Button>
+                              <div className="flex gap-2">
+                                <Button
+                                  size="sm"
+                                  variant="outline"
+                                  onClick={() => startEditTransaction(transaction)}
+                                >
+                                  Editar
+                                </Button>
+                                <Button
+                                  size="sm"
+                                  variant="destructive"
+                                  onClick={() => void removeTransaction(transaction)}
+                                >
+                                  Excluir
+                                </Button>
+                              </div>
                             )}
                           </TableCell>
                         </TableRow>
