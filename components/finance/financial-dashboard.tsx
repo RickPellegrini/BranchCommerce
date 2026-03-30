@@ -106,6 +106,16 @@ export function FinancialDashboard() {
   })
   const [editingCategoryId, setEditingCategoryId] = useState<Id<"categories"> | null>(null)
   const [editingCategoryName, setEditingCategoryName] = useState("")
+  const [editingTransactionId, setEditingTransactionId] = useState<Id<"transactions"> | null>(null)
+  const [transactionEditForm, setTransactionEditForm] = useState({
+    kind: "expense" as FinancialTransaction["kind"],
+    amount: "",
+    date: today,
+    description: "",
+    categoryId: "" as Id<"categories"> | "",
+    origin: "",
+    expenseType: "variable" as ExpenseType,
+  })
 
   const [productForm, setProductForm] = useState({
     name: "",
@@ -144,6 +154,7 @@ export function FinancialDashboard() {
   const addCategory = useMutation(api.finance.addCategory)
   const updateCategory = useMutation(api.finance.updateCategory)
   const addTransaction = useMutation(api.finance.addTransaction)
+  const updateTransaction = useMutation(api.finance.updateTransaction)
   const addProduct = useMutation(api.stock.addProduct)
   const addMovement = useMutation(api.stock.addMovement)
 
@@ -208,6 +219,7 @@ export function FinancialDashboard() {
 
   const productMap = useMemo(() => new Map(products.map((p) => [p.id, p])), [products])
   const expenseCategories = categories.filter((category) => category.kind === "expense")
+  const incomeCategories = categories.filter((category) => category.kind === "income")
   const categoryMap = useMemo(
     () => new Map(categories.map((category) => [category.id, category])),
     [categories],
@@ -282,6 +294,51 @@ export function FinancialDashboard() {
     })
     setEditingCategoryId(null)
     setEditingCategoryName("")
+  }
+
+  const startEditTransaction = (transaction: FinancialTransaction) => {
+    setEditingTransactionId(transaction.id as Id<"transactions">)
+    setTransactionEditForm({
+      kind: transaction.kind,
+      amount: String(transaction.amount),
+      date: transaction.date,
+      description: transaction.description,
+      categoryId: transaction.categoryId as Id<"categories">,
+      origin: transaction.origin ?? "",
+      expenseType: transaction.expenseType ?? "variable",
+    })
+  }
+
+  const saveTransactionEdit = async () => {
+    if (
+      !userId ||
+      !editingTransactionId ||
+      !transactionEditForm.amount ||
+      !transactionEditForm.description ||
+      !transactionEditForm.categoryId
+    ) {
+      return
+    }
+
+    await updateTransaction({
+      userId,
+      transactionId: editingTransactionId,
+      kind: transactionEditForm.kind,
+      amount: Number(transactionEditForm.amount),
+      date: transactionEditForm.date,
+      description: transactionEditForm.description,
+      categoryId: transactionEditForm.categoryId,
+      origin:
+        transactionEditForm.kind === "income"
+          ? transactionEditForm.origin || undefined
+          : undefined,
+      expenseType:
+        transactionEditForm.kind === "expense"
+          ? transactionEditForm.expenseType
+          : undefined,
+    })
+
+    setEditingTransactionId(null)
   }
 
   const saveProduct = async () => {
@@ -598,10 +655,112 @@ export function FinancialDashboard() {
             {activeFinanceSection === "history" && (
               <Card>
                 <CardHeader><CardTitle>Historico financeiro</CardTitle></CardHeader>
-                <CardContent>
+                <CardContent className="space-y-4">
+                  {editingTransactionId && (
+                    <div className="grid gap-3 rounded-none border border-border p-3 md:grid-cols-2">
+                      <Select
+                        value={transactionEditForm.kind}
+                        onValueChange={(value) =>
+                          setTransactionEditForm((prev) => ({
+                            ...prev,
+                            kind: value as FinancialTransaction["kind"],
+                            categoryId: "",
+                          }))
+                        }
+                      >
+                        <SelectTrigger className="w-full"><SelectValue /></SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="income">Entrada</SelectItem>
+                          <SelectItem value="expense">Despesa</SelectItem>
+                        </SelectContent>
+                      </Select>
+                      <Input
+                        type="number"
+                        placeholder="Valor"
+                        value={transactionEditForm.amount}
+                        onChange={(event) =>
+                          setTransactionEditForm((prev) => ({ ...prev, amount: event.target.value }))
+                        }
+                      />
+                      <Input
+                        type="date"
+                        value={transactionEditForm.date}
+                        onChange={(event) =>
+                          setTransactionEditForm((prev) => ({ ...prev, date: event.target.value }))
+                        }
+                      />
+                      <Select
+                        value={transactionEditForm.categoryId || undefined}
+                        onValueChange={(value) =>
+                          setTransactionEditForm((prev) => ({
+                            ...prev,
+                            categoryId: value as Id<"categories">,
+                          }))
+                        }
+                      >
+                        <SelectTrigger className="w-full"><SelectValue placeholder="Categoria" /></SelectTrigger>
+                        <SelectContent>
+                          {(transactionEditForm.kind === "income"
+                            ? incomeCategories
+                            : expenseCategories
+                          ).map((category) => (
+                            <SelectItem key={category.id} value={category.id}>
+                              {category.name}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                      <Input
+                        className="md:col-span-2"
+                        placeholder="Descricao"
+                        value={transactionEditForm.description}
+                        onChange={(event) =>
+                          setTransactionEditForm((prev) => ({
+                            ...prev,
+                            description: event.target.value,
+                          }))
+                        }
+                      />
+                      {transactionEditForm.kind === "income" ? (
+                        <Input
+                          className="md:col-span-2"
+                          placeholder="Origem da receita"
+                          value={transactionEditForm.origin}
+                          onChange={(event) =>
+                            setTransactionEditForm((prev) => ({
+                              ...prev,
+                              origin: event.target.value,
+                            }))
+                          }
+                        />
+                      ) : (
+                        <Select
+                          value={transactionEditForm.expenseType}
+                          onValueChange={(value) =>
+                            setTransactionEditForm((prev) => ({
+                              ...prev,
+                              expenseType: value as ExpenseType,
+                            }))
+                          }
+                        >
+                          <SelectTrigger className="w-full md:col-span-2"><SelectValue /></SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="fixed">Fixo</SelectItem>
+                            <SelectItem value="variable">Variavel</SelectItem>
+                          </SelectContent>
+                        </Select>
+                      )}
+                      <div className="flex gap-2 md:col-span-2">
+                        <Button onClick={saveTransactionEdit}>Salvar alteracoes</Button>
+                        <Button variant="outline" onClick={() => setEditingTransactionId(null)}>
+                          Cancelar
+                        </Button>
+                      </div>
+                    </div>
+                  )}
                   <Table>
                     <TableHeader>
-                      <TableRow><TableHead>Data</TableHead><TableHead>Descricao</TableHead><TableHead>Categoria</TableHead><TableHead>Tipo</TableHead><TableHead className="text-right">Valor</TableHead></TableRow>
+                      <TableRow><TableHead>Data</TableHead><TableHead>Descricao</TableHead><TableHead>Categoria</TableHead><TableHead>Tipo</TableHead><TableHead className="text-right">Valor</TableHead><TableHead>Acoes</TableHead></TableRow>
                     </TableHeader>
                     <TableBody>
                       {filteredTransactions.slice().sort((a, b) => b.date.localeCompare(a.date)).map((transaction) => (
@@ -615,6 +774,19 @@ export function FinancialDashboard() {
                             </Badge>
                           </TableCell>
                           <TableCell className="text-right">{formatCurrency(transaction.amount)}</TableCell>
+                          <TableCell>
+                            {transaction.origin === "Venda online" ? (
+                              <Badge variant="secondary">Editar no estoque</Badge>
+                            ) : (
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                onClick={() => startEditTransaction(transaction)}
+                              >
+                                Editar
+                              </Button>
+                            )}
+                          </TableCell>
                         </TableRow>
                       ))}
                     </TableBody>
