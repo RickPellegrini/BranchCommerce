@@ -145,6 +145,26 @@ export const updateTransaction = mutation({
   },
 });
 
+export const deleteTransaction = mutation({
+  args: {
+    userId: v.string(),
+    transactionId: v.id("transactions"),
+  },
+  handler: async (ctx, args) => {
+    const transaction = await ctx.db.get(args.transactionId);
+    if (!transaction || transaction.userId !== args.userId) {
+      throw new Error("Lancamento nao encontrado.");
+    }
+
+    // Sales linked to stock movement must be managed in estoque module.
+    if (transaction.origin === "Venda online") {
+      throw new Error("Lancamentos de venda devem ser alterados no estoque.");
+    }
+
+    await ctx.db.delete(args.transactionId);
+  },
+});
+
 export const addBill = mutation({
   args: {
     userId: v.string(),
