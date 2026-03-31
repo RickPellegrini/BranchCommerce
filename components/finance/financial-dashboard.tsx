@@ -172,6 +172,7 @@ export function FinancialDashboard() {
     sampleSize: number
   } | null>(null)
   const [mlError, setMlError] = useState<string | null>(null)
+  const [mlInfo, setMlInfo] = useState<string | null>(null)
 
   const financeData = useQuery(
     api.finance.getDashboardData,
@@ -203,6 +204,38 @@ export function FinancialDashboard() {
     if (!userId || isSetupDone) return
     void ensureEcommerceSetup({ userId }).then(() => setIsSetupDone(true))
   }, [ensureEcommerceSetup, isSetupDone, userId])
+
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search)
+    const mlErrorCode = params.get("ml_error")
+    const mlConnected = params.get("ml_connected")
+
+    if (!mlErrorCode && !mlConnected) return
+
+    setActiveModule("mercadolivre")
+
+    if (mlConnected === "1") {
+      setMlInfo("Conta do Mercado Livre conectada com sucesso.")
+      setMlError(null)
+    }
+
+    if (mlErrorCode) {
+      const errorMap: Record<string, string> = {
+        configuracao_oauth:
+          "Configuracao OAuth incompleta. Confira MERCADO_LIVRE_CLIENT_ID, SECRET e REDIRECT_URI.",
+        falha_conexao: "Nao foi possivel iniciar a conexao com o Mercado Livre.",
+        callback_sem_code: "Retorno do Mercado Livre sem codigo de autorizacao.",
+        state_invalido: "Falha de seguranca no OAuth (state invalido). Tente conectar novamente.",
+        falha_callback: "Nao foi possivel concluir a autenticacao do Mercado Livre.",
+      }
+
+      setMlInfo(null)
+      setMlError(errorMap[mlErrorCode] ?? `Erro no Mercado Livre: ${mlErrorCode}`)
+    }
+
+    const cleanUrl = `${window.location.pathname}`
+    window.history.replaceState({}, "", cleanUrl)
+  }, [])
 
   useEffect(() => {
     if (activeModule !== "mercadolivre") return
@@ -1433,6 +1466,7 @@ export function FinancialDashboard() {
                   </div>
                 )}
                 {mlError && <p className="text-sm text-destructive">{mlError}</p>}
+                {mlInfo && <p className="text-sm text-emerald-700">{mlInfo}</p>}
               </CardContent>
             </Card>
 

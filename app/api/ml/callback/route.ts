@@ -2,7 +2,6 @@ import { cookies } from "next/headers"
 import { NextResponse } from "next/server"
 
 import { requireAuthenticatedAppUserId } from "@/lib/auth/server"
-import { jsonError } from "@/lib/mercadolivre/http"
 import { exchangeCodeForTokens } from "@/lib/mercadolivre/oauth"
 import { parseTokenToConnection, upsertMlConnection } from "@/lib/mercadolivre/storage"
 
@@ -19,7 +18,7 @@ export async function GET(request: Request) {
   }
 
   if (!code) {
-    return jsonError("Parametro code ausente no callback do Mercado Livre.", 400)
+    return NextResponse.redirect(new URL("/dashboard?ml_error=callback_sem_code", request.url))
   }
 
   try {
@@ -27,7 +26,7 @@ export async function GET(request: Request) {
     const cookieStore = await cookies()
     const expectedState = cookieStore.get(STATE_COOKIE)?.value
     if (!expectedState || !state || state !== expectedState) {
-      return jsonError("State OAuth invalido.", 400)
+      return NextResponse.redirect(new URL("/dashboard?ml_error=state_invalido", request.url))
     }
 
     const token = await exchangeCodeForTokens(code)
@@ -39,12 +38,8 @@ export async function GET(request: Request) {
     return response
   } catch (error) {
     if (error instanceof Error && error.message.includes("nao autenticado")) {
-      return jsonError("Usuario nao autenticado.", 401)
+      return NextResponse.redirect(new URL("/sign-in", request.url))
     }
-    return jsonError(
-      "Falha ao concluir autenticacao com Mercado Livre.",
-      500,
-      error instanceof Error ? error.message : "Erro desconhecido",
-    )
+    return NextResponse.redirect(new URL("/dashboard?ml_error=falha_callback", request.url))
   }
 }
