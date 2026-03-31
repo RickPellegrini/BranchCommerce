@@ -49,7 +49,7 @@ import type {
 } from "@/lib/finance/types"
 import { cn } from "@/lib/utils"
 
-type ModuleKey = "home" | "finance" | "stock" | "mercadolivre"
+type ModuleKey = "home" | "finance" | "stock" | "mercadolivre" | "branchhunter"
 type FinanceSection = "overview" | "expenses" | "categories" | "reports" | "history"
 type StockSection = "overview" | "products" | "movements" | "history"
 
@@ -681,6 +681,18 @@ export function FinancialDashboard() {
             onClick={() => setActiveModule("mercadolivre")}
           >
             Mercado Livre
+          </Button>
+          <Button
+            size="sm"
+            variant="outline"
+            className={cn(
+              activeModule === "branchhunter"
+                ? "border-emerald-600 bg-emerald-600 text-white hover:bg-emerald-700"
+                : "border-emerald-600 text-emerald-700 hover:bg-emerald-50",
+            )}
+            onClick={() => setActiveModule("branchhunter")}
+          >
+            Branch Hunter
           </Button>
         </div>
         <Separator />
@@ -1459,6 +1471,31 @@ export function FinancialDashboard() {
               </Card>
             )}
           </section>
+        )}
+
+        {activeModule === "branchhunter" && (
+          <Card className="border-emerald-600/40">
+            <CardHeader>
+              <CardTitle className="text-emerald-700">Branch Hunter</CardTitle>
+              <CardDescription>
+                Ferramenta de calculo de payout para anuncios e operacoes de marketplace.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-3">
+              <p className="text-sm text-muted-foreground">
+                Baixe o pacote da extensao para instalar no Chrome/Edge e usar a calculadora
+                diretamente na pagina do anuncio.
+              </p>
+              <Button
+                className="bg-emerald-600 text-white hover:bg-emerald-700"
+                onClick={() => {
+                  window.location.href = "/api/branch-hunter/download"
+                }}
+              >
+                Baixar extensao Branch Hunter (.zip)
+              </Button>
+            </CardContent>
+          </Card>
         )}
       </section>
     </main>
