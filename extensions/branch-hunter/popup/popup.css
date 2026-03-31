@@ -32,6 +32,21 @@ body {
   font-size: 18px;
 }
 
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.brand-logo {
+  width: 34px;
+  height: 34px;
+  border-radius: 9px;
+  object-fit: cover;
+  border: 1px solid var(--border);
+  background: #fff;
+}
+
 .header p {
   margin: 2px 0 0;
   color: var(--muted);
@@ -79,6 +94,14 @@ label {
 }
 
 input {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 7px 8px;
+  font-size: 13px;
+  background: #fff;
+}
+
+select {
   border: 1px solid var(--border);
   border-radius: 8px;
   padding: 7px 8px;
@@ -134,4 +157,10 @@ input:focus {
 
 .result-row strong {
   font-size: 13px;
+}
+
+.status {
+  margin: 0;
+  font-size: 12px;
+  color: var(--muted);
 }

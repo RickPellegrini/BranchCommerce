@@ -87,12 +87,25 @@ export async function getValidMlConnection(appUserId: string) {
 }
 
 export async function fetchMlApi<T>(path: string, accessToken: string): Promise<T> {
+  return requestMlApi<T>(path, accessToken, { method: "GET" })
+}
+
+export async function requestMlApi<T>(
+  path: string,
+  accessToken: string,
+  init?: {
+    method?: "GET" | "PUT" | "POST"
+    body?: unknown
+  },
+): Promise<T> {
   const response = await fetch(`${getMercadoLivreConfig().apiUrl}${path}`, {
-    method: "GET",
+    method: init?.method ?? "GET",
     headers: {
       Authorization: `Bearer ${accessToken}`,
       Accept: "application/json",
+      ...(init?.body ? { "Content-Type": "application/json" } : {}),
     },
+    ...(init?.body ? { body: JSON.stringify(init.body) } : {}),
     cache: "no-store",
   })
 

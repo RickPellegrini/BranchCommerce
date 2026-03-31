@@ -10,6 +10,8 @@ type MlItemsSearchResponse = {
 type MlOrdersResponse = {
   results: Array<{
     total_amount?: number
+    status?: string
+    date_created?: string
   }>
   paging?: { total?: number }
 }
@@ -33,12 +35,25 @@ export async function GET() {
       (total, order) => total + (order.total_amount ?? 0),
       0,
     )
+    const completedOrders = ordersPayload.results.filter(
+      (order) => order.status === "paid" || order.status === "confirmed",
+    ).length
+    const cancelledOrders = ordersPayload.results.filter(
+      (order) => order.status === "cancelled",
+    ).length
+    const averageTicket =
+      ordersPayload.results.length > 0 ? grossAmount / ordersPayload.results.length : 0
+    const lastOrderDate = ordersPayload.results[0]?.date_created ?? null
 
     return jsonOk({
       listingsTotal: listingsPayload.paging?.total ?? 0,
       ordersTotal: ordersPayload.paging?.total ?? 0,
       grossAmountSample: grossAmount,
       sampleSize: ordersPayload.results.length,
+      completedOrdersSample: completedOrders,
+      cancelledOrdersSample: cancelledOrders,
+      averageTicketSample: averageTicket,
+      lastOrderDate,
     })
   } catch (error) {
     if (error instanceof Error && error.message.includes("nao autenticado")) {

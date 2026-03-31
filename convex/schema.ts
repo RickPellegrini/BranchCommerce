@@ -43,6 +43,8 @@ export default defineSchema({
     userId: v.string(),
     name: v.string(),
     sku: v.string(),
+    mlItemId: v.optional(v.string()),
+    imageUrl: v.optional(v.string()),
     category: v.string(),
     quantity: v.number(),
     minStock: v.number(),
@@ -52,7 +54,8 @@ export default defineSchema({
     updatedAt: v.number(),
   })
     .index("by_user", ["userId"])
-    .index("by_user_sku", ["userId", "sku"]),
+    .index("by_user_sku", ["userId", "sku"])
+    .index("by_user_ml_item", ["userId", "mlItemId"]),
 
   stockMovements: defineTable({
     userId: v.string(),

@@ -33,55 +33,9 @@ export const addProduct = mutation({
     sellingPrice: v.optional(v.number()),
   },
   handler: async (ctx, args) => {
-    const normalizedSku = args.sku.trim().toUpperCase()
-    const normalizedName = args.name.trim()
-    const normalizedCategory = args.category.trim()
-
-    if (!normalizedSku || !normalizedName || !normalizedCategory) {
-      throw new Error("Preencha nome, SKU e categoria do produto.")
-    }
-    if (args.quantity < 0 || args.minStock < 0 || args.unitCost < 0) {
-      throw new Error("Quantidade, estoque minimo e custo devem ser maiores ou iguais a zero.")
-    }
-
-    const existing = await ctx.db
-      .query("stockProducts")
-      .withIndex("by_user_sku", (queryBuilder) =>
-        queryBuilder.eq("userId", args.userId).eq("sku", normalizedSku),
-      )
-      .first()
-
-    if (existing) {
-      throw new Error("SKU ja existe no estoque.")
-    }
-
-    const timestamp = Date.now()
-    const productId = await ctx.db.insert("stockProducts", {
-      userId: args.userId,
-      name: normalizedName,
-      sku: normalizedSku,
-      category: normalizedCategory,
-      quantity: args.quantity,
-      minStock: args.minStock,
-      unitCost: args.unitCost,
-      sellingPrice: args.sellingPrice,
-      createdAt: timestamp,
-      updatedAt: timestamp,
-    })
-
-    if (args.quantity > 0) {
-      await ctx.db.insert("stockMovements", {
-        userId: args.userId,
-        productId,
-        type: "in",
-        quantity: args.quantity,
-        date: new Date().toISOString().slice(0, 10),
-        note: "Estoque inicial",
-        createdAt: timestamp,
-      })
-    }
-
-    return productId
+    void ctx
+    void args
+    throw new Error("Cadastro manual de produtos desativado. Use sincronizacao do Mercado Livre.")
   },
 })
 
@@ -135,6 +89,138 @@ export const updateProduct = mutation({
       sellingPrice: args.sellingPrice,
       updatedAt: Date.now(),
     })
+  },
+})
+
+export const syncFromMercadoLivre = mutation({
+  args: {
+    userId: v.string(),
+    listings: v.array(
+      v.object({
+        id: v.string(),
+        title: v.string(),
+        price: v.number(),
+        availableQuantity: v.number(),
+        thumbnail: v.optional(v.string()),
+        sku: v.optional(v.string()),
+      }),
+    ),
+  },
+  handler: async (ctx, args) => {
+    const now = Date.now()
+    const today = new Date().toISOString().slice(0, 10)
+    let created = 0
+    let updated = 0
+    let removedManual = 0
+
+    const existingProducts = await ctx.db
+      .query("stockProducts")
+      .withIndex("by_user", (queryBuilder) => queryBuilder.eq("userId", args.userId))
+      .collect()
+
+    const manualProducts = existingProducts.filter((product) => !product.mlItemId)
+
+    for (const manualProduct of manualProducts) {
+      const movements = await ctx.db
+        .query("stockMovements")
+        .withIndex("by_user_product", (queryBuilder) =>
+          queryBuilder.eq("userId", args.userId).eq("productId", manualProduct._id),
+        )
+        .collect()
+
+      for (const movement of movements) {
+        await ctx.db.delete(movement._id)
+      }
+
+      await ctx.db.delete(manualProduct._id)
+      removedManual += 1
+    }
+
+    for (const listing of args.listings) {
+      const normalizedSku = (listing.sku?.trim().toUpperCase() || listing.id).slice(0, 64)
+      const nextQuantity = Math.max(0, Math.floor(listing.availableQuantity))
+
+      const byMlItem = await ctx.db
+        .query("stockProducts")
+        .withIndex("by_user_ml_item", (queryBuilder) =>
+          queryBuilder.eq("userId", args.userId).eq("mlItemId", listing.id),
+        )
+        .first()
+
+      const bySku = byMlItem
+        ? null
+        : await ctx.db
+            .query("stockProducts")
+            .withIndex("by_user_sku", (queryBuilder) =>
+              queryBuilder.eq("userId", args.userId).eq("sku", normalizedSku),
+            )
+            .first()
+
+      const existing = byMlItem ?? bySku
+
+      if (existing) {
+        await ctx.db.patch(existing._id, {
+          name: listing.title,
+          sku: existing.sku || normalizedSku,
+          mlItemId: listing.id,
+          imageUrl: listing.thumbnail,
+          quantity: nextQuantity,
+          sellingPrice: listing.price,
+          updatedAt: now,
+        })
+
+        if (existing.quantity !== nextQuantity) {
+          await ctx.db.insert("stockMovements", {
+            userId: args.userId,
+            productId: existing._id,
+            type: "adjustment",
+            quantity: nextQuantity,
+            date: today,
+            note: `Sincronizacao ML: ${existing.quantity} -> ${nextQuantity}`,
+            createdAt: now,
+          })
+        }
+
+        updated += 1
+        continue
+      }
+
+      const productId = await ctx.db.insert("stockProducts", {
+        userId: args.userId,
+        name: listing.title,
+        sku: normalizedSku,
+        mlItemId: listing.id,
+        imageUrl: listing.thumbnail,
+        category: "Mercado Livre",
+        quantity: nextQuantity,
+        minStock: 0,
+        unitCost: 0,
+        sellingPrice: listing.price,
+        createdAt: now,
+        updatedAt: now,
+      })
+
+      if (nextQuantity > 0) {
+        await ctx.db.insert("stockMovements", {
+          userId: args.userId,
+          productId,
+          type: "in",
+          quantity: nextQuantity,
+          date: today,
+          note: "Importado do Mercado Livre",
+          createdAt: now,
+        })
+      }
+
+      created += 1
+    }
+
+    return {
+      created,
+      updated,
+      removedManual,
+      total: args.listings.length,
+    }
   },
 })
 

@@ -7,7 +7,7 @@
     "default_title": "Branch Hunter",
     "default_popup": "popup/popup.html"
   },
-  "permissions": ["storage", "activeTab"],
+  "permissions": ["storage"],
   "host_permissions": [
     "*://*.mercadolivre.com.br/*",
     "*://*.mercadolivre.com/*"
@@ -21,7 +21,14 @@
         "*://*.mercadolivre.com.br/*",
         "*://*.mercadolivre.com/*"
       ],
-      "js": ["src/content-script.js"],
+      "js": [
+        "src/domain/types.js",
+        "src/domain/hybrid-calculator.js",
+        "src/ml-page-utils.js",
+        "src/services/marketplace-dynamic-data.js",
+        "src/storage.js",
+        "src/content-script.js"
+      ],
       "run_at": "document_idle"
     }
   ]
