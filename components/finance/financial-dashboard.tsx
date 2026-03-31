@@ -247,7 +247,13 @@ export function FinancialDashboard() {
         const response = await fetch("/api/ml/account", { cache: "no-store" })
         const payload = await response.json()
         if (!response.ok || !payload.ok) {
-          throw new Error(payload.error ?? "Falha ao carregar status do Mercado Livre.")
+          const details =
+            typeof payload.details === "string"
+              ? ` (${payload.details})`
+              : payload.details
+                ? ` (${JSON.stringify(payload.details)})`
+                : ""
+          throw new Error((payload.error ?? "Falha ao carregar status do Mercado Livre.") + details)
         }
         setMlConnectionStatus(payload.data as MlConnectionStatus)
       } catch (error) {
