@@ -129,6 +129,16 @@ export function FinancialDashboard() {
     unitCost: "",
     sellingPrice: "",
   })
+  const [editingProductId, setEditingProductId] = useState<Id<"stockProducts"> | null>(null)
+  const [productEditForm, setProductEditForm] = useState({
+    name: "",
+    sku: "",
+    category: "",
+    quantity: "",
+    minStock: "",
+    unitCost: "",
+    sellingPrice: "",
+  })
   const [productFeedback, setProductFeedback] = useState<{
     type: "success" | "error"
     message: string
@@ -164,6 +174,8 @@ export function FinancialDashboard() {
   const updateTransaction = useMutation(api.finance.updateTransaction)
   const deleteTransaction = useMutation(api.finance.deleteTransaction)
   const addProduct = useMutation(api.stock.addProduct)
+  const updateProduct = useMutation(api.stock.updateProduct)
+  const deleteProduct = useMutation(api.stock.deleteProduct)
   const addMovement = useMutation(api.stock.addMovement)
 
   useEffect(() => {
@@ -425,6 +437,94 @@ export function FinancialDashboard() {
       setProductFeedback({
         type: "error",
         message: error instanceof Error ? error.message : "Nao foi possivel adicionar o produto.",
+      })
+    }
+  }
+
+  const startEditProduct = (product: StockProduct) => {
+    setEditingProductId(product.id as Id<"stockProducts">)
+    setProductEditForm({
+      name: product.name,
+      sku: product.sku,
+      category: product.category,
+      quantity: String(product.quantity),
+      minStock: String(product.minStock),
+      unitCost: String(product.unitCost),
+      sellingPrice: product.sellingPrice ? String(product.sellingPrice) : "",
+    })
+  }
+
+  const saveProductEdit = async () => {
+    if (
+      !userId ||
+      !editingProductId ||
+      !productEditForm.name ||
+      !productEditForm.sku ||
+      !productEditForm.category ||
+      !productEditForm.quantity ||
+      !productEditForm.minStock ||
+      !productEditForm.unitCost
+    ) {
+      return
+    }
+
+    const quantity = Number(productEditForm.quantity)
+    const minStock = Number(productEditForm.minStock)
+    const unitCost = Number(productEditForm.unitCost)
+    const sellingPrice = productEditForm.sellingPrice ? Number(productEditForm.sellingPrice) : undefined
+
+    if (
+      Number.isNaN(quantity) ||
+      Number.isNaN(minStock) ||
+      Number.isNaN(unitCost) ||
+      (productEditForm.sellingPrice && Number.isNaN(sellingPrice))
+    ) {
+      setProductFeedback({ type: "error", message: "Use apenas numeros validos nos campos numericos." })
+      return
+    }
+
+    try {
+      await updateProduct({
+        userId,
+        productId: editingProductId,
+        name: productEditForm.name,
+        sku: productEditForm.sku,
+        category: productEditForm.category,
+        quantity,
+        minStock,
+        unitCost,
+        sellingPrice,
+      })
+      setEditingProductId(null)
+      setProductFeedback({ type: "success", message: "Produto atualizado com sucesso." })
+    } catch (error) {
+      setProductFeedback({
+        type: "error",
+        message: error instanceof Error ? error.message : "Nao foi possivel atualizar o produto.",
+      })
+    }
+  }
+
+  const removeProduct = async (product: StockProduct) => {
+    if (!userId) return
+    const confirmed = window.confirm(
+      `Deseja excluir o produto "${product.name}"? Isso removera tambem o historico de movimentacoes deste item.`,
+    )
+    if (!confirmed) return
+
+    try {
+      await deleteProduct({
+        userId,
+        productId: product.id as Id<"stockProducts">,
+      })
+      if (editingProductId === product.id) {
+        setEditingProductId(null)
+      }
+      setProductFeedback({ type: "success", message: "Produto removido com sucesso." })
+    } catch (error) {
+      setProductFeedback({
+        type: "error",
+        message: error instanceof Error ? error.message : "Nao foi possivel remover o produto.",
       })
     }
   }
@@ -918,6 +1018,129 @@ export function FinancialDashboard() {
                             <TableCell>{product.sku}</TableCell>
                             <TableCell>{product.quantity}</TableCell>
                             <TableCell>{product.minStock}</TableCell>
+                          </TableRow>
+                        ))}
+                      </TableBody>
+                    </Table>
+                  </CardContent>
+                </Card>
+                <Card>
+                  <CardHeader>
+                    <CardTitle>Produtos em estoque</CardTitle>
+                    <CardDescription>Edite ou exclua itens individualmente.</CardDescription>
+                  </CardHeader>
+                  <CardContent className="space-y-4">
+                    {productFeedback && (
+                      <p
+                        className={cn(
+                          "text-sm",
+                          productFeedback.type === "success" ? "text-primary" : "text-destructive",
+                        )}
+                      >
+                        {productFeedback.message}
+                      </p>
+                    )}
+                    {editingProductId && (
+                      <div className="grid gap-3 rounded-none border border-border p-3 md:grid-cols-2">
+                        <Input
+                          placeholder="Nome do produto"
+                          value={productEditForm.name}
+                          onChange={(event) =>
+                            setProductEditForm((prev) => ({ ...prev, name: event.target.value }))
+                          }
+                        />
+                        <Input
+                          placeholder="SKU"
+                          value={productEditForm.sku}
+                          onChange={(event) =>
+                            setProductEditForm((prev) => ({ ...prev, sku: event.target.value }))
+                          }
+                        />
+                        <Input
+                          placeholder="Categoria"
+                          value={productEditForm.category}
+                          onChange={(event) =>
+                            setProductEditForm((prev) => ({ ...prev, category: event.target.value }))
+                          }
+                        />
+                        <Input
+                          type="number"
+                          placeholder="Quantidade"
+                          value={productEditForm.quantity}
+                          onChange={(event) =>
+                            setProductEditForm((prev) => ({ ...prev, quantity: event.target.value }))
+                          }
+                        />
+                        <Input
+                          type="number"
+                          placeholder="Estoque minimo"
+                          value={productEditForm.minStock}
+                          onChange={(event) =>
+                            setProductEditForm((prev) => ({ ...prev, minStock: event.target.value }))
+                          }
+                        />
+                        <Input
+                          type="number"
+                          placeholder="Custo unitario"
+                          value={productEditForm.unitCost}
+                          onChange={(event) =>
+                            setProductEditForm((prev) => ({ ...prev, unitCost: event.target.value }))
+                          }
+                        />
+                        <Input
+                          type="number"
+                          placeholder="Preco de venda (opcional)"
+                          className="md:col-span-2"
+                          value={productEditForm.sellingPrice}
+                          onChange={(event) =>
+                            setProductEditForm((prev) => ({ ...prev, sellingPrice: event.target.value }))
+                          }
+                        />
+                        <div className="flex gap-2 md:col-span-2">
+                          <Button onClick={saveProductEdit}>Salvar alteracoes</Button>
+                          <Button variant="outline" onClick={() => setEditingProductId(null)}>
+                            Cancelar
+                          </Button>
+                        </div>
+                      </div>
+                    )}
+                    <Table>
+                      <TableHeader>
+                        <TableRow>
+                          <TableHead>Produto</TableHead>
+                          <TableHead>SKU</TableHead>
+                          <TableHead>Categoria</TableHead>
+                          <TableHead>Qtd</TableHead>
+                          <TableHead>Minimo</TableHead>
+                          <TableHead className="text-right">Acoes</TableHead>
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        {products.map((product) => (
+                          <TableRow key={product.id}>
+                            <TableCell>{product.name}</TableCell>
+                            <TableCell>{product.sku}</TableCell>
+                            <TableCell>{product.category}</TableCell>
+                            <TableCell>{product.quantity}</TableCell>
+                            <TableCell>{product.minStock}</TableCell>
+                            <TableCell className="text-right">
+                              <div className="flex justify-end gap-2">
+                                <Button
+                                  size="sm"
+                                  variant="outline"
+                                  onClick={() => startEditProduct(product)}
+                                >
+                                  Editar
+                                </Button>
+                                <Button
+                                  size="sm"
+                                  variant="destructive"
+                                  onClick={() => void removeProduct(product)}
+                                >
+                                  Excluir
+                                </Button>
+                              </div>
+                            </TableCell>
                           </TableRow>
                         ))}
                       </TableBody>
