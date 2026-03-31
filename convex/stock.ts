@@ -33,10 +33,21 @@ export const addProduct = mutation({
     sellingPrice: v.optional(v.number()),
   },
   handler: async (ctx, args) => {
+    const normalizedSku = args.sku.trim().toUpperCase()
+    const normalizedName = args.name.trim()
+    const normalizedCategory = args.category.trim()
+
+    if (!normalizedSku || !normalizedName || !normalizedCategory) {
+      throw new Error("Preencha nome, SKU e categoria do produto.")
+    }
+    if (args.quantity < 0 || args.minStock < 0 || args.unitCost < 0) {
+      throw new Error("Quantidade, estoque minimo e custo devem ser maiores ou iguais a zero.")
+    }
+
     const existing = await ctx.db
       .query("stockProducts")
       .withIndex("by_user_sku", (queryBuilder) =>
-        queryBuilder.eq("userId", args.userId).eq("sku", args.sku),
+        queryBuilder.eq("userId", args.userId).eq("sku", normalizedSku),
       )
       .first()
 
@@ -47,9 +58,9 @@ export const addProduct = mutation({
     const timestamp = Date.now()
     const productId = await ctx.db.insert("stockProducts", {
       userId: args.userId,
-      name: args.name,
-      sku: args.sku,
-      category: args.category,
+      name: normalizedName,
+      sku: normalizedSku,
+      category: normalizedCategory,
       quantity: args.quantity,
       minStock: args.minStock,
       unitCost: args.unitCost,

@@ -129,6 +129,10 @@ export function FinancialDashboard() {
     unitCost: "",
     sellingPrice: "",
   })
+  const [productFeedback, setProductFeedback] = useState<{
+    type: "success" | "error"
+    message: string
+  } | null>(null)
   const [movementForm, setMovementForm] = useState({
     productId: "" as Id<"stockProducts"> | "",
     type: "sale" as StockMovement["type"],
@@ -380,26 +384,49 @@ export function FinancialDashboard() {
       return
     }
 
-    await addProduct({
-      userId,
-      name: productForm.name,
-      sku: productForm.sku,
-      category: productForm.category,
-      quantity: Number(productForm.quantity),
-      minStock: Number(productForm.minStock),
-      unitCost: Number(productForm.unitCost),
-      sellingPrice: productForm.sellingPrice ? Number(productForm.sellingPrice) : undefined,
-    })
+    const quantity = Number(productForm.quantity)
+    const minStock = Number(productForm.minStock)
+    const unitCost = Number(productForm.unitCost)
+    const sellingPrice = productForm.sellingPrice ? Number(productForm.sellingPrice) : undefined
 
-    setProductForm({
-      name: "",
-      sku: "",
-      category: "",
-      quantity: "",
-      minStock: "",
-      unitCost: "",
-      sellingPrice: "",
-    })
+    if (
+      Number.isNaN(quantity) ||
+      Number.isNaN(minStock) ||
+      Number.isNaN(unitCost) ||
+      (productForm.sellingPrice && Number.isNaN(sellingPrice))
+    ) {
+      setProductFeedback({ type: "error", message: "Use apenas numeros validos nos campos numericos." })
+      return
+    }
+
+    try {
+      await addProduct({
+        userId,
+        name: productForm.name,
+        sku: productForm.sku,
+        category: productForm.category,
+        quantity,
+        minStock,
+        unitCost,
+        sellingPrice,
+      })
+
+      setProductForm({
+        name: "",
+        sku: "",
+        category: "",
+        quantity: "",
+        minStock: "",
+        unitCost: "",
+        sellingPrice: "",
+      })
+      setProductFeedback({ type: "success", message: "Produto adicionado com sucesso." })
+    } catch (error) {
+      setProductFeedback({
+        type: "error",
+        message: error instanceof Error ? error.message : "Nao foi possivel adicionar o produto.",
+      })
+    }
   }
 
   const saveMovement = async () => {
@@ -913,6 +940,16 @@ export function FinancialDashboard() {
                     <Input type="number" placeholder="Custo unitario" value={productForm.unitCost} onChange={(event) => setProductForm((prev) => ({ ...prev, unitCost: event.target.value }))} />
                     <Input type="number" placeholder="Preco de venda (opcional)" value={productForm.sellingPrice} onChange={(event) => setProductForm((prev) => ({ ...prev, sellingPrice: event.target.value }))} />
                     <Button onClick={saveProduct}>Salvar produto</Button>
+                    {productFeedback && (
+                      <p
+                        className={cn(
+                          "text-sm",
+                          productFeedback.type === "success" ? "text-primary" : "text-destructive",
+                        )}
+                      >
+                        {productFeedback.message}
+                      </p>
+                    )}
                   </CardContent>
                 </Card>
                 <Card>
