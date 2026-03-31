@@ -85,6 +85,85 @@ export const addProduct = mutation({
   },
 })
 
+export const updateProduct = mutation({
+  args: {
+    userId: v.string(),
+    productId: v.id("stockProducts"),
+    name: v.string(),
+    sku: v.string(),
+    category: v.string(),
+    quantity: v.number(),
+    minStock: v.number(),
+    unitCost: v.number(),
+    sellingPrice: v.optional(v.number()),
+  },
+  handler: async (ctx, args) => {
+    const product = await ctx.db.get(args.productId)
+    if (!product || product.userId !== args.userId) {
+      throw new Error("Produto nao encontrado.")
+    }
+
+    const normalizedSku = args.sku.trim().toUpperCase()
+    const normalizedName = args.name.trim()
+    const normalizedCategory = args.category.trim()
+
+    if (!normalizedSku || !normalizedName || !normalizedCategory) {
+      throw new Error("Preencha nome, SKU e categoria do produto.")
+    }
+    if (args.quantity < 0 || args.minStock < 0 || args.unitCost < 0) {
+      throw new Error("Quantidade, estoque minimo e custo devem ser maiores ou iguais a zero.")
+    }
+
+    const existing = await ctx.db
+      .query("stockProducts")
+      .withIndex("by_user_sku", (queryBuilder) =>
+        queryBuilder.eq("userId", args.userId).eq("sku", normalizedSku),
+      )
+      .first()
+
+    if (existing && existing._id !== args.productId) {
+      throw new Error("SKU ja existe no estoque.")
+    }
+
+    await ctx.db.patch(args.productId, {
+      name: normalizedName,
+      sku: normalizedSku,
+      category: normalizedCategory,
+      quantity: args.quantity,
+      minStock: args.minStock,
+      unitCost: args.unitCost,
+      sellingPrice: args.sellingPrice,
+      updatedAt: Date.now(),
+    })
+  },
+})
+
+export const deleteProduct = mutation({
+  args: {
+    userId: v.string(),
+    productId: v.id("stockProducts"),
+  },
+  handler: async (ctx, args) => {
+    const product = await ctx.db.get(args.productId)
+    if (!product || product.userId !== args.userId) {
+      throw new Error("Produto nao encontrado.")
+    }
+
+    const movements = await ctx.db
+      .query("stockMovements")
+      .withIndex("by_user_product", (queryBuilder) =>
+        queryBuilder.eq("userId", args.userId).eq("productId", args.productId),
+      )
+      .collect()
+
+    for (const movement of movements) {
+      await ctx.db.delete(movement._id)
+    }
+
+    await ctx.db.delete(args.productId)
+  },
+})
+
 export const addMovement = mutation({
   args: {
     userId: v.string(),
