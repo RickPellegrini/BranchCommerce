@@ -71,4 +71,19 @@ export default defineSchema({
   })
     .index("by_user", ["userId"])
     .index("by_user_product", ["userId", "productId"]),
+
+  mercadoLivreAccounts: defineTable({
+    appUserId: v.string(),
+    mlUserId: v.string(),
+    accessToken: v.string(),
+    refreshToken: v.string(),
+    tokenType: v.optional(v.string()),
+    scope: v.optional(v.string()),
+    expiresIn: v.number(),
+    expiresAt: v.number(),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index("by_app_user", ["appUserId"])
+    .index("by_ml_user", ["mlUserId"]),
 });

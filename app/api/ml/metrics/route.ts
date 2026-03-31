@@ -1,0 +1,56 @@
+import { jsonError, jsonOk } from "@/lib/mercadolivre/http"
+import { fetchMlApi } from "@/lib/mercadolivre/storage"
+import { requireMlConnection } from "@/lib/mercadolivre/server"
+
+type MlItemsSearchResponse = {
+  results: string[]
+  paging?: { total?: number }
+}
+
+type MlOrdersResponse = {
+  results: Array<{
+    total_amount?: number
+  }>
+  paging?: { total?: number }
+}
+
+export async function GET() {
+  try {
+    const { connection } = await requireMlConnection()
+
+    const [listingsPayload, ordersPayload] = await Promise.all([
+      fetchMlApi<MlItemsSearchResponse>(
+        `/users/${connection.mlUserId}/items/search?limit=1&offset=0`,
+        connection.accessToken,
+      ),
+      fetchMlApi<MlOrdersResponse>(
+        `/orders/search?seller=${connection.mlUserId}&sort=date_desc&limit=50&offset=0`,
+        connection.accessToken,
+      ),
+    ])
+
+    const grossAmount = ordersPayload.results.reduce(
+      (total, order) => total + (order.total_amount ?? 0),
+      0,
+    )
+
+    return jsonOk({
+      listingsTotal: listingsPayload.paging?.total ?? 0,
+      ordersTotal: ordersPayload.paging?.total ?? 0,
+      grossAmountSample: grossAmount,
+      sampleSize: ordersPayload.results.length,
+    })
+  } catch (error) {
+    if (error instanceof Error && error.message.includes("nao autenticado")) {
+      return jsonError("Usuario nao autenticado.", 401)
+    }
+    if (error instanceof Error && error.message.includes("nao conectada")) {
+      return jsonError("Conta do Mercado Livre nao conectada.", 404)
+    }
+    return jsonError(
+      "Erro ao buscar metricas do Mercado Livre.",
+      500,
+      error instanceof Error ? error.message : "Erro desconhecido",
+    )
+  }
+}
