@@ -1,6 +1,7 @@
 import { jsonError, jsonOk } from "@/lib/mercadolivre/http"
 import { requireAuthenticatedAppUserId } from "@/lib/auth/server"
 import { fetchMlApi, getMlConnectionByAppUser } from "@/lib/mercadolivre/storage"
+import { requireMlConnection } from "@/lib/mercadolivre/server"
 import type { MlUser } from "@/lib/mercadolivre/types"
 
 export async function GET() {
@@ -29,15 +30,16 @@ export async function GET() {
       })
     }
 
-    const account = await fetchMlApi<MlUser>("/users/me", connection.accessToken)
+    const { connection: validConnection } = await requireMlConnection()
+    const account = await fetchMlApi<MlUser>("/users/me", validConnection.accessToken)
 
     return jsonOk({
       appUserId,
       connected: true,
-      mlUserId: connection.mlUserId,
+      mlUserId: validConnection.mlUserId,
       mlNickname: account.nickname ?? null,
-      expiresAt: connection.expiresAt,
-      updatedAt: connection.updatedAt,
+      expiresAt: validConnection.expiresAt,
+      updatedAt: validConnection.updatedAt,
     })
   } catch (error) {
     if (error instanceof Error && error.message.includes("nao autenticado")) {
