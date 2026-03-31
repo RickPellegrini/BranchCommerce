@@ -1,129 +1,95 @@
-const INPUT_KEY = "branchHunter:lastInput";
-const LISTING_KEY = "branchHunter:lastListing";
+const SETTINGS_KEY = "branchHunter:settings";
 
-const inputIds = {
-  salePrice: "sale-price",
-  productCost: "product-cost",
-  shippingCost: "shipping-cost",
-  mlFeePercent: "ml-fee-percent",
-  taxPercent: "tax-percent",
-  fixedCost: "fixed-cost",
-};
-
-const resultIds = {
-  fee: "result-fee",
-  tax: "result-tax",
-  payout: "result-payout",
-  profit: "result-profit",
-  margin: "result-margin",
+const defaultSettings = {
+  autoInjectEnabled: true,
+  manualSaleFeePercentFallback: 16,
+  defaults: {
+    productCost: 0,
+    taxPercent: 0,
+    adsPercent: 0,
+    packagingCost: 0,
+    otherFixedCosts: 0,
+    riskPercent: 0,
+    shippingFallback: 0,
+  },
 };
 
 function parseNumber(value) {
-  const number = Number(value);
-  return Number.isFinite(number) ? number : 0;
+  const num = Number(value);
+  return Number.isFinite(num) ? num : 0;
 }
 
-function formatMoney(value) {
-  return new Intl.NumberFormat("pt-BR", {
-    style: "currency",
-    currency: "BRL",
-  }).format(value);
+function setStatus(message, success = true) {
+  const status = document.getElementById("status-message");
+  status.textContent = message;
+  status.style.color = success ? "#065f46" : "#b91c1c";
 }
 
-function formatPercent(value) {
-  return `${value.toFixed(2)}%`;
-}
-
-function getFormValues() {
+function readForm() {
   return {
-    salePrice: parseNumber(document.getElementById(inputIds.salePrice).value),
-    productCost: parseNumber(document.getElementById(inputIds.productCost).value),
-    shippingCost: parseNumber(document.getElementById(inputIds.shippingCost).value),
-    mlFeePercent: parseNumber(document.getElementById(inputIds.mlFeePercent).value),
-    taxPercent: parseNumber(document.getElementById(inputIds.taxPercent).value),
-    fixedCost: parseNumber(document.getElementById(inputIds.fixedCost).value),
+    autoInjectEnabled: document.getElementById("auto-inject-enabled").value === "true",
+    manualSaleFeePercentFallback: parseNumber(
+      document.getElementById("manual-sale-fee-percent-fallback").value,
+    ),
+    defaults: {
+      productCost: parseNumber(document.getElementById("default-product-cost").value),
+      taxPercent: parseNumber(document.getElementById("default-tax-percent").value),
+      adsPercent: parseNumber(document.getElementById("default-ads-percent").value),
+      packagingCost: parseNumber(document.getElementById("default-packaging-cost").value),
+      otherFixedCosts: parseNumber(document.getElementById("default-other-fixed-costs").value),
+      riskPercent: parseNumber(document.getElementById("default-risk-percent").value),
+      shippingFallback: parseNumber(document.getElementById("default-shipping-fallback").value),
+    },
   };
 }
 
-function setFormValues(values) {
-  Object.entries(inputIds).forEach(([key, id]) => {
-    const input = document.getElementById(id);
-    if (!input) return;
-    if (values[key] === undefined || values[key] === null) return;
-    input.value = String(values[key]);
+function writeForm(values) {
+  document.getElementById("auto-inject-enabled").value = String(values.autoInjectEnabled);
+  document.getElementById("manual-sale-fee-percent-fallback").value = String(
+    values.manualSaleFeePercentFallback,
+  );
+  document.getElementById("default-product-cost").value = String(values.defaults.productCost);
+  document.getElementById("default-tax-percent").value = String(values.defaults.taxPercent);
+  document.getElementById("default-ads-percent").value = String(values.defaults.adsPercent);
+  document.getElementById("default-packaging-cost").value = String(values.defaults.packagingCost);
+  document.getElementById("default-other-fixed-costs").value = String(
+    values.defaults.otherFixedCosts,
+  );
+  document.getElementById("default-risk-percent").value = String(values.defaults.riskPercent);
+  document.getElementById("default-shipping-fallback").value = String(
+    values.defaults.shippingFallback,
+  );
+}
+
+function saveSettings() {
+  const payload = readForm();
+  chrome.storage.local.set({ [SETTINGS_KEY]: payload }, () => {
+    setStatus("Configuracoes salvas. Recarregue o anuncio para aplicar.");
   });
 }
 
-function calculate() {
-  const values = getFormValues();
-  const mlFeeValue = values.salePrice * (values.mlFeePercent / 100);
-  const taxValue = values.salePrice * (values.taxPercent / 100);
-  const payout = values.salePrice - mlFeeValue - values.shippingCost - taxValue;
-  const netProfit = payout - values.productCost - values.fixedCost;
-  const netMargin = values.salePrice > 0 ? (netProfit / values.salePrice) * 100 : 0;
-
-  document.getElementById(resultIds.fee).textContent = formatMoney(mlFeeValue);
-  document.getElementById(resultIds.tax).textContent = formatMoney(taxValue);
-  document.getElementById(resultIds.payout).textContent = formatMoney(payout);
-  document.getElementById(resultIds.profit).textContent = formatMoney(netProfit);
-  document.getElementById(resultIds.margin).textContent = formatPercent(netMargin);
-
-  chrome.storage.local.set({
-    [INPUT_KEY]: values,
-  });
-}
-
-function resetForm() {
-  setFormValues({
-    salePrice: "",
-    productCost: "",
-    shippingCost: 0,
-    mlFeePercent: 16,
-    taxPercent: 0,
-    fixedCost: 0,
-  });
-  calculate();
-}
-
-function renderListing(listing) {
-  const titleElement = document.getElementById("listing-title");
-  const urlElement = document.getElementById("listing-url");
-  if (!listing) {
-    titleElement.textContent = "Nenhum anuncio detectado";
-    urlElement.textContent = "";
-    return;
-  }
-
-  titleElement.textContent = listing.title || "Anuncio detectado";
-  urlElement.textContent = listing.url || "";
-}
-
-function useListingPrice() {
-  chrome.storage.local.get([LISTING_KEY], (data) => {
-    const listing = data[LISTING_KEY];
-    if (!listing || typeof listing.price !== "number") return;
-    setFormValues({ salePrice: listing.price });
-    calculate();
+function resetSettings() {
+  writeForm(defaultSettings);
+  chrome.storage.local.set({ [SETTINGS_KEY]: defaultSettings }, () => {
+    setStatus("Padrao restaurado.", true);
   });
 }
 
 function boot() {
-  chrome.storage.local.get([INPUT_KEY, LISTING_KEY], (data) => {
-    const savedInput = data[INPUT_KEY];
-    if (savedInput) setFormValues(savedInput);
-
-    renderListing(data[LISTING_KEY]);
-
-    if (!savedInput?.salePrice && typeof data[LISTING_KEY]?.price === "number") {
-      setFormValues({ salePrice: data[LISTING_KEY].price });
-    }
-
-    calculate();
+  chrome.storage.local.get([SETTINGS_KEY], (data) => {
+    const persisted = data[SETTINGS_KEY] || {};
+    writeForm({
+      ...defaultSettings,
+      ...persisted,
+      defaults: {
+        ...defaultSettings.defaults,
+        ...(persisted.defaults || {}),
+      },
+    });
   });
 
-  document.getElementById("calculate").addEventListener("click", calculate);
-  document.getElementById("reset").addEventListener("click", resetForm);
-  document.getElementById("use-page-data").addEventListener("click", useListingPrice);
+  document.getElementById("save-settings").addEventListener("click", saveSettings);
+  document.getElementById("reset-settings").addEventListener("click", resetSettings);
 }
 
 boot();
