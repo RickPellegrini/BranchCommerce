@@ -1,0 +1,28 @@
+{
+  "manifest_version": 3,
+  "name": "Branch Hunter",
+  "description": "Calculadora de payout para anuncios do Mercado Livre.",
+  "version": "0.1.0",
+  "action": {
+    "default_title": "Branch Hunter",
+    "default_popup": "popup/popup.html"
+  },
+  "permissions": ["storage", "activeTab"],
+  "host_permissions": [
+    "*://*.mercadolivre.com.br/*",
+    "*://*.mercadolivre.com/*"
+  ],
+  "background": {
+    "service_worker": "src/background.js"
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "*://*.mercadolivre.com.br/*",
+        "*://*.mercadolivre.com/*"
+      ],
+      "js": ["src/content-script.js"],
+      "run_at": "document_idle"
+    }
+  ]
+}

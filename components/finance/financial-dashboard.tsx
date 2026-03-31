@@ -49,7 +49,7 @@ import type {
 } from "@/lib/finance/types"
 import { cn } from "@/lib/utils"
 
-type ModuleKey = "home" | "finance" | "stock"
+type ModuleKey = "home" | "finance" | "stock" | "mercadolivre"
 type FinanceSection = "overview" | "expenses" | "categories" | "reports" | "history"
 type StockSection = "overview" | "products" | "movements" | "history"
 
@@ -73,6 +73,16 @@ type StockMovement = {
   unitPrice?: number
   note?: string
 }
+
+type MlConnectionStatus =
+  | { connected: false }
+  | {
+      connected: true
+      mlUserId: string
+      mlNickname: string | null
+      expiresAt: number
+      updatedAt: number
+    }
 
 const today = new Date().toISOString().slice(0, 10)
 
@@ -151,6 +161,17 @@ export function FinancialDashboard() {
     unitPrice: "",
     note: "",
   })
+  const [mlConnectionStatus, setMlConnectionStatus] = useState<MlConnectionStatus | null>(null)
+  const [mlLoading, setMlLoading] = useState(false)
+  const [mlListingsCount, setMlListingsCount] = useState<number | null>(null)
+  const [mlOrdersCount, setMlOrdersCount] = useState<number | null>(null)
+  const [mlMetrics, setMlMetrics] = useState<{
+    listingsTotal: number
+    ordersTotal: number
+    grossAmountSample: number
+    sampleSize: number
+  } | null>(null)
+  const [mlError, setMlError] = useState<string | null>(null)
 
   const financeData = useQuery(
     api.finance.getDashboardData,
@@ -182,6 +203,29 @@ export function FinancialDashboard() {
     if (!userId || isSetupDone) return
     void ensureEcommerceSetup({ userId }).then(() => setIsSetupDone(true))
   }, [ensureEcommerceSetup, isSetupDone, userId])
+
+  useEffect(() => {
+    if (activeModule !== "mercadolivre") return
+
+    const load = async () => {
+      setMlLoading(true)
+      setMlError(null)
+      try {
+        const response = await fetch("/api/ml/account", { cache: "no-store" })
+        const payload = await response.json()
+        if (!response.ok || !payload.ok) {
+          throw new Error(payload.error ?? "Falha ao carregar status do Mercado Livre.")
+        }
+        setMlConnectionStatus(payload.data as MlConnectionStatus)
+      } catch (error) {
+        setMlError(error instanceof Error ? error.message : "Erro ao consultar conta Mercado Livre.")
+      } finally {
+        setMlLoading(false)
+      }
+    }
+
+    void load()
+  }, [activeModule])
 
   const categories = useMemo<FinancialCategory[]>(
     () =>
@@ -543,6 +587,48 @@ export function FinancialDashboard() {
     setMovementForm((previous) => ({ ...previous, quantity: "", unitPrice: "", note: "" }))
   }
 
+  const loadMlListings = async () => {
+    setMlError(null)
+    try {
+      const response = await fetch("/api/ml/listings?limit=1", { cache: "no-store" })
+      const payload = await response.json()
+      if (!response.ok || !payload.ok) {
+        throw new Error(payload.error ?? "Falha ao buscar anuncios.")
+      }
+      setMlListingsCount(payload.data.total ?? 0)
+    } catch (error) {
+      setMlError(error instanceof Error ? error.message : "Erro ao buscar anuncios.")
+    }
+  }
+
+  const loadMlOrders = async () => {
+    setMlError(null)
+    try {
+      const response = await fetch("/api/ml/orders?limit=1", { cache: "no-store" })
+      const payload = await response.json()
+      if (!response.ok || !payload.ok) {
+        throw new Error(payload.error ?? "Falha ao buscar pedidos.")
+      }
+      setMlOrdersCount(payload.data.total ?? 0)
+    } catch (error) {
+      setMlError(error instanceof Error ? error.message : "Erro ao buscar pedidos.")
+    }
+  }
+
+  const loadMlMetrics = async () => {
+    setMlError(null)
+    try {
+      const response = await fetch("/api/ml/metrics", { cache: "no-store" })
+      const payload = await response.json()
+      if (!response.ok || !payload.ok) {
+        throw new Error(payload.error ?? "Falha ao buscar metricas.")
+      }
+      setMlMetrics(payload.data)
+    } catch (error) {
+      setMlError(error instanceof Error ? error.message : "Erro ao buscar metricas.")
+    }
+  }
+
   if (!isLoaded) {
     return (
       <main className="mx-auto flex min-h-screen w-full max-w-7xl items-center justify-center p-6">
@@ -574,7 +660,7 @@ export function FinancialDashboard() {
         </div>
         <Separator />
         <p className="text-xs text-muted-foreground">Modulos</p>
-        <div className="grid grid-cols-3 gap-2">
+        <div className="grid grid-cols-2 gap-2">
           <Button variant={activeModule === "home" ? "default" : "outline"} size="sm" onClick={() => setActiveModule("home")}>
             Home
           </Button>
@@ -583,6 +669,18 @@ export function FinancialDashboard() {
           </Button>
           <Button variant={activeModule === "stock" ? "default" : "outline"} size="sm" onClick={() => setActiveModule("stock")}>
             Estoque
+          </Button>
+          <Button
+            size="sm"
+            variant="outline"
+            className={cn(
+              activeModule === "mercadolivre"
+                ? "border-warning bg-warning text-warning-foreground hover:bg-warning/90"
+                : "border-warning text-warning hover:bg-warning/10",
+            )}
+            onClick={() => setActiveModule("mercadolivre")}
+          >
+            Mercado Livre
           </Button>
         </div>
         <Separator />
@@ -1281,6 +1379,86 @@ export function FinancialDashboard() {
               </Card>
             )}
           </>
+        )}
+
+        {activeModule === "mercadolivre" && (
+          <section className="space-y-4">
+            <Card>
+              <CardHeader>
+                <CardTitle className="text-warning">Mercado Livre</CardTitle>
+                <CardDescription>Conecte sua conta e consulte anuncios, pedidos e metricas.</CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-3">
+                {mlLoading ? (
+                  <p className="text-sm text-muted-foreground">Carregando status da conexao...</p>
+                ) : mlConnectionStatus?.connected ? (
+                  <div className="space-y-2 text-sm">
+                    <p>
+                      <span className="font-medium">Status:</span>{" "}
+                      <Badge variant="default">Conectado</Badge>
+                    </p>
+                    <p>
+                      <span className="font-medium">Conta ML:</span>{" "}
+                      {mlConnectionStatus.mlNickname ?? mlConnectionStatus.mlUserId}
+                    </p>
+                    <p className="text-muted-foreground">
+                      Token expira em: {new Date(mlConnectionStatus.expiresAt).toLocaleString("pt-BR")}
+                    </p>
+                  </div>
+                ) : (
+                  <div className="space-y-2">
+                    <p className="text-sm text-muted-foreground">
+                      Nenhuma conta conectada ao Mercado Livre.
+                    </p>
+                    <Button
+                      className="bg-warning text-warning-foreground hover:bg-warning/90"
+                      onClick={() => {
+                        window.location.href = "/api/ml/connect"
+                      }}
+                    >
+                      Conectar Mercado Livre
+                    </Button>
+                  </div>
+                )}
+                {mlError && <p className="text-sm text-destructive">{mlError}</p>}
+              </CardContent>
+            </Card>
+
+            {mlConnectionStatus?.connected && (
+              <Card>
+                <CardHeader>
+                  <CardTitle>Consultas rapidas</CardTitle>
+                </CardHeader>
+                <CardContent className="space-y-3">
+                  <div className="flex flex-wrap gap-2">
+                    <Button variant="outline" onClick={() => void loadMlListings()}>
+                      Buscar anuncios
+                    </Button>
+                    <Button variant="outline" onClick={() => void loadMlOrders()}>
+                      Buscar pedidos
+                    </Button>
+                    <Button variant="outline" onClick={() => void loadMlMetrics()}>
+                      Buscar metricas
+                    </Button>
+                  </div>
+                  <div className="grid gap-2 text-sm">
+                    {mlListingsCount !== null && <p>Anuncios totais: {mlListingsCount}</p>}
+                    {mlOrdersCount !== null && <p>Pedidos totais: {mlOrdersCount}</p>}
+                    {mlMetrics && (
+                      <>
+                        <p>Metricas - anuncios: {mlMetrics.listingsTotal}</p>
+                        <p>Metricas - pedidos: {mlMetrics.ordersTotal}</p>
+                        <p>
+                          Faturamento amostral ({mlMetrics.sampleSize} pedidos):{" "}
+                          {formatCurrency(mlMetrics.grossAmountSample)}
+                        </p>
+                      </>
+                    )}
+                  </div>
+                </CardContent>
+              </Card>
+            )}
+          </section>
         )}
       </section>
     </main>
