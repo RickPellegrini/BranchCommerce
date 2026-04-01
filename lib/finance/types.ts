@@ -1,5 +1,12 @@
 export type CategoryKind = "income" | "expense";
 export type ExpenseType = "fixed" | "variable";
+export type TransactionPeriodicity =
+  | "one_time"
+  | "weekly"
+  | "monthly"
+  | "quarterly"
+  | "semiannual"
+  | "annual";
 export type FinancialPeriod = "day" | "week" | "month";
 export type BillStatus = "paid" | "pending" | "overdue";
 export type BillKind = "payable" | "receivable";
@@ -19,6 +26,7 @@ export type FinancialTransaction = {
   categoryId: string;
   origin?: string;
   expenseType?: ExpenseType;
+  periodicity?: TransactionPeriodicity;
 };
 
 export type FinancialBill = {

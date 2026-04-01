@@ -142,12 +142,19 @@
     const shippingRealCost = apiCache?.shippingRealCost ?? null;
     const shippingRealCostSource = apiCache?.shippingRealCost ? "api" : null;
 
+    const reviewRating = apiCache?.reviewRating ?? null;
+    const reviewRatingSource =
+      typeof apiCache?.reviewRating === "number"
+        ? "api"
+        : null;
+
     return {
       ...empty,
       salePrice,
       listingType,
       saleFeePercent,
       saleFeeAmount: apiCache?.saleFeeAmount ?? null,
+      reviewRating,
       categoryId: apiCache?.categoryId ?? category.categoryId,
       categoryName: apiCache?.categoryName ?? category.categoryName,
       shippingMode: apiCache?.shippingMode ?? shippingMode,
@@ -157,6 +164,7 @@
         salePrice: salePriceSource,
         listingType: listingTypeSource,
         saleFeePercent: saleFeePercentSource,
+        reviewRating: reviewRatingSource,
         shippingEstimatedCost: shippingEstimatedCostSource,
         shippingRealCost: shippingRealCostSource,
       },

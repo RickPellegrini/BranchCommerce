@@ -15,6 +15,46 @@
     return "unknown-item";
   }
 
+  function getCandidateListingIds() {
+    const candidates = new Set();
+
+    const addId = (value) => {
+      const raw = String(value || "").toUpperCase().replace("-", "");
+      if (/^MLB\d+$/.test(raw)) candidates.add(raw);
+    };
+
+    addId(getCurrentListingId());
+
+    const url = new URL(location.href);
+    const paramKeys = ["item_id", "itemId", "product_trigger_id", "item"];
+    for (const key of paramKeys) {
+      addId(url.searchParams.get(key));
+    }
+
+    const urlMatches = location.href.match(/MLB[-]?\d+/gi) || [];
+    for (const match of urlMatches) addId(match);
+
+    const domCandidates = Array.from(
+      document.querySelectorAll("[data-item-id], [data-testid='item-id'], [id*='item-id']"),
+    );
+    for (const node of domCandidates) {
+      addId(node.getAttribute("data-item-id"));
+      addId(node.getAttribute("data-testid"));
+      addId(node.getAttribute("id"));
+      addId(node.textContent);
+    }
+
+    const scriptNodes = Array.from(document.querySelectorAll("script"));
+    for (const script of scriptNodes.slice(0, 25)) {
+      const text = script.textContent || "";
+      if (!text.includes("MLB")) continue;
+      const matches = text.match(/MLB\d{6,}/g) || [];
+      for (const match of matches) addId(match);
+    }
+
+    return Array.from(candidates).slice(0, 12);
+  }
+
   function getCurrentListingTitle() {
     const candidates = [
       document.querySelector("h1.ui-pdp-title"),
@@ -52,13 +92,55 @@
     return null;
   }
 
+
   function findBestAnchor() {
+    const buyColumnRoot =
+      document.querySelector("[data-testid='buy-box-container']") ||
+      document.querySelector(".ui-pdp-container__col.col-2") ||
+      document.querySelector(".ui-pdp-right-column");
+
+    // Priority 0: right below payment area, but only inside buy column.
+    if (buyColumnRoot) {
+      const paymentTextAnchors = Array.from(
+        buyColumnRoot.querySelectorAll("a, button, [data-testid*='payment'], [class*='payment']"),
+      ).filter((node) => {
+        const text = (node.textContent || "").trim().toLowerCase();
+        return text.includes("meios de pagamento");
+      });
+
+      for (const textNode of paymentTextAnchors) {
+        const paymentContainer =
+          textNode.closest(".ui-pdp-container__row") ||
+          textNode.closest(".ui-pdp-description") ||
+          textNode.closest(".ui-pdp-media__body") ||
+          textNode.closest("section") ||
+          textNode.parentElement;
+        if (paymentContainer) return { node: paymentContainer, mode: "after" };
+      }
+    }
+
+    // Priority 1: below product price/summary in the buy column.
+    const purchaseColumnAnchors = [
+      "[data-testid='buy-box-container'] .ui-pdp-price",
+      "[data-testid='buy-box-container'] .ui-pdp-price__second-line",
+      ".ui-pdp-container__col.col-2 .ui-pdp-price",
+      ".ui-pdp-container__col.col-2 .ui-pdp-price__second-line",
+      "[data-testid='buy-box-container']",
+      ".ui-pdp-container__col.col-2",
+      ".ui-pdp-right-column",
+    ];
+
+    for (const selector of purchaseColumnAnchors) {
+      const node = document.querySelector(selector);
+      if (node) return { node, mode: "after" };
+    }
+
     // Priority 0: exactly below "Opcoes de compra" section.
     const optionsTextNodes = Array.from(
-      document.querySelectorAll("h2, h3, h4, p, span, div"),
+      document.querySelectorAll("h2, h3, h4, [data-testid*='buy'], [class*='buy']"),
     ).filter((node) => {
       const text = node.textContent?.trim().toLowerCase() || "";
-      return text === "opcoes de compra:" || text === "opções de compra:";
+      return text.includes("opcoes de compra") || text.includes("opções de compra");
     });
 
     for (const textNode of optionsTextNodes) {
@@ -95,25 +177,13 @@
       if (node) return { node, mode: "after" };
     }
 
-    // Priority 3: right column fallback still inside product context.
-    const sideColumnAnchors = [
-      "[data-testid='buy-box-container']",
-      ".ui-pdp-right-column",
-      ".ui-pdp-container__col.col-2",
-      ".ui-pdp-actions",
-    ];
-
-    for (const selector of sideColumnAnchors) {
-      const node = document.querySelector(selector);
-      if (node) return { node, mode: "prepend" };
-    }
-
     return null;
   }
 
   globalThis.BranchHunterPageUtils = {
     parseBrazilianCurrency,
     getCurrentListingId,
+    getCandidateListingIds,
     getCurrentListingTitle,
     extractPriceFromPage,
     findBestAnchor,

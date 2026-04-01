@@ -20,6 +20,16 @@ export async function getMlConnectionByAppUser(appUserId: string) {
   return client.query(api.mercadolivre.getConnectionByAppUser, { appUserId })
 }
 
+export async function getMlConnectionByMlUserId(mlUserId: string) {
+  const client = getConvexClient()
+  return client.query(api.mercadolivre.getConnectionByMlUser, { mlUserId })
+}
+
+export async function getAnyMlConnection() {
+  const client = getConvexClient()
+  return client.query(api.mercadolivre.getAnyConnection, {})
+}
+
 export async function upsertMlConnection(params: {
   appUserId: string
   mlUserId: string
@@ -74,6 +84,34 @@ async function refreshConnection(connection: Exclude<MlConnection, null>) {
 
 export async function getValidMlConnection(appUserId: string) {
   const connection = await getMlConnectionByAppUser(appUserId)
+  if (!connection) {
+    throw new Error("Conta do Mercado Livre nao conectada.")
+  }
+
+  const refreshThresholdMs = 60_000
+  if (connection.expiresAt <= Date.now() + refreshThresholdMs) {
+    return refreshConnection(connection)
+  }
+
+  return connection
+}
+
+export async function getValidMlConnectionByMlUserId(mlUserId: string) {
+  const connection = await getMlConnectionByMlUserId(mlUserId)
+  if (!connection) {
+    throw new Error("Conta do Mercado Livre nao conectada.")
+  }
+
+  const refreshThresholdMs = 60_000
+  if (connection.expiresAt <= Date.now() + refreshThresholdMs) {
+    return refreshConnection(connection)
+  }
+
+  return connection
+}
+
+export async function getAnyValidMlConnection() {
+  const connection = await getAnyMlConnection()
   if (!connection) {
     throw new Error("Conta do Mercado Livre nao conectada.")
   }

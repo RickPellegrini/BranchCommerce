@@ -5,21 +5,35 @@
   const defaultSettings = {
     autoInjectEnabled: true,
     manualSaleFeePercentFallback: 16,
+    sync: {
+      enabled: false,
+      apiBaseUrl: "https://branch-commerce.vercel.app",
+      apiKey: "bh_sync_2026_Z7x9P4mN2qL8vR5tK1wD3cH6sJ0f",
+    },
     defaults: {
       productCost: 0,
       taxPercent: 0,
-      adsPercent: 0,
-      packagingCost: 0,
-      otherFixedCosts: 0,
-      riskPercent: 0,
-      shippingFallback: 0,
     },
   };
 
   function getSettings() {
     return new Promise((resolve) => {
       chrome.storage.local.get([SETTINGS_KEY], (data) => {
-        resolve({ ...defaultSettings, ...(data[SETTINGS_KEY] || {}) });
+        const persisted = data[SETTINGS_KEY] || {};
+        resolve({
+          ...defaultSettings,
+          ...persisted,
+          sync: {
+            ...defaultSettings.sync,
+            ...(persisted.sync || {}),
+            apiKey:
+              String(persisted?.sync?.apiKey || "").trim() || defaultSettings.sync.apiKey,
+          },
+          defaults: {
+            ...defaultSettings.defaults,
+            ...(persisted.defaults || {}),
+          },
+        });
       });
     });
   }

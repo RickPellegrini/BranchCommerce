@@ -14,6 +14,14 @@
     observer: null,
     renderDebounce: null,
     isInitialized: false,
+    manualSaleFeePercentFallback: 16,
+    syncConfig: {
+      enabled: false,
+      apiBaseUrl: "",
+      apiKey: "",
+    },
+    costSyncDebounce: null,
+    marketplaceDataCache: null,
   };
 
   function logDebug(message, payload) {
@@ -217,6 +225,16 @@
           gap: 10px;
           font-size: 12px;
         }
+        .row-label {
+          display: inline-flex;
+          align-items: center;
+          gap: 5px;
+        }
+        .row-icon {
+          width: 12px;
+          height: 12px;
+          color: #64748b;
+        }
         .dynamic-row strong {
           color: #111827;
           font-size: 12px;
@@ -275,35 +293,6 @@
         .result-profit.negative strong {
           color: #dc2626;
         }
-        .source-chip {
-          border: 1px solid #cbd5e1;
-          border-radius: 999px;
-          padding: 1px 6px;
-          font-size: 11px;
-          background: #ffffff;
-          color: #334155;
-          text-transform: capitalize;
-        }
-        .source-chip.real {
-          border-color: #86efac;
-          background: #dcfce7;
-          color: #166534;
-        }
-        .source-chip.estimated {
-          border-color: #93c5fd;
-          background: #dbeafe;
-          color: #1d4ed8;
-        }
-        .source-chip.fallback {
-          border-color: #fcd34d;
-          background: #fef3c7;
-          color: #92400e;
-        }
-        .result-warn {
-          color: #92400e;
-          font-size: 11px;
-          margin: 0;
-        }
       </style>
       <section class="panel">
         <header class="header">
@@ -317,11 +306,6 @@
           <span class="chip">Auto</span>
         </header>
 
-        <div class="section">
-          <div id="bh-listing-title" class="listing-title">Anuncio carregado</div>
-          <div id="bh-listing-url" class="listing-url"></div>
-        </div>
-
         <div class="section section-dynamic">
           <div class="section-title-row">
             <span class="section-icon" aria-hidden="true">
@@ -331,34 +315,13 @@
             </span>
             <p class="section-title">Dados dinamicos Mercado Livre</p>
           </div>
-          <div class="dynamic-row"><span>Preco anuncio</span><div><strong id="bh-dyn-sale-price">--</strong> <small id="bh-src-sale-price">(indisponivel)</small></div></div>
-          <div class="dynamic-row"><span>Tipo anuncio</span><div><strong id="bh-dyn-listing-type">--</strong> <small id="bh-src-listing-type">(indisponivel)</small></div></div>
-          <div class="dynamic-row"><span>Taxa ML</span><div><strong id="bh-dyn-fee">--</strong> <small id="bh-src-fee">(indisponivel)</small></div></div>
-          <div class="dynamic-row"><span>Categoria</span><div><strong id="bh-dyn-category">--</strong></div></div>
-          <div class="dynamic-row"><span>Frete estimado</span><div><strong id="bh-dyn-shipping-estimated">--</strong> <small id="bh-src-shipping-estimated">(indisponivel)</small></div></div>
-          <div class="dynamic-row"><span>Frete real</span><div><strong id="bh-dyn-shipping-real">--</strong> <small id="bh-src-shipping-real">(indisponivel)</small></div></div>
-          <div class="dynamic-row"><span>Modo envio</span><div><strong id="bh-dyn-shipping-mode">--</strong></div></div>
-        </div>
-
-        <div class="section section-manual grid">
-          <div class="section-title-row">
-            <span class="section-icon" aria-hidden="true">
-              <svg width="12" height="12" viewBox="0 0 24 24" fill="none">
-                <path d="M12 3v18M3 12h18" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
-              </svg>
-            </span>
-            <p class="section-title">Fallbacks manuais (marketplace)</p>
-          </div>
-          <label>Preco manual (R$)<input id="bh-manual-sale-price" type="number" step="0.01" min="0"></label>
-          <label>
-            Tipo manual (opcional)
-            <select id="bh-manual-listing-type">
-              <option value="">Selecionar</option>
-              <option value="classico">Classico</option>
-              <option value="premium">Premium</option>
-            </select>
-          </label>
-          <label>Taxa ML manual (%)<input id="bh-manual-sale-fee-percent" type="number" step="0.01" min="0"></label>
+          <div class="dynamic-row"><span class="row-label"><svg class="row-icon" viewBox="0 0 24 24" fill="none"><path d="M12 3v18M3 12h18" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>Preco anuncio</span><div><strong id="bh-dyn-sale-price">--</strong> <small id="bh-src-sale-price">(indisponivel)</small></div></div>
+          <div class="dynamic-row"><span class="row-label"><svg class="row-icon" viewBox="0 0 24 24" fill="none"><path d="M4 7h16M4 12h10M4 17h7" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>Tipo anuncio</span><div><strong id="bh-dyn-listing-type">--</strong> <small id="bh-src-listing-type">(indisponivel)</small></div></div>
+          <div class="dynamic-row"><span class="row-label"><svg class="row-icon" viewBox="0 0 24 24" fill="none"><path d="M3 10h18M7 6h10M7 14h10M7 18h6" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>Taxa ML</span><div><strong id="bh-dyn-fee">--</strong> <small id="bh-src-fee">(indisponivel)</small></div></div>
+          <div class="dynamic-row"><span class="row-label"><svg class="row-icon" viewBox="0 0 24 24" fill="none"><path d="M4 5h16v14H4zM8 9h8" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>Categoria</span><div><strong id="bh-dyn-category">--</strong></div></div>
+          <div class="dynamic-row"><span class="row-label"><svg class="row-icon" viewBox="0 0 24 24" fill="none"><path d="M3 16h18M5 16l2-6h10l2 6" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>Frete estimado</span><div><strong id="bh-dyn-shipping-estimated">--</strong> <small id="bh-src-shipping-estimated">(indisponivel)</small></div></div>
+          <div class="dynamic-row"><span class="row-label"><svg class="row-icon" viewBox="0 0 24 24" fill="none"><path d="M4 17h16M7 17V7h10v10" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>Frete real</span><div><strong id="bh-dyn-shipping-real">--</strong> <small id="bh-src-shipping-real">(indisponivel)</small></div></div>
+          <div class="dynamic-row"><span class="row-label"><svg class="row-icon" viewBox="0 0 24 24" fill="none"><path d="M3 12h18M12 3v18" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>Modo envio</span><div><strong id="bh-dyn-shipping-mode">--</strong></div></div>
         </div>
 
         <div class="section section-operation grid">
@@ -374,15 +337,6 @@
             <label>Custo produto (R$)<input id="bh-product-cost" type="number" step="0.01" min="0"></label>
             <label>Imposto (%)<input id="bh-tax-percent" type="number" step="0.01" min="0"></label>
           </div>
-          <div class="grid-2">
-            <label>Ads (%)<input id="bh-ads-percent" type="number" step="0.01" min="0"></label>
-            <label>Risco (%)<input id="bh-risk-percent" type="number" step="0.01" min="0"></label>
-          </div>
-          <div class="grid-2">
-            <label>Embalagem (R$)<input id="bh-packaging-cost" type="number" step="0.01" min="0"></label>
-            <label>Outros fixos (R$)<input id="bh-other-fixed-costs" type="number" step="0.01" min="0"></label>
-          </div>
-          <label>Frete fallback (R$)<input id="bh-shipping-fallback" type="number" step="0.01" min="0"></label>
         </div>
 
         <div class="actions">
@@ -399,17 +353,13 @@
             </span>
             <p class="result-title">Resultado</p>
           </div>
-          <div class="result-row"><span>Receita bruta</span><strong id="bh-result-gross">R$ 0,00</strong></div>
-          <div class="result-row"><span>Taxa marketplace</span><strong id="bh-result-fee">R$ 0,00</strong></div>
-          <div class="result-row"><span>Impostos</span><strong id="bh-result-tax">R$ 0,00</strong></div>
-          <div class="result-row"><span>Ads</span><strong id="bh-result-ads">R$ 0,00</strong></div>
-          <div class="result-row"><span>Risco</span><strong id="bh-result-risk">R$ 0,00</strong></div>
-          <div class="result-row"><span>Frete usado</span><strong id="bh-result-shipping">R$ 0,00</strong></div>
-          <div class="result-row"><span>Origem do frete</span><strong id="bh-result-shipping-source" class="source-chip fallback">fallback</strong></div>
-          <div class="result-row"><span>Total custos</span><strong id="bh-result-total-costs">R$ 0,00</strong></div>
-          <div id="bh-profit-row" class="result-row result-profit"><span>Lucro liquido</span><strong id="bh-result-profit">R$ 0,00</strong></div>
-          <div class="result-row"><span>Margem</span><strong id="bh-result-margin">0,00%</strong></div>
-          <p id="bh-result-warning" class="result-warn"></p>
+          <div class="result-row"><span class="row-label"><svg class="row-icon" viewBox="0 0 24 24" fill="none"><path d="M4 12h16M12 4v16" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>Receita bruta</span><strong id="bh-result-gross">R$ 0,00</strong></div>
+          <div class="result-row"><span class="row-label"><svg class="row-icon" viewBox="0 0 24 24" fill="none"><path d="M4 7h16M4 12h16M4 17h16" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>Taxa marketplace</span><strong id="bh-result-fee">R$ 0,00</strong></div>
+          <div class="result-row"><span class="row-label"><svg class="row-icon" viewBox="0 0 24 24" fill="none"><path d="M8 7h8M8 12h8M8 17h8" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>Impostos</span><strong id="bh-result-tax">R$ 0,00</strong></div>
+          <div class="result-row"><span class="row-label"><svg class="row-icon" viewBox="0 0 24 24" fill="none"><path d="M3 17h18M5 17l2-6h10l2 6" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>Frete usado</span><strong id="bh-result-shipping">R$ 0,00</strong></div>
+          <div class="result-row"><span class="row-label"><svg class="row-icon" viewBox="0 0 24 24" fill="none"><path d="M4 6h16v12H4z" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>Total custos</span><strong id="bh-result-total-costs">R$ 0,00</strong></div>
+          <div id="bh-profit-row" class="result-row result-profit"><span class="row-label"><svg class="row-icon" viewBox="0 0 24 24" fill="none"><path d="M4 17l6-6 4 4 6-6" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>Lucro liquido</span><strong id="bh-result-profit">R$ 0,00</strong></div>
+          <div class="result-row"><span class="row-label"><svg class="row-icon" viewBox="0 0 24 24" fill="none"><path d="M12 4v16M4 12h16" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>Margem</span><strong id="bh-result-margin">0,00%</strong></div>
         </div>
       </section>
     `;
@@ -419,8 +369,6 @@
     if (!state.shadowRoot) return null;
     const $ = (id) => state.shadowRoot.getElementById(id);
     return {
-      listingTitle: $("bh-listing-title"),
-      listingUrl: $("bh-listing-url"),
       dynSalePrice: $("bh-dyn-sale-price"),
       srcSalePrice: $("bh-src-sale-price"),
       dynListingType: $("bh-dyn-listing-type"),
@@ -433,41 +381,26 @@
       dynShippingReal: $("bh-dyn-shipping-real"),
       srcShippingReal: $("bh-src-shipping-real"),
       dynShippingMode: $("bh-dyn-shipping-mode"),
-      manualSalePrice: $("bh-manual-sale-price"),
-      manualListingType: $("bh-manual-listing-type"),
-      manualSaleFeePercent: $("bh-manual-sale-fee-percent"),
       productCost: $("bh-product-cost"),
       taxPercent: $("bh-tax-percent"),
-      adsPercent: $("bh-ads-percent"),
-      riskPercent: $("bh-risk-percent"),
-      packagingCost: $("bh-packaging-cost"),
-      otherFixedCosts: $("bh-other-fixed-costs"),
-      shippingFallback: $("bh-shipping-fallback"),
       syncDynamic: $("bh-sync-dynamic"),
       reset: $("bh-reset"),
       resultGross: $("bh-result-gross"),
       resultFee: $("bh-result-fee"),
       resultTax: $("bh-result-tax"),
-      resultAds: $("bh-result-ads"),
-      resultRisk: $("bh-result-risk"),
       resultShipping: $("bh-result-shipping"),
-      resultShippingSource: $("bh-result-shipping-source"),
       resultTotalCosts: $("bh-result-total-costs"),
       profitRow: $("bh-profit-row"),
       resultProfit: $("bh-result-profit"),
       resultMargin: $("bh-result-margin"),
-      resultWarning: $("bh-result-warning"),
     };
   }
 
-  function readManualMarketplaceValues(elements) {
+  function readManualMarketplaceValues() {
     return {
-      salePrice: elements.manualSalePrice.value === "" ? null : toNumber(elements.manualSalePrice.value, null),
-      listingType: elements.manualListingType.value || null,
-      saleFeePercent:
-        elements.manualSaleFeePercent.value === ""
-          ? null
-          : toNumber(elements.manualSaleFeePercent.value, null),
+      salePrice: null,
+      listingType: null,
+      saleFeePercent: state.manualSaleFeePercentFallback,
     };
   }
 
@@ -475,11 +408,11 @@
     return {
       productCost: toNumber(elements.productCost.value, 0),
       taxPercent: toNumber(elements.taxPercent.value, 0),
-      adsPercent: toNumber(elements.adsPercent.value, 0),
-      packagingCost: toNumber(elements.packagingCost.value, 0),
-      otherFixedCosts: toNumber(elements.otherFixedCosts.value, 0),
-      riskPercent: toNumber(elements.riskPercent.value, 0),
-      shippingFallback: toNumber(elements.shippingFallback.value, 0),
+      adsPercent: 0,
+      packagingCost: 0,
+      otherFixedCosts: 0,
+      riskPercent: 0,
+      shippingFallback: 0,
     };
   }
 
@@ -508,17 +441,14 @@
       marketplaceData.source.shippingRealCost,
     )})`;
     elements.dynShippingMode.textContent = formatNullableText(marketplaceData.shippingMode);
+
   }
 
   function updateResultUI(elements, calculationResult) {
     elements.resultGross.textContent = formatMoney(calculationResult.grossRevenue);
     elements.resultFee.textContent = formatMoney(calculationResult.marketplaceFeeAmount);
     elements.resultTax.textContent = formatMoney(calculationResult.taxAmount);
-    elements.resultAds.textContent = formatMoney(calculationResult.adsAmount);
-    elements.resultRisk.textContent = formatMoney(calculationResult.riskAmount);
     elements.resultShipping.textContent = formatMoney(calculationResult.shippingCostUsed);
-    elements.resultShippingSource.textContent = calculationResult.shippingCostSource;
-    elements.resultShippingSource.className = `source-chip ${calculationResult.shippingCostSource}`;
     elements.resultTotalCosts.textContent = formatMoney(calculationResult.totalCosts);
     elements.resultProfit.textContent = formatMoney(calculationResult.netProfit);
     elements.resultMargin.textContent = formatPercent(calculationResult.netMarginPercent);
@@ -527,10 +457,6 @@
     } else {
       elements.profitRow.classList.remove("negative");
     }
-    elements.resultWarning.textContent =
-      calculationResult.shippingCostSource === "fallback"
-        ? "Frete dinamico nao disponivel. Usando fallback manual."
-        : "";
   }
 
   async function syncListingContext() {
@@ -556,19 +482,26 @@
     );
   }
 
-  async function buildCalculationContext(elements) {
-    const manualMarketplace = readManualMarketplaceValues(elements);
+  async function buildCalculationContext(elements, options = {}) {
+    const shouldRefreshMarketplace =
+      options.refreshMarketplace === true || !state.marketplaceDataCache;
+    const manualMarketplace = readManualMarketplaceValues();
     const operation = readOperationValues(elements);
-    const marketplace = await globalThis.BranchHunterMarketplaceService.getMarketplaceDynamicData({
-      listingId: state.listingId,
-      manualFallback: manualMarketplace,
-    });
+    let marketplace = state.marketplaceDataCache;
+
+    if (shouldRefreshMarketplace) {
+      marketplace = await globalThis.BranchHunterMarketplaceService.getMarketplaceDynamicData({
+        listingId: state.listingId,
+        manualFallback: manualMarketplace,
+      });
+      state.marketplaceDataCache = marketplace;
+    }
 
     return { marketplace, operation, manualMarketplace };
   }
 
-  async function refreshAndCompute(elements, shouldPersist = true) {
-    const context = await buildCalculationContext(elements);
+  async function refreshAndCompute(elements, shouldPersist = true, options = {}) {
+    const context = await buildCalculationContext(elements, options);
     writeMarketplaceDynamicSection(elements, context.marketplace);
     const result = globalThis.BranchHunterCalculator.calculateHybridResult({
       marketplace: context.marketplace,
@@ -581,27 +514,44 @@
         manualMarketplace: context.manualMarketplace,
         operation: context.operation,
       });
+      scheduleRemoteCostSync(context.operation.productCost);
+    }
+  }
+
+  function scheduleRemoteCostSync(productCost) {
+    if (state.costSyncDebounce) clearTimeout(state.costSyncDebounce);
+    state.costSyncDebounce = setTimeout(() => {
+      void syncProductCostToPlatform(productCost);
+    }, 700);
+  }
+
+  async function syncProductCostToPlatform(productCost) {
+    if (!state.syncConfig.enabled) return;
+    if (!state.syncConfig.apiBaseUrl || !state.syncConfig.apiKey) return;
+    if (!state.listingId || state.listingId === "unknown-item") return;
+    if (!Number.isFinite(productCost) || productCost <= 0) return;
+
+    const endpoint = `${state.syncConfig.apiBaseUrl.replace(/\/+$/, "")}/api/branch-hunter/cost`;
+    try {
+      await fetch(endpoint, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "x-branch-hunter-key": state.syncConfig.apiKey,
+        },
+        body: JSON.stringify({
+          mlItemId: state.listingId,
+          unitCost: productCost,
+        }),
+      });
+    } catch {
+      // Keep calculator smooth even if remote sync fails.
     }
   }
 
   function setOperationInputs(elements, values) {
     elements.productCost.value = String(values.productCost ?? 0);
     elements.taxPercent.value = String(values.taxPercent ?? 0);
-    elements.adsPercent.value = String(values.adsPercent ?? 0);
-    elements.packagingCost.value = String(values.packagingCost ?? 0);
-    elements.otherFixedCosts.value = String(values.otherFixedCosts ?? 0);
-    elements.riskPercent.value = String(values.riskPercent ?? 0);
-    elements.shippingFallback.value = String(values.shippingFallback ?? 0);
-  }
-
-  function setManualMarketplaceInputs(elements, values) {
-    elements.manualSalePrice.value =
-      values.salePrice === null || values.salePrice === undefined ? "" : String(values.salePrice);
-    elements.manualListingType.value = values.listingType || "";
-    elements.manualSaleFeePercent.value =
-      values.saleFeePercent === null || values.saleFeePercent === undefined
-        ? ""
-        : String(values.saleFeePercent);
   }
 
   async function hydrateInputs() {
@@ -610,23 +560,20 @@
 
     const { getSettings, getListingState } = globalThis.BranchHunterStorage;
     const settings = await getSettings();
+    state.manualSaleFeePercentFallback = Number(settings.manualSaleFeePercentFallback ?? 16);
+    state.syncConfig = {
+      enabled: Boolean(settings.sync?.enabled),
+      apiBaseUrl: String(settings.sync?.apiBaseUrl || ""),
+      apiKey: String(settings.sync?.apiKey || ""),
+    };
     const saved = await getListingState(state.listingId);
-
-    setManualMarketplaceInputs(elements, {
-      salePrice: saved?.manualMarketplace?.salePrice ?? state.detectedPrice ?? "",
-      listingType: saved?.manualMarketplace?.listingType ?? "",
-      saleFeePercent:
-        saved?.manualMarketplace?.saleFeePercent ?? settings.manualSaleFeePercentFallback ?? 16,
-    });
 
     setOperationInputs(elements, {
       ...settings.defaults,
       ...(saved?.operation || {}),
     });
 
-    elements.listingTitle.textContent = state.listingTitle;
-    elements.listingUrl.textContent = state.listingUrl;
-    await refreshAndCompute(elements, false);
+    await refreshAndCompute(elements, false, { refreshMarketplace: true });
   }
 
   function bindEvents() {
@@ -638,16 +585,8 @@
     }
 
     const inputFields = [
-      elements.manualSalePrice,
-      elements.manualListingType,
-      elements.manualSaleFeePercent,
       elements.productCost,
       elements.taxPercent,
-      elements.adsPercent,
-      elements.riskPercent,
-      elements.packagingCost,
-      elements.otherFixedCosts,
-      elements.shippingFallback,
     ];
 
     for (const input of inputFields) {
@@ -658,18 +597,19 @@
 
     elements.syncDynamic.addEventListener("click", async () => {
       await syncListingContext();
-      await recalcAndPersist();
+      await refreshAndCompute(elements, true, { refreshMarketplace: true });
     });
 
     elements.reset.addEventListener("click", async () => {
       const { getSettings } = globalThis.BranchHunterStorage;
       const settings = await getSettings();
+      state.manualSaleFeePercentFallback = Number(settings.manualSaleFeePercentFallback ?? 16);
+      state.syncConfig = {
+        enabled: Boolean(settings.sync?.enabled),
+        apiBaseUrl: String(settings.sync?.apiBaseUrl || ""),
+        apiKey: String(settings.sync?.apiKey || ""),
+      };
 
-      setManualMarketplaceInputs(elements, {
-        salePrice: state.detectedPrice ?? "",
-        listingType: "",
-        saleFeePercent: settings.manualSaleFeePercentFallback ?? 16,
-      });
       setOperationInputs(elements, {
         ...settings.defaults,
       });
@@ -679,7 +619,16 @@
 
   function mountPanel() {
     const anchorResult = globalThis.BranchHunterPageUtils.findBestAnchor();
-    if (!anchorResult?.node) {
+    const fallbackNode =
+      document.querySelector("[data-testid='buy-box-container']") ||
+      document.querySelector(".ui-pdp-container__col.col-2") ||
+      document.querySelector(".ui-pdp-right-column");
+    const resolvedAnchor = anchorResult?.node
+      ? anchorResult
+      : fallbackNode
+        ? { node: fallbackNode, mode: "after" }
+        : null;
+    if (!resolvedAnchor?.node) {
       logDebug("Anchor nao encontrado no momento.");
       return false;
     }
@@ -693,18 +642,29 @@
 
     const host = document.createElement("div");
     host.id = PANEL_HOST_ID;
+    host.style.display = "block";
     host.style.width = "100%";
     host.style.marginTop = "12px";
     host.style.marginBottom = "12px";
 
-    if (anchorResult.mode === "before") {
-      anchorResult.node.parentNode?.insertBefore(host, anchorResult.node);
-    } else if (anchorResult.mode === "after") {
-      anchorResult.node.parentNode?.insertBefore(host, anchorResult.node.nextSibling);
-    } else if (anchorResult.mode === "prepend") {
-      anchorResult.node.prepend(host);
+    const inBuyColumn = Boolean(
+      resolvedAnchor.node.closest?.(".ui-pdp-container__col.col-2") ||
+        resolvedAnchor.node.matches?.("[data-testid='buy-box-container']"),
+    );
+    if (inBuyColumn) {
+      host.style.position = "sticky";
+      host.style.top = "12px";
+      host.style.zIndex = "10";
+    }
+
+    if (resolvedAnchor.mode === "before") {
+      resolvedAnchor.node.parentNode?.insertBefore(host, resolvedAnchor.node);
+    } else if (resolvedAnchor.mode === "after") {
+      resolvedAnchor.node.parentNode?.insertBefore(host, resolvedAnchor.node.nextSibling);
+    } else if (resolvedAnchor.mode === "prepend") {
+      resolvedAnchor.node.prepend(host);
     } else {
-      anchorResult.node.append(host);
+      resolvedAnchor.node.append(host);
     }
 
     const shadow = host.attachShadow({ mode: "open" });
@@ -721,6 +681,7 @@
     if (!mounted || !state.shadowRoot) return;
 
     await syncListingContext();
+    state.marketplaceDataCache = null;
 
     if (!state.isInitialized) {
       await hydrateInputs();
@@ -732,36 +693,41 @@
 
     const elements = getElements();
     if (!elements) return;
-    elements.listingTitle.textContent = state.listingTitle;
-    elements.listingUrl.textContent = state.listingUrl;
 
-    if (!elements.manualSalePrice.value && typeof state.detectedPrice === "number") {
-      elements.manualSalePrice.value = String(state.detectedPrice);
-      await refreshAndCompute(elements, false);
-    }
+    await refreshAndCompute(elements, false, { refreshMarketplace: false });
   }
 
   function scheduleRefresh() {
     if (state.renderDebounce) clearTimeout(state.renderDebounce);
     state.renderDebounce = setTimeout(() => {
       void renderOrRefreshPanel();
-    }, 400);
+    }, 140);
   }
 
   function setupDomObserver() {
     if (state.observer) state.observer.disconnect();
     state.observer = new MutationObserver(() => {
+      let mustRefresh = false;
       if (state.lastUrl !== location.href) {
         state.lastUrl = location.href;
         state.isInitialized = false;
+        state.marketplaceDataCache = null;
+        mustRefresh = true;
       }
       const hostGone = state.host && !document.body.contains(state.host);
       if (hostGone) {
         state.host = null;
         state.shadowRoot = null;
         state.isInitialized = false;
+        state.marketplaceDataCache = null;
+        mustRefresh = true;
       }
-      scheduleRefresh();
+      if (!state.host) {
+        mustRefresh = true;
+      }
+      if (mustRefresh) {
+        scheduleRefresh();
+      }
     });
 
     state.observer.observe(document.documentElement, {

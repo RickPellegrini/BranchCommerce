@@ -6,6 +6,45 @@ import type {
   TransactionFilters,
 } from "@/lib/finance/types";
 
+type StockInsightProduct = {
+  id: string;
+  name: string;
+  unitCost: number;
+  sellingPrice?: number;
+};
+
+type StockInsightMovement = {
+  productId: string;
+  type: "in" | "out" | "adjustment" | "sale";
+  quantity: number;
+  unitPrice?: number;
+  date: string;
+};
+
+export type ProductChampionPoint = {
+  productId: string;
+  productName: string;
+  unitsSold: number;
+  revenue: number;
+  cogs: number;
+  profit: number;
+  marginPercent: number;
+};
+
+export type CostBreakdown = {
+  operationalCost: number;
+  fixedCost: number;
+  variableCost: number;
+  toolsFixedCost: number;
+};
+
+export type ForecastPoint = {
+  monthLabel: string;
+  incomeForecast: number;
+  expenseForecast: number;
+  profitForecast: number;
+};
+
 function parseDate(value: string) {
   const [year, month, day] = value.split("-").map(Number);
   return new Date(year, (month ?? 1) - 1, day ?? 1);
@@ -170,4 +209,118 @@ export function cashFlowByPeriod(
       net: values.income - values.expense,
     }))
     .sort((a, b) => a.label.localeCompare(b.label));
+}
+
+export function calculateCostBreakdown(
+  transactions: FinancialTransaction[],
+  categories: FinancialCategory[],
+): CostBreakdown {
+  const categoryMap = new Map(categories.map((category) => [category.id, category]));
+
+  return transactions
+    .filter((transaction) => transaction.kind === "expense")
+    .reduce<CostBreakdown>(
+      (acc, transaction) => {
+        const isFixed = transaction.expenseType === "fixed";
+        const categoryName = categoryMap.get(transaction.categoryId)?.name.toLowerCase() ?? "";
+        const isTools = categoryName.includes("ferrament");
+
+        acc.operationalCost += transaction.amount;
+        if (isFixed) {
+          acc.fixedCost += transaction.amount;
+          if (isTools) {
+            acc.toolsFixedCost += transaction.amount;
+          }
+        } else {
+          acc.variableCost += transaction.amount;
+        }
+        return acc;
+      },
+      { operationalCost: 0, fixedCost: 0, variableCost: 0, toolsFixedCost: 0 },
+    );
+}
+
+export function calculateProductChampions(
+  products: StockInsightProduct[],
+  movements: StockInsightMovement[],
+  topN = 5,
+): ProductChampionPoint[] {
+  const productMap = new Map(products.map((product) => [product.id, product]));
+  const aggregateMap = new Map<
+    string,
+    { productName: string; unitsSold: number; revenue: number; cogs: number }
+  >();
+
+  movements
+    .filter((movement) => movement.type === "sale" && movement.quantity > 0)
+    .forEach((movement) => {
+      const product = productMap.get(movement.productId);
+      if (!product) return;
+
+      const revenuePerUnit = movement.unitPrice ?? product.sellingPrice ?? 0;
+      const cogsPerUnit = product.unitCost;
+      const current = aggregateMap.get(product.id) ?? {
+        productName: product.name,
+        unitsSold: 0,
+        revenue: 0,
+        cogs: 0,
+      };
+
+      current.unitsSold += movement.quantity;
+      current.revenue += revenuePerUnit * movement.quantity;
+      current.cogs += cogsPerUnit * movement.quantity;
+
+      aggregateMap.set(product.id, current);
+    });
+
+  return Array.from(aggregateMap.entries())
+    .map(([productId, aggregate]) => {
+      const profit = aggregate.revenue - aggregate.cogs;
+      const marginPercent = aggregate.revenue > 0 ? (profit / aggregate.revenue) * 100 : 0;
+      return {
+        productId,
+        productName: aggregate.productName,
+        unitsSold: aggregate.unitsSold,
+        revenue: aggregate.revenue,
+        cogs: aggregate.cogs,
+        profit,
+        marginPercent,
+      };
+    })
+    .sort((a, b) => b.profit - a.profit)
+    .slice(0, topN);
+}
+
+export function forecastFinancialTrend(
+  transactions: FinancialTransaction[],
+  monthsAhead = 4,
+  monthsLookback = 6,
+): ForecastPoint[] {
+  const history = monthlyEvolution(transactions, monthsLookback);
+  if (history.length === 0) return [];
+
+  const incomeAvg = history.reduce((sum, point) => sum + point.income, 0) / history.length;
+  const expenseAvg = history.reduce((sum, point) => sum + point.expense, 0) / history.length;
+  const first = history[0];
+  const last = history[history.length - 1];
+  const denominator = Math.max(1, history.length - 1);
+  const incomeTrendPerMonth = (last.income - first.income) / denominator;
+  const expenseTrendPerMonth = (last.expense - first.expense) / denominator;
+
+  const forecast: ForecastPoint[] = [];
+  const baseDate = new Date();
+
+  for (let monthOffset = 1; monthOffset <= monthsAhead; monthOffset += 1) {
+    const date = new Date(baseDate.getFullYear(), baseDate.getMonth() + monthOffset, 1);
+    const projectedIncome = Math.max(0, incomeAvg + incomeTrendPerMonth * monthOffset);
+    const projectedExpense = Math.max(0, expenseAvg + expenseTrendPerMonth * monthOffset);
+    forecast.push({
+      monthLabel: date.toLocaleDateString("pt-BR", { month: "short", year: "2-digit" }),
+      incomeForecast: projectedIncome,
+      expenseForecast: projectedExpense,
+      profitForecast: projectedIncome - projectedExpense,
+    });
+  }
+
+  return forecast;
 }

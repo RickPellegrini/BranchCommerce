@@ -10,7 +10,10 @@
   "permissions": ["storage"],
   "host_permissions": [
     "*://*.mercadolivre.com.br/*",
-    "*://*.mercadolivre.com/*"
+    "*://*.mercadolivre.com/*",
+    "*://api.mercadolibre.com/*",
+    "*://branch-commerce.vercel.app/*",
+    "*://localhost:3000/*"
   ],
   "background": {
     "service_worker": "src/background.js"

@@ -3,14 +3,14 @@ const SETTINGS_KEY = "branchHunter:settings";
 const defaultSettings = {
   autoInjectEnabled: true,
   manualSaleFeePercentFallback: 16,
+  sync: {
+    enabled: false,
+    apiBaseUrl: "https://branch-commerce.vercel.app",
+    apiKey: "bh_sync_2026_Z7x9P4mN2qL8vR5tK1wD3cH6sJ0f",
+  },
   defaults: {
     productCost: 0,
     taxPercent: 0,
-    adsPercent: 0,
-    packagingCost: 0,
-    otherFixedCosts: 0,
-    riskPercent: 0,
-    shippingFallback: 0,
   },
 };
 
@@ -31,14 +31,14 @@ function readForm() {
     manualSaleFeePercentFallback: parseNumber(
       document.getElementById("manual-sale-fee-percent-fallback").value,
     ),
+    sync: {
+      enabled: document.getElementById("sync-enabled").value === "true",
+      apiBaseUrl: document.getElementById("sync-api-base-url").value.trim(),
+      apiKey: document.getElementById("sync-api-key").value.trim(),
+    },
     defaults: {
       productCost: parseNumber(document.getElementById("default-product-cost").value),
       taxPercent: parseNumber(document.getElementById("default-tax-percent").value),
-      adsPercent: parseNumber(document.getElementById("default-ads-percent").value),
-      packagingCost: parseNumber(document.getElementById("default-packaging-cost").value),
-      otherFixedCosts: parseNumber(document.getElementById("default-other-fixed-costs").value),
-      riskPercent: parseNumber(document.getElementById("default-risk-percent").value),
-      shippingFallback: parseNumber(document.getElementById("default-shipping-fallback").value),
     },
   };
 }
@@ -48,17 +48,11 @@ function writeForm(values) {
   document.getElementById("manual-sale-fee-percent-fallback").value = String(
     values.manualSaleFeePercentFallback,
   );
+  document.getElementById("sync-enabled").value = String(values.sync.enabled);
+  document.getElementById("sync-api-base-url").value = values.sync.apiBaseUrl;
+  document.getElementById("sync-api-key").value = values.sync.apiKey;
   document.getElementById("default-product-cost").value = String(values.defaults.productCost);
   document.getElementById("default-tax-percent").value = String(values.defaults.taxPercent);
-  document.getElementById("default-ads-percent").value = String(values.defaults.adsPercent);
-  document.getElementById("default-packaging-cost").value = String(values.defaults.packagingCost);
-  document.getElementById("default-other-fixed-costs").value = String(
-    values.defaults.otherFixedCosts,
-  );
-  document.getElementById("default-risk-percent").value = String(values.defaults.riskPercent);
-  document.getElementById("default-shipping-fallback").value = String(
-    values.defaults.shippingFallback,
-  );
 }
 
 function saveSettings() {
@@ -78,9 +72,15 @@ function resetSettings() {
 function boot() {
   chrome.storage.local.get([SETTINGS_KEY], (data) => {
     const persisted = data[SETTINGS_KEY] || {};
+    const mergedSync = {
+      ...defaultSettings.sync,
+      ...(persisted.sync || {}),
+      apiKey: String(persisted?.sync?.apiKey || "").trim() || defaultSettings.sync.apiKey,
+    };
     writeForm({
       ...defaultSettings,
       ...persisted,
+      sync: mergedSync,
       defaults: {
         ...defaultSettings.defaults,
         ...(persisted.defaults || {}),

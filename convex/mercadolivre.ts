@@ -14,6 +14,25 @@ export const getConnectionByAppUser = query({
   },
 })
 
+export const getConnectionByMlUser = query({
+  args: {
+    mlUserId: v.string(),
+  },
+  handler: async (ctx, args) => {
+    return ctx.db
+      .query("mercadoLivreAccounts")
+      .withIndex("by_ml_user", (queryBuilder) => queryBuilder.eq("mlUserId", args.mlUserId))
+      .first()
+  },
+})
+
+export const getAnyConnection = query({
+  args: {},
+  handler: async (ctx) => {
+    return ctx.db.query("mercadoLivreAccounts").first()
+  },
+})
+
 export const upsertConnection = mutation({
   args: {
     appUserId: v.string(),

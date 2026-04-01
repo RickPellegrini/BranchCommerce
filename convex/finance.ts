@@ -89,6 +89,16 @@ export const addTransaction = mutation({
     categoryId: v.id("categories"),
     origin: v.optional(v.string()),
     expenseType: v.optional(v.union(v.literal("fixed"), v.literal("variable"))),
+    periodicity: v.optional(
+      v.union(
+        v.literal("one_time"),
+        v.literal("weekly"),
+        v.literal("monthly"),
+        v.literal("quarterly"),
+        v.literal("semiannual"),
+        v.literal("annual"),
+      ),
+    ),
   },
   handler: async (ctx, args) => {
     const category = await ctx.db.get(args.categoryId);
@@ -105,6 +115,7 @@ export const addTransaction = mutation({
       categoryId: args.categoryId,
       origin: args.origin,
       expenseType: args.expenseType,
+      periodicity: args.periodicity,
       createdAt: Date.now(),
     });
   },
@@ -121,6 +132,16 @@ export const updateTransaction = mutation({
     categoryId: v.id("categories"),
     origin: v.optional(v.string()),
     expenseType: v.optional(v.union(v.literal("fixed"), v.literal("variable"))),
+    periodicity: v.optional(
+      v.union(
+        v.literal("one_time"),
+        v.literal("weekly"),
+        v.literal("monthly"),
+        v.literal("quarterly"),
+        v.literal("semiannual"),
+        v.literal("annual"),
+      ),
+    ),
   },
   handler: async (ctx, args) => {
     const transaction = await ctx.db.get(args.transactionId);
@@ -141,6 +162,7 @@ export const updateTransaction = mutation({
       categoryId: args.categoryId,
       origin: args.origin,
       expenseType: args.expenseType,
+      periodicity: args.periodicity,
     });
   },
 });
