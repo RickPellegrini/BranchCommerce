@@ -20,6 +20,11 @@
       apiBaseUrl: "",
       apiKey: "",
     },
+    shippingConfig: {
+      freeShippingMinPrice: 79,
+      freeShippingSubsidyPercent: 50,
+      defaultShippingCost: 12,
+    },
     costSyncDebounce: null,
     marketplaceDataCache: null,
   };
@@ -105,6 +110,10 @@
           border-color: #c7d2fe;
           background: #f8f9ff;
         }
+        .section-centralize {
+          border-color: #fdba74;
+          background: #fff7ed;
+        }
         .section-result {
           border-color: #bbf7d0;
           background: #f0fdf4;
@@ -185,6 +194,49 @@
           display: grid;
           grid-template-columns: 1fr 1fr;
           gap: 8px;
+        }
+        .freight-box {
+          border: 1px solid #dbeafe;
+          background: #eff6ff;
+          border-radius: 10px;
+          padding: 8px;
+          display: grid;
+          gap: 8px;
+        }
+        .freight-card {
+          border: 1px solid #d1d5db;
+          border-radius: 10px;
+          background: #ffffff;
+          padding: 10px;
+          display: grid;
+          gap: 6px;
+        }
+        .freight-card.green {
+          border-color: #bbf7d0;
+          background: #f0fdf4;
+        }
+        .freight-card.blue {
+          border-color: #bfdbfe;
+          background: #eff6ff;
+        }
+        .switch-row {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          gap: 8px;
+        }
+        .switch-inline {
+          display: inline-flex;
+          align-items: center;
+          gap: 6px;
+          font-size: 12px;
+          color: #374151;
+        }
+        .switch-green input { accent-color: #16a34a; }
+        .switch-blue input { accent-color: #2563eb; }
+        .freight-hint {
+          font-size: 12px;
+          color: #4b5563;
         }
         label {
           display: grid;
@@ -287,6 +339,13 @@
           font-size: 13px;
           color: #111827;
         }
+        .result-row.critical strong {
+          font-size: 16px;
+          font-weight: 800;
+        }
+        .result-row.total strong {
+          color: #1e40af;
+        }
         .result-profit strong {
           color: #16a34a;
         }
@@ -337,6 +396,52 @@
             <label>Custo produto (R$)<input id="bh-product-cost" type="number" step="0.01" min="0"></label>
             <label>Imposto (%)<input id="bh-tax-percent" type="number" step="0.01" min="0"></label>
           </div>
+          <div class="freight-box">
+            <div class="freight-card green">
+              <div class="switch-row">
+                <div>
+                  <p class="section-title">Frete Gratis</p>
+                  <p id="bh-free-shipping-hint" class="freight-hint">Obrigatorio acima de R$ 79,00</p>
+                </div>
+                <label class="switch-inline switch-green">
+                  <input id="bh-free-shipping-toggle" type="checkbox" checked>
+                  ML
+                </label>
+              </div>
+            </div>
+            <div id="bh-custom-shipping-card" class="freight-card blue">
+              <div class="switch-row">
+                <div>
+                  <p class="section-title">Frete Customizado</p>
+                  <p id="bh-custom-shipping-hint" class="freight-hint">Usando valor padrao</p>
+                </div>
+                <label class="switch-inline switch-blue">
+                  <input id="bh-shipping-manual-toggle" type="checkbox">
+                  Manual
+                </label>
+              </div>
+              <div id="bh-shipping-fallback-wrap" style="display:none;">
+                <label>Valor do frete (R$)<input id="bh-shipping-fallback" type="number" step="0.01" min="0" value="12"></label>
+              </div>
+            </div>
+            <div>
+              <p class="subtle"><strong>Frete padrao (SP): R$ 12,00</strong></p>
+            </div>
+          </div>
+        </div>
+
+        <div class="section section-centralize">
+          <div class="section-title-row">
+            <span class="section-icon" aria-hidden="true">
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none">
+                <path d="M4 6h16M4 12h16M4 18h10" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+              </svg>
+            </span>
+            <p class="section-title">Centralize</p>
+          </div>
+          <p class="subtle">Custos fixos aplicados automaticamente em todos os produtos.</p>
+          <div class="dynamic-row"><span>Envio fixo</span><strong>R$ 5,00</strong></div>
+          <div class="dynamic-row"><span>Embalagem fixa</span><strong>R$ 1,50</strong></div>
         </div>
 
         <div class="actions">
@@ -354,12 +459,11 @@
             <p class="result-title">Resultado</p>
           </div>
           <div class="result-row"><span class="row-label"><svg class="row-icon" viewBox="0 0 24 24" fill="none"><path d="M4 12h16M12 4v16" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>Receita bruta</span><strong id="bh-result-gross">R$ 0,00</strong></div>
-          <div class="result-row"><span class="row-label"><svg class="row-icon" viewBox="0 0 24 24" fill="none"><path d="M4 7h16M4 12h16M4 17h16" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>Taxa marketplace</span><strong id="bh-result-fee">R$ 0,00</strong></div>
-          <div class="result-row"><span class="row-label"><svg class="row-icon" viewBox="0 0 24 24" fill="none"><path d="M8 7h8M8 12h8M8 17h8" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>Impostos</span><strong id="bh-result-tax">R$ 0,00</strong></div>
           <div class="result-row"><span class="row-label"><svg class="row-icon" viewBox="0 0 24 24" fill="none"><path d="M3 17h18M5 17l2-6h10l2 6" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>Frete usado</span><strong id="bh-result-shipping">R$ 0,00</strong></div>
-          <div class="result-row"><span class="row-label"><svg class="row-icon" viewBox="0 0 24 24" fill="none"><path d="M4 6h16v12H4z" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>Total custos</span><strong id="bh-result-total-costs">R$ 0,00</strong></div>
-          <div id="bh-profit-row" class="result-row result-profit"><span class="row-label"><svg class="row-icon" viewBox="0 0 24 24" fill="none"><path d="M4 17l6-6 4 4 6-6" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>Lucro liquido</span><strong id="bh-result-profit">R$ 0,00</strong></div>
-          <div class="result-row"><span class="row-label"><svg class="row-icon" viewBox="0 0 24 24" fill="none"><path d="M12 4v16M4 12h16" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>Margem</span><strong id="bh-result-margin">0,00%</strong></div>
+          <div class="result-row"><span class="row-label"><svg class="row-icon" viewBox="0 0 24 24" fill="none"><path d="M4 6h16M4 12h16M4 18h10" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>Centralize fixo</span><strong id="bh-result-centralize">R$ 0,00</strong></div>
+          <div class="result-row critical total"><span class="row-label"><svg class="row-icon" viewBox="0 0 24 24" fill="none"><path d="M4 6h16v12H4z" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>Total custos</span><strong id="bh-result-total-costs">R$ 0,00</strong></div>
+          <div id="bh-profit-row" class="result-row result-profit critical"><span class="row-label"><svg class="row-icon" viewBox="0 0 24 24" fill="none"><path d="M4 17l6-6 4 4 6-6" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>Lucro liquido</span><strong id="bh-result-profit">R$ 0,00</strong></div>
+          <div class="result-row critical"><span class="row-label"><svg class="row-icon" viewBox="0 0 24 24" fill="none"><path d="M12 4v16M4 12h16" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>Margem</span><strong id="bh-result-margin">0,00%</strong></div>
         </div>
       </section>
     `;
@@ -383,12 +487,17 @@
       dynShippingMode: $("bh-dyn-shipping-mode"),
       productCost: $("bh-product-cost"),
       taxPercent: $("bh-tax-percent"),
+      freeShippingToggle: $("bh-free-shipping-toggle"),
+      freeShippingHint: $("bh-free-shipping-hint"),
+      shippingManualToggle: $("bh-shipping-manual-toggle"),
+      customShippingHint: $("bh-custom-shipping-hint"),
+      shippingFallbackWrap: $("bh-shipping-fallback-wrap"),
+      shippingFallback: $("bh-shipping-fallback"),
       syncDynamic: $("bh-sync-dynamic"),
       reset: $("bh-reset"),
       resultGross: $("bh-result-gross"),
-      resultFee: $("bh-result-fee"),
-      resultTax: $("bh-result-tax"),
       resultShipping: $("bh-result-shipping"),
+      resultCentralize: $("bh-result-centralize"),
       resultTotalCosts: $("bh-result-total-costs"),
       profitRow: $("bh-profit-row"),
       resultProfit: $("bh-result-profit"),
@@ -412,8 +521,26 @@
       packagingCost: 0,
       otherFixedCosts: 0,
       riskPercent: 0,
-      shippingFallback: 0,
+      shippingFallback: toNumber(elements.shippingFallback.value, 0),
+      forceManualShipping: Boolean(elements.shippingManualToggle.checked),
+      freeShippingEnabled: Boolean(elements.freeShippingToggle.checked),
+      freeShippingMinPrice: Number(state.shippingConfig.freeShippingMinPrice ?? 79),
+      freeShippingSubsidyPercent: Number(state.shippingConfig.freeShippingSubsidyPercent ?? 50),
+      defaultShippingCost: 12,
     };
+  }
+
+  function applyShippingUiState(elements) {
+    const manual = Boolean(elements.shippingManualToggle.checked);
+    elements.shippingFallback.disabled = !manual;
+    elements.shippingFallbackWrap.style.display = manual ? "block" : "none";
+    elements.customShippingHint.textContent = manual
+      ? "Usando valor personalizado"
+      : "Usando valor padrao";
+    elements.freeShippingHint.textContent = `Obrigatorio acima de ${formatMoney(
+      Number(state.shippingConfig.freeShippingMinPrice ?? 79),
+    )}`;
+    elements.freeShippingToggle.disabled = manual;
   }
 
   function writeMarketplaceDynamicSection(elements, marketplaceData) {
@@ -446,9 +573,8 @@
 
   function updateResultUI(elements, calculationResult) {
     elements.resultGross.textContent = formatMoney(calculationResult.grossRevenue);
-    elements.resultFee.textContent = formatMoney(calculationResult.marketplaceFeeAmount);
-    elements.resultTax.textContent = formatMoney(calculationResult.taxAmount);
     elements.resultShipping.textContent = formatMoney(calculationResult.shippingCostUsed);
+    elements.resultCentralize.textContent = formatMoney(calculationResult.centralizeFixedCosts);
     elements.resultTotalCosts.textContent = formatMoney(calculationResult.totalCosts);
     elements.resultProfit.textContent = formatMoney(calculationResult.netProfit);
     elements.resultMargin.textContent = formatPercent(calculationResult.netMarginPercent);
@@ -552,6 +678,10 @@
   function setOperationInputs(elements, values) {
     elements.productCost.value = String(values.productCost ?? 0);
     elements.taxPercent.value = String(values.taxPercent ?? 0);
+    elements.freeShippingToggle.checked = values.freeShippingEnabled ?? true;
+    elements.shippingFallback.value = String(values.shippingFallback ?? 12);
+    elements.shippingManualToggle.checked = Boolean(values.forceManualShipping);
+    applyShippingUiState(elements);
   }
 
   async function hydrateInputs() {
@@ -565,6 +695,11 @@
       enabled: Boolean(settings.sync?.enabled),
       apiBaseUrl: String(settings.sync?.apiBaseUrl || ""),
       apiKey: String(settings.sync?.apiKey || ""),
+    };
+    state.shippingConfig = {
+      freeShippingMinPrice: Number(settings.defaults?.freeShippingMinPrice ?? 79),
+      freeShippingSubsidyPercent: Number(settings.defaults?.freeShippingSubsidyPercent ?? 50),
+      defaultShippingCost: Number(settings.defaults?.defaultShippingCost ?? 12),
     };
     const saved = await getListingState(state.listingId);
 
@@ -587,6 +722,7 @@
     const inputFields = [
       elements.productCost,
       elements.taxPercent,
+      elements.shippingFallback,
     ];
 
     for (const input of inputFields) {
@@ -594,6 +730,14 @@
         void recalcAndPersist();
       });
     }
+    elements.shippingManualToggle.addEventListener("change", () => {
+      applyShippingUiState(elements);
+      void recalcAndPersist();
+    });
+    elements.freeShippingToggle.addEventListener("change", () => {
+      applyShippingUiState(elements);
+      void recalcAndPersist();
+    });
 
     elements.syncDynamic.addEventListener("click", async () => {
       await syncListingContext();
