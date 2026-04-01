@@ -11,6 +11,12 @@ const defaultSettings = {
   defaults: {
     productCost: 0,
     taxPercent: 0,
+    freeShippingEnabled: true,
+    freeShippingMinPrice: 79,
+    freeShippingSubsidyPercent: 50,
+    defaultShippingCost: 12,
+    shippingFallback: 12,
+    forceManualShipping: false,
   },
 };
 
@@ -39,6 +45,12 @@ function readForm() {
     defaults: {
       productCost: parseNumber(document.getElementById("default-product-cost").value),
       taxPercent: parseNumber(document.getElementById("default-tax-percent").value),
+      freeShippingEnabled: document.getElementById("default-free-shipping-enabled").value === "true",
+      freeShippingMinPrice: parseNumber(document.getElementById("default-free-shipping-min-price").value),
+      freeShippingSubsidyPercent: parseNumber(document.getElementById("default-free-shipping-subsidy-percent").value),
+      defaultShippingCost: parseNumber(document.getElementById("default-shipping-cost").value),
+      shippingFallback: parseNumber(document.getElementById("default-manual-shipping").value),
+      forceManualShipping: document.getElementById("default-force-manual-shipping").value === "true",
     },
   };
 }
@@ -53,6 +65,20 @@ function writeForm(values) {
   document.getElementById("sync-api-key").value = values.sync.apiKey;
   document.getElementById("default-product-cost").value = String(values.defaults.productCost);
   document.getElementById("default-tax-percent").value = String(values.defaults.taxPercent);
+  document.getElementById("default-free-shipping-enabled").value = String(
+    values.defaults.freeShippingEnabled ?? true,
+  );
+  document.getElementById("default-free-shipping-min-price").value = String(
+    values.defaults.freeShippingMinPrice ?? 79,
+  );
+  document.getElementById("default-free-shipping-subsidy-percent").value = String(
+    values.defaults.freeShippingSubsidyPercent ?? 50,
+  );
+  document.getElementById("default-shipping-cost").value = String(values.defaults.defaultShippingCost ?? 12);
+  document.getElementById("default-manual-shipping").value = String(values.defaults.shippingFallback ?? 12);
+  document.getElementById("default-force-manual-shipping").value = String(
+    values.defaults.forceManualShipping ?? false,
+  );
 }
 
 function saveSettings() {

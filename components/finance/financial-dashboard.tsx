@@ -81,7 +81,7 @@ import type {
 import { cn } from "@/lib/utils"
 
 type ModuleKey = "home" | "finance" | "stock" | "mercadolivre" | "branchhunter"
-type FinanceSection = "overview" | "expenses" | "categories" | "reports" | "history"
+type FinanceSection = "overview" | "abc" | "dre" | "expenses" | "categories" | "reports" | "history"
 type StockSection = "overview" | "products" | "movements" | "history"
 type MlSection = "listings" | "orders" | "metrics"
 type MlSidebarGroup = "anuncios" | "pedidos" | "metricas"
@@ -198,6 +198,8 @@ type OrderCostAnalysis = {
   netProfit: number
   productCost: number
   shippingCost: number
+  centralizeShipping: number
+  centralizePackaging: number
   mlFee: number
   taxes: number
   shippingBonus: number
@@ -208,6 +210,8 @@ type OrderCostAnalysis = {
 }
 
 const today = new Date().toISOString().slice(0, 10)
+const HUB_CENTRALIZE_SHIPPING_PER_ITEM = 5
+const HUB_CENTRALIZE_PACKAGING_PER_ITEM = 1.5
 
 function movementLabel(type: StockMovement["type"]) {
   if (type === "in") return "Entrada"
@@ -264,6 +268,124 @@ function mlShippingStep(status: string) {
   return 1
 }
 
+function valueToneClass(value: number) {
+  if (value > 0) return "text-emerald-700"
+  if (value < 0) return "text-destructive"
+  return "text-foreground"
+}
+
+function valueBadgeClass(value: number) {
+  if (value > 0) return "bg-emerald-100 text-emerald-700"
+  if (value < 0) return "bg-destructive/10 text-destructive"
+  return "bg-muted text-muted-foreground"
+}
+
+function monthDateRange(year: number, month1to12: number) {
+  const start = `${year}-${String(month1to12).padStart(2, "0")}-01`
+  const lastDay = new Date(year, month1to12, 0).getDate()
+  const end = `${year}-${String(month1to12).padStart(2, "0")}-${String(lastDay).padStart(2, "0")}`
+  return { start, end }
+}
+
+function previousMonth(year: number, month1to12: number) {
+  if (month1to12 === 1) return { year: year - 1, month: 12 }
+  return { year, month: month1to12 - 1 }
+}
+
+function calculateDreSnapshot({
+  orders,
+  productByMlItemId,
+  productBySku,
+  transactions,
+  range,
+  includeMovements,
+}: {
+  orders: MlOrder[]
+  productByMlItemId: Map<string, StockProduct>
+  productBySku: Map<string, StockProduct>
+  transactions: FinancialTransaction[]
+  range: { start: string; end: string }
+  includeMovements: boolean
+}): DreSnapshot {
+  let revenueConfirmed = 0
+  let marketplaceFees = 0
+  let shippingPaidBySeller = 0
+  let shippingBonus = 0
+  let returnsAmount = 0
+  let productCosts = 0
+  let packagingCost = 0
+  let taxes = 0
+  let ordersCount = 0
+
+  const validOrders = orders.filter((order) => {
+    const status = order.status.toLowerCase()
+    if (status === "cancelled") return false
+    const orderDate = order.dateCreated.slice(0, 10)
+    return orderDate >= range.start && orderDate <= range.end
+  })
+
+  for (const order of validOrders) {
+    ordersCount += 1
+    revenueConfirmed += Math.max(0, order.totalAmount)
+    marketplaceFees += Math.max(0, order.mlFeeAmount)
+    shippingPaidBySeller += Math.max(0, order.shippingCostAmount)
+    taxes += Math.max(0, order.taxesAmount)
+
+    if (order.productAmount > 0) {
+      productCosts += order.productAmount
+      continue
+    }
+
+    const estimated = order.items.reduce((total, item) => {
+      const byItem = item.id ? productByMlItemId.get(item.id) : undefined
+      const bySku = item.sku ? productBySku.get(item.sku.toLowerCase()) : undefined
+      const mapped = byItem ?? bySku
+      return total + (mapped?.unitCost ?? 0) * Math.max(0, item.quantity)
+    }, 0)
+    productCosts += estimated
+  }
+
+  const netReceived = revenueConfirmed - marketplaceFees - shippingPaidBySeller + shippingBonus
+  const grossProfit =
+    netReceived - returnsAmount - productCosts - packagingCost - taxes
+
+  let operationalExpenses = 0
+  let fixedCosts = 0
+  if (includeMovements) {
+    const expenseTransactions = transactions.filter(
+      (transaction) =>
+        transaction.kind === "expense" &&
+        transaction.date >= range.start &&
+        transaction.date <= range.end,
+    )
+    operationalExpenses = expenseTransactions
+      .filter((transaction) => transaction.expenseType !== "fixed")
+      .reduce((total, transaction) => total + transaction.amount, 0)
+    fixedCosts = expenseTransactions
+      .filter((transaction) => transaction.expenseType === "fixed")
+      .reduce((total, transaction) => total + transaction.amount, 0)
+  }
+
+  const netProfit = grossProfit - operationalExpenses - fixedCosts
+
+  return {
+    revenueConfirmed,
+    marketplaceFees,
+    shippingPaidBySeller,
+    shippingBonus,
+    netReceived,
+    returnsAmount,
+    productCosts,
+    packagingCost,
+    taxes,
+    grossProfit,
+    operationalExpenses,
+    fixedCosts,
+    netProfit,
+    ordersCount,
+  }
+}
+
 function mlShippingLabel(order: MlOrder) {
   const mode = order.shippingMode.toLowerCase()
   const logistic = order.shippingLogisticType.toLowerCase()
@@ -315,6 +437,38 @@ type OrdersFinancialSummary = {
   netProfit: number
   ordersCount: number
   soldItems: number
+}
+
+type AbcProductRow = {
+  productId: string
+  productName: string
+  sku: string
+  quantitySold: number
+  revenue: number
+  totalCost: number
+  profit: number
+  marginPercent: number
+  metricValue: number
+  sharePercent: number
+  cumulativePercent: number
+  abcClass: "A" | "B" | "C"
+}
+
+type DreSnapshot = {
+  revenueConfirmed: number
+  marketplaceFees: number
+  shippingPaidBySeller: number
+  shippingBonus: number
+  netReceived: number
+  returnsAmount: number
+  productCosts: number
+  packagingCost: number
+  taxes: number
+  grossProfit: number
+  operationalExpenses: number
+  fixedCosts: number
+  netProfit: number
+  ordersCount: number
 }
 
 function buildSalesEvolutionData(
@@ -387,6 +541,160 @@ function buildOrdersFinancialSummary(
       soldItems: 0,
     },
   )
+}
+
+function finalizeAbcRows(
+  groupedRows: Array<{
+    productId: string
+    productName: string
+    sku: string
+    quantitySold: number
+    revenue: number
+    totalCost: number
+    profit: number
+  }>,
+  metric: "revenue" | "quantity" | "profit",
+): AbcProductRow[] {
+  const rowsBase = groupedRows
+    .map((row) => {
+      const metricValue =
+        metric === "quantity" ? row.quantitySold : metric === "profit" ? row.profit : row.revenue
+      return {
+        ...row,
+        metricValue: Math.max(0, metricValue),
+      }
+    })
+    .sort((a, b) => b.metricValue - a.metricValue)
+
+  const totalMetric = rowsBase.reduce((total, row) => total + row.metricValue, 0)
+  let cumulative = 0
+  return rowsBase.map((row) => {
+    const sharePercent = totalMetric > 0 ? (row.metricValue / totalMetric) * 100 : 0
+    cumulative += sharePercent
+    const abcClass = cumulative <= 80 ? "A" : cumulative <= 95 ? "B" : "C"
+    const marginPercent = row.revenue > 0 ? (row.profit / row.revenue) * 100 : 0
+    return {
+      ...row,
+      marginPercent,
+      sharePercent,
+      cumulativePercent: cumulative,
+      abcClass,
+    }
+  })
+}
+
+function buildAbcRowsFromMovements(
+  products: StockProduct[],
+  movements: StockMovement[],
+  metric: "revenue" | "quantity" | "profit",
+): AbcProductRow[] {
+  const productMap = new Map(products.map((product) => [product.id, product]))
+  const saleMovements = movements.filter((movement) => movement.type === "sale")
+
+  const grouped = new Map<
+    string,
+    {
+      productId: string
+      productName: string
+      sku: string
+      quantitySold: number
+      revenue: number
+      totalCost: number
+      profit: number
+    }
+  >()
+
+  for (const movement of saleMovements) {
+    const product = productMap.get(movement.productId)
+    if (!product) continue
+    const quantity = Math.max(0, movement.quantity)
+    const saleUnit = movement.unitPrice ?? product.sellingPrice ?? 0
+    const unitCost = product.unitCost ?? 0
+    const revenue = saleUnit * quantity
+    const totalCost = unitCost * quantity
+    const profit = revenue - totalCost
+
+    const current = grouped.get(product.id) ?? {
+      productId: product.id,
+      productName: product.name,
+      sku: product.sku,
+      quantitySold: 0,
+      revenue: 0,
+      totalCost: 0,
+      profit: 0,
+    }
+    current.quantitySold += quantity
+    current.revenue += revenue
+    current.totalCost += totalCost
+    current.profit += profit
+    grouped.set(product.id, current)
+  }
+
+  return finalizeAbcRows(Array.from(grouped.values()), metric)
+}
+
+function buildAbcRowsFromOrders(
+  orders: MlOrder[],
+  productByMlItemId: Map<string, StockProduct>,
+  productBySku: Map<string, StockProduct>,
+  metric: "revenue" | "quantity" | "profit",
+  range?: { startDate?: string; endDate?: string },
+): AbcProductRow[] {
+  const grouped = new Map<
+    string,
+    {
+      productId: string
+      productName: string
+      sku: string
+      quantitySold: number
+      revenue: number
+      totalCost: number
+      profit: number
+    }
+  >()
+
+  const validOrders = orders.filter((order) => {
+    const status = order.status.toLowerCase()
+    if (status === "cancelled") return false
+    const orderDate = order.dateCreated.slice(0, 10)
+    if (range?.startDate && orderDate < range.startDate) return false
+    if (range?.endDate && orderDate > range.endDate) return false
+    return true
+  })
+
+  for (const order of validOrders) {
+    for (const item of order.items) {
+      const quantity = Math.max(0, item.quantity)
+      if (quantity <= 0) continue
+
+      const mappedByItem = item.id ? productByMlItemId.get(item.id) : undefined
+      const mappedBySku = item.sku ? productBySku.get(item.sku.toLowerCase()) : undefined
+      const mappedProduct = mappedByItem ?? mappedBySku
+
+      const unitCost = mappedProduct?.unitCost ?? 0
+      const revenue = Math.max(0, item.unitPrice) * quantity
+      const totalCost = unitCost * quantity
+      const profit = revenue - totalCost
+      const key = item.id || item.sku || item.title
+
+      const current = grouped.get(key) ?? {
+        productId: key,
+        productName: item.title || mappedProduct?.name || "Produto",
+        sku: item.sku || mappedProduct?.sku || "",
+        quantitySold: 0,
+        revenue: 0,
+        totalCost: 0,
+        profit: 0,
+      }
+      current.quantitySold += quantity
+      current.revenue += revenue
+      current.totalCost += totalCost
+      current.profit += profit
+      grouped.set(key, current)
+    }
+  }
+
+  return finalizeAbcRows(Array.from(grouped.values()), metric)
 }
 
 function StockLevelLegend() {
@@ -528,6 +836,27 @@ export function FinancialDashboard() {
   const [mlCatalogLoadingId, setMlCatalogLoadingId] = useState<string | null>(null)
   const [mlCatalogData, setMlCatalogData] = useState<MlCatalogData | null>(null)
   const [mlOrderCostAnalysis, setMlOrderCostAnalysis] = useState<OrderCostAnalysis | null>(null)
+  const [financeOrdersTitleFilter, setFinanceOrdersTitleFilter] = useState("")
+  const [financeOrdersSkuFilter, setFinanceOrdersSkuFilter] = useState("")
+  const [financeOrdersStatusFilter, setFinanceOrdersStatusFilter] = useState("all")
+  const [financeOverviewTab, setFinanceOverviewTab] = useState<"sales" | "ranking">("sales")
+  const [financeAbcMetric, setFinanceAbcMetric] = useState<"revenue" | "quantity" | "profit">(
+    "revenue",
+  )
+  const [historySearch, setHistorySearch] = useState("")
+  const [historyKindFilter, setHistoryKindFilter] = useState<"all" | "income" | "expense">("all")
+  const [historyExpenseTypeFilter, setHistoryExpenseTypeFilter] = useState<
+    "all" | "fixed" | "variable"
+  >("all")
+  const [historyPeriodicityFilter, setHistoryPeriodicityFilter] = useState<
+    "all" | TransactionPeriodicity
+  >("all")
+  const [historyStartDate, setHistoryStartDate] = useState("")
+  const [historyEndDate, setHistoryEndDate] = useState("")
+  const [dreMonth, setDreMonth] = useState(new Date().getMonth() + 1)
+  const [dreYear, setDreYear] = useState(new Date().getFullYear())
+  const [dreIncludeMovements, setDreIncludeMovements] = useState(true)
+  const [dreComparePrevious, setDreComparePrevious] = useState(false)
 
   const financeData = useQuery(
     api.finance.getDashboardData,
@@ -719,6 +1048,15 @@ export function FinancialDashboard() {
       ),
     [products],
   )
+  const productMapBySku = useMemo(
+    () =>
+      new Map(
+        products
+          .filter((product) => product.sku)
+          .map((product) => [product.sku.toLowerCase(), product]),
+      ),
+    [products],
+  )
   const expenseCategories = categories.filter((category) => category.kind === "expense")
   const incomeCategories = categories.filter((category) => category.kind === "income")
   const categoryMap = useMemo(
@@ -730,6 +1068,60 @@ export function FinancialDashboard() {
     () => filterTransactions(transactions, filters),
     [transactions, filters],
   )
+  const historyTransactions = useMemo(() => {
+    const search = historySearch.trim().toLowerCase()
+    return transactions
+      .filter((transaction) => {
+        if (historyStartDate && transaction.date < historyStartDate) return false
+        if (historyEndDate && transaction.date > historyEndDate) return false
+        if (historyKindFilter !== "all" && transaction.kind !== historyKindFilter) return false
+        if (
+          historyExpenseTypeFilter !== "all" &&
+          transaction.kind === "expense" &&
+          (transaction.expenseType ?? "variable") !== historyExpenseTypeFilter
+        ) {
+          return false
+        }
+        if (
+          historyPeriodicityFilter !== "all" &&
+          (transaction.periodicity ?? "one_time") !== historyPeriodicityFilter
+        ) {
+          return false
+        }
+        if (!search) return true
+        const categoryName = categoryMap.get(transaction.categoryId)?.name?.toLowerCase() ?? ""
+        return (
+          transaction.description.toLowerCase().includes(search) ||
+          (transaction.origin ?? "").toLowerCase().includes(search) ||
+          categoryName.includes(search)
+        )
+      })
+      .sort((a, b) => b.date.localeCompare(a.date))
+  }, [
+    categoryMap,
+    historyEndDate,
+    historyExpenseTypeFilter,
+    historyKindFilter,
+    historyPeriodicityFilter,
+    historySearch,
+    historyStartDate,
+    transactions,
+  ])
+  const historySummary = useMemo(() => {
+    const entries = historyTransactions
+      .filter((transaction) => transaction.kind === "income")
+      .reduce((total, transaction) => total + transaction.amount, 0)
+    const fixedCost = historyTransactions
+      .filter((transaction) => transaction.kind === "expense" && transaction.expenseType === "fixed")
+      .reduce((total, transaction) => total + transaction.amount, 0)
+    const operationalCost = historyTransactions
+      .filter((transaction) => transaction.kind === "expense" && transaction.expenseType !== "fixed")
+      .reduce((total, transaction) => total + transaction.amount, 0)
+    const recurring = historyTransactions.filter(
+      (transaction) => (transaction.periodicity ?? "one_time") !== "one_time",
+    ).length
+    return { entries, fixedCost, operationalCost, recurring }
+  }, [historyTransactions])
   const summary = useMemo(() => summarizeTransactions(filteredTransactions), [filteredTransactions])
   const monthlyReport = useMemo(() => {
     const currentMonth = today.slice(0, 7)
@@ -819,6 +1211,194 @@ export function FinancialDashboard() {
   const salesCountFinal = hasOrdersFinancialData ? ordersFinancialSummary.ordersCount : salesCountInFilter
   const operatingMarginFinal =
     salesInFilterFinal > 0 ? (operatingResultFinal / salesInFilterFinal) * 100 : 0
+  const ticketMedioFinal = salesCountFinal > 0 ? salesInFilterFinal / salesCountFinal : 0
+  const financeAccountLabel =
+    mlConnectionStatus?.connected && mlConnectionStatus.mlNickname
+      ? mlConnectionStatus.mlNickname
+      : "BranchCommerce"
+
+  const financeDetailedOrders = useMemo(() => {
+    const normalizedTitle = financeOrdersTitleFilter.trim().toLowerCase()
+    const normalizedSku = financeOrdersSkuFilter.trim().toLowerCase()
+    const statusFilter = financeOrdersStatusFilter.toLowerCase()
+
+    return mlOrders
+      .filter((order) => {
+        const orderDate = order.dateCreated.slice(0, 10)
+        if (filters.startDate && orderDate < filters.startDate) return false
+        if (filters.endDate && orderDate > filters.endDate) return false
+        if (statusFilter !== "all" && order.status.toLowerCase() !== statusFilter) return false
+        if (normalizedTitle) {
+          const titleMatch = order.items.some((item) =>
+            item.title.toLowerCase().includes(normalizedTitle),
+          )
+          if (!titleMatch) return false
+        }
+        if (normalizedSku) {
+          const skuMatch = order.items.some((item) => item.sku.toLowerCase().includes(normalizedSku))
+          if (!skuMatch) return false
+        }
+        return true
+      })
+      .map((order) => {
+        const productCost = Math.max(0, order.productAmount)
+        const shipping = Math.max(0, order.shippingCostAmount)
+        const mlFee = Math.max(0, order.mlFeeAmount)
+        const taxes = Math.max(0, order.taxesAmount)
+        const profit = order.totalAmount - productCost - shipping - mlFee - taxes
+        const margin = order.totalAmount > 0 ? (profit / order.totalAmount) * 100 : 0
+        return {
+          id: order.id,
+          orderDate: order.dateCreated,
+          status: order.status,
+          totalAmount: order.totalAmount,
+          profit,
+          margin,
+          title: order.items[0]?.title ?? "Item sem titulo",
+          sku: order.items[0]?.sku ?? "",
+        }
+      })
+      .sort((a, b) => b.orderDate.localeCompare(a.orderDate))
+  }, [
+    filters.endDate,
+    filters.startDate,
+    financeOrdersSkuFilter,
+    financeOrdersStatusFilter,
+    financeOrdersTitleFilter,
+    mlOrders,
+  ])
+
+  const abcRows = useMemo(() => {
+    const fromOrders = buildAbcRowsFromOrders(
+      mlOrders,
+      productMapByMlItemId,
+      productMapBySku,
+      financeAbcMetric,
+      {
+        startDate: filters.startDate,
+        endDate: filters.endDate,
+      },
+    )
+    if (fromOrders.length > 0) return fromOrders
+    return buildAbcRowsFromMovements(products, filteredMovements, financeAbcMetric)
+  }, [
+    filteredMovements,
+    filters.endDate,
+    filters.startDate,
+    financeAbcMetric,
+    mlOrders,
+    productMapByMlItemId,
+    productMapBySku,
+    products,
+  ])
+  const abcUsesOrdersData = useMemo(() => {
+    const fromOrders = buildAbcRowsFromOrders(
+      mlOrders,
+      productMapByMlItemId,
+      productMapBySku,
+      financeAbcMetric,
+      {
+        startDate: filters.startDate,
+        endDate: filters.endDate,
+      },
+    )
+    return fromOrders.length > 0
+  }, [
+    filters.endDate,
+    filters.startDate,
+    financeAbcMetric,
+    mlOrders,
+    productMapByMlItemId,
+    productMapBySku,
+  ])
+  const abcRowsFiltered = useMemo(() => {
+    const skuTerm = financeOrdersSkuFilter.trim().toLowerCase()
+    const titleTerm = financeOrdersTitleFilter.trim().toLowerCase()
+    return abcRows.filter((row) => {
+      const matchesSku = !skuTerm || row.sku.toLowerCase().includes(skuTerm)
+      const matchesTitle = !titleTerm || row.productName.toLowerCase().includes(titleTerm)
+      return matchesSku && matchesTitle
+    })
+  }, [abcRows, financeOrdersSkuFilter, financeOrdersTitleFilter])
+  const abcSummary = useMemo(() => {
+    const byClass = {
+      A: { count: 0, share: 0 },
+      B: { count: 0, share: 0 },
+      C: { count: 0, share: 0 },
+    }
+    for (const row of abcRowsFiltered) {
+      byClass[row.abcClass].count += 1
+      byClass[row.abcClass].share += row.sharePercent
+    }
+    return byClass
+  }, [abcRowsFiltered])
+  const dreRange = useMemo(() => monthDateRange(dreYear, dreMonth), [dreMonth, dreYear])
+  const dreSnapshot = useMemo(
+    () =>
+      calculateDreSnapshot({
+        orders: mlOrders,
+        productByMlItemId: productMapByMlItemId,
+        productBySku: productMapBySku,
+        transactions,
+        range: dreRange,
+        includeMovements: dreIncludeMovements,
+      }),
+    [
+      dreIncludeMovements,
+      dreRange,
+      mlOrders,
+      productMapByMlItemId,
+      productMapBySku,
+      transactions,
+    ],
+  )
+  const drePreviousSnapshot = useMemo(() => {
+    const previous = previousMonth(dreYear, dreMonth)
+    const previousRange = monthDateRange(previous.year, previous.month)
+    return calculateDreSnapshot({
+      orders: mlOrders,
+      productByMlItemId: productMapByMlItemId,
+      productBySku: productMapBySku,
+      transactions,
+      range: previousRange,
+      includeMovements: dreIncludeMovements,
+    })
+  }, [
+    dreIncludeMovements,
+    dreMonth,
+    dreYear,
+    mlOrders,
+    productMapByMlItemId,
+    productMapBySku,
+    transactions,
+  ])
+  const dreRevenueBase = Math.max(1, dreSnapshot.revenueConfirmed)
+  const dreRows = useMemo(
+    () => [
+      { label: "Receita Confirmada", value: dreSnapshot.revenueConfirmed, strong: true, color: "text-emerald-700" },
+      { label: "(-) Taxas de Marketplace", value: -dreSnapshot.marketplaceFees },
+      { label: "(-) Frete Pago pelo Vendedor", value: -dreSnapshot.shippingPaidBySeller },
+      { label: "(+) Bonus de Frete", value: dreSnapshot.shippingBonus, color: "text-emerald-700" },
+      { label: "= Valor Liquido Recebido", value: dreSnapshot.netReceived, strong: true, color: "text-emerald-700" },
+      { label: "(-) Devolucoes", value: -dreSnapshot.returnsAmount },
+      { label: "(-) Custo dos Produtos (SKU)", value: -dreSnapshot.productCosts },
+      { label: "(-) Custo de Embalagem", value: -dreSnapshot.packagingCost },
+      { label: "(-) Impostos", value: -dreSnapshot.taxes },
+      { label: "= Lucro Bruto", value: dreSnapshot.grossProfit, strong: true, color: valueToneClass(dreSnapshot.grossProfit) },
+      { label: "(-) Despesas Operacionais", value: -dreSnapshot.operationalExpenses },
+      { label: "(-) Custos Fixos", value: -dreSnapshot.fixedCosts },
+      { label: "= LUCRO LIQUIDO", value: dreSnapshot.netProfit, strong: true, color: valueToneClass(dreSnapshot.netProfit) },
+    ],
+    [dreSnapshot],
+  )
+  const dreMonthOptions = useMemo(
+    () =>
+      Array.from({ length: 12 }, (_, index) => ({
+        value: index + 1,
+        label: new Date(2000, index, 1).toLocaleDateString("pt-BR", { month: "long" }),
+      })),
+    [],
+  )
 
   const filteredMlOrders = useMemo(() => {
     const filtered = mlOrders.filter((order) => {
@@ -1407,12 +1987,29 @@ export function FinancialDashboard() {
     const productCostFromApi = Math.max(0, order.productAmount)
     const productCost = productCostFromApi > 0 ? productCostFromApi : Math.max(0, unitCost * quantity)
     const shippingCost = Math.max(0, order.shippingCostAmount)
+    const centralizeShipping = Math.max(0, quantity * HUB_CENTRALIZE_SHIPPING_PER_ITEM)
+    const centralizePackaging = Math.max(0, quantity * HUB_CENTRALIZE_PACKAGING_PER_ITEM)
     const taxes = Math.max(0, order.taxesAmount)
     const shippingBonus = 0
     const mlFee = Math.max(0, order.mlFeeAmount)
 
-    const totalCosts = Math.max(0, productCost + shippingCost + mlFee + taxes - shippingBonus)
-    const netProfit = receivedAmount - productCost - shippingCost - taxes
+    const totalCosts = Math.max(
+      0,
+      productCost +
+        shippingCost +
+        centralizeShipping +
+        centralizePackaging +
+        mlFee +
+        taxes -
+        shippingBonus,
+    )
+    const netProfit =
+      receivedAmount -
+      productCost -
+      shippingCost -
+      centralizeShipping -
+      centralizePackaging -
+      taxes
     const contributionMargin = revenueTotal > 0 ? (netProfit / revenueTotal) * 100 : 0
     const roi = productCost > 0 ? (netProfit / productCost) * 100 : 0
 
@@ -1424,6 +2021,8 @@ export function FinancialDashboard() {
       netProfit,
       productCost,
       shippingCost,
+      centralizeShipping,
+      centralizePackaging,
       mlFee,
       taxes,
       shippingBonus,
@@ -1550,6 +2149,8 @@ export function FinancialDashboard() {
           <>
             <p className="text-xs text-muted-foreground">Financeiro</p>
             <SidebarButton icon={LayoutDashboard} label="Visao geral" isActive={activeFinanceSection === "overview"} onClick={() => setActiveFinanceSection("overview")} />
+            <SidebarButton icon={PieChart} label="Analise ABC" isActive={activeFinanceSection === "abc"} onClick={() => setActiveFinanceSection("abc")} />
+            <SidebarButton icon={FileText} label="Analise DRE" isActive={activeFinanceSection === "dre"} onClick={() => setActiveFinanceSection("dre")} />
             <SidebarButton icon={TrendingDown} label="Lancamentos" isActive={activeFinanceSection === "expenses"} onClick={() => setActiveFinanceSection("expenses")} />
             <SidebarButton icon={FolderTree} label="Categorias" isActive={activeFinanceSection === "categories"} onClick={() => setActiveFinanceSection("categories")} />
             <SidebarButton icon={BarChart3} label="Relatorios" isActive={activeFinanceSection === "reports"} onClick={() => setActiveFinanceSection("reports")} />
@@ -1724,138 +2325,808 @@ export function FinancialDashboard() {
 
             {activeFinanceSection === "overview" && (
               <section className="space-y-4">
-                <Card>
-                  <CardHeader>
-                    <CardTitle>Resumo financeiro</CardTitle>
+                <Card className="border-border/70">
+                  <CardHeader className="pb-3">
+                    <CardTitle className="inline-flex items-center gap-2 text-xl">
+                      <Wallet className="size-5 text-orange-500" />
+                      Resumo Financeiro
+                    </CardTitle>
                     <CardDescription>
-                      Visao consolidada de vendas, custos e margem do HUB.
+                      Acompanhe receitas, custos e margens das suas vendas.
                       {hasOrdersFinancialData
-                        ? " Dados principais calculados a partir dos pedidos vendidos do Mercado Livre."
-                        : " Sem pedidos sincronizados no periodo, exibindo dados do financeiro interno."}
+                        ? " Base principal: pedidos vendidos do Mercado Livre."
+                        : " Sem pedidos no periodo: exibindo financeiro interno."}
                     </CardDescription>
                   </CardHeader>
-                </Card>
-                <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
-                  <Card className="border-blue-200/70 bg-blue-50/40">
-                    <CardHeader className="pb-2">
-                      <CardDescription className="inline-flex items-center gap-1">
-                        <Boxes className="size-3.5 text-blue-600" />
-                        Vendas brutas
-                      </CardDescription>
-                      <CardTitle>{formatCurrency(salesInFilterFinal)}</CardTitle>
-                    </CardHeader>
-                    <CardContent className="text-xs text-muted-foreground">{soldItemsFinal} itens vendidos</CardContent>
-                  </Card>
-                  <Card className="border-emerald-200/70 bg-emerald-50/40">
-                    <CardHeader className="pb-2">
-                      <CardDescription className="inline-flex items-center gap-1">
-                        <CircleDollarSign className="size-3.5 text-emerald-600" />
-                        Receita (vendas)
-                      </CardDescription>
-                      <CardTitle>{formatCurrency(salesInFilterFinal)}</CardTitle>
-                    </CardHeader>
-                    <CardContent className="text-xs text-muted-foreground">{salesCountFinal} vendas</CardContent>
-                  </Card>
-                  <Card className="border-orange-200/70 bg-orange-50/40">
-                    <CardHeader className="pb-2">
-                      <CardDescription className="inline-flex items-center gap-1">
-                        <TrendingDown className="size-3.5 text-orange-600" />
-                        Custos totais
-                      </CardDescription>
-                      <CardTitle>{formatCurrency(expensesInFilterFinal)}</CardTitle>
-                    </CardHeader>
-                    <CardContent className="text-xs text-muted-foreground">Soma de todos os custos</CardContent>
-                  </Card>
-                  <Card className="border-primary/30 bg-primary/5">
-                    <CardHeader className="pb-2">
-                      <CardDescription className="inline-flex items-center gap-1">
-                        <Wallet className="size-3.5 text-primary" />
-                        Lucro liquido
-                      </CardDescription>
-                      <CardTitle className={cn(operatingResultFinal < 0 && "text-destructive")}>
-                        {formatCurrency(operatingResultFinal)}
-                      </CardTitle>
-                    </CardHeader>
-                    <CardContent className="text-xs">
-                      <span
-                        className={cn(
-                          "rounded-full px-2 py-1",
-                          operatingMarginFinal >= 0
-                            ? "bg-emerald-100 text-emerald-700"
-                            : "bg-destructive/10 text-destructive",
-                        )}
+                  <CardContent className="space-y-4">
+                    <div className="grid gap-2 md:grid-cols-2 xl:grid-cols-5">
+                      <div className="rounded-md border bg-muted/20 p-2">
+                        <div className="flex items-center gap-2">
+                          <CalendarDays className="size-4 text-muted-foreground" />
+                          <Input
+                            type="date"
+                            value={filters.startDate ?? ""}
+                            onChange={(event) =>
+                              setFilters((prev) => ({
+                                ...prev,
+                                startDate: event.target.value || undefined,
+                              }))
+                            }
+                          />
+                          <span className="text-xs text-muted-foreground">ate</span>
+                          <Input
+                            type="date"
+                            value={filters.endDate ?? ""}
+                            onChange={(event) =>
+                              setFilters((prev) => ({
+                                ...prev,
+                                endDate: event.target.value || undefined,
+                              }))
+                            }
+                          />
+                        </div>
+                      </div>
+                      <Input
+                        placeholder="Filtrar por titulo"
+                        value={financeOrdersTitleFilter}
+                        onChange={(event) => setFinanceOrdersTitleFilter(event.target.value)}
+                      />
+                      <Input
+                        placeholder="Filtrar por SKU"
+                        value={financeOrdersSkuFilter}
+                        onChange={(event) => setFinanceOrdersSkuFilter(event.target.value)}
+                      />
+                      <Select
+                        value={financeOrdersStatusFilter}
+                        onValueChange={setFinanceOrdersStatusFilter}
                       >
-                        {operatingMarginFinal.toFixed(1)}% margem
-                      </span>
-                    </CardContent>
-                  </Card>
-                </div>
-                <div className="grid gap-4 xl:grid-cols-3">
-                  <Card className="xl:col-span-2">
-                    <CardHeader>
-                      <CardTitle>Evolucao de vendas</CardTitle>
-                      <CardDescription>Acompanhe o desempenho diario de receita, lucro e pedidos.</CardDescription>
-                    </CardHeader>
-                    <CardContent>
-                      <FinancialEvolutionChart data={salesEvolution} />
-                    </CardContent>
-                  </Card>
-                  <Card>
-                    <CardHeader>
-                      <CardTitle className="inline-flex items-center gap-2">
-                        <PieChart className="size-4 text-orange-500" />
-                        Composicao de custos
-                      </CardTitle>
-                      <CardDescription>Distribuicao das principais categorias de custo.</CardDescription>
-                    </CardHeader>
-                    <CardContent>
-                      <CostCompositionChart items={costComposition} total={expensesInFilterFinal} />
-                    </CardContent>
-                  </Card>
-                </div>
-                <div className="grid gap-4 xl:grid-cols-2">
-                  <Card>
-                    <CardHeader>
-                      <CardTitle className="inline-flex items-center gap-2">
-                        <Wrench className="size-4 text-orange-500" />
-                        Custos operacionais detalhados
-                      </CardTitle>
-                    </CardHeader>
-                    <CardContent className="space-y-2 text-sm">
-                      <LineItem label="Custos operacionais" value={costBreakdown.operationalCost} />
-                      <LineItem label="Custos fixos" value={costBreakdown.fixedCost} />
-                      <LineItem label="Custos variaveis" value={costBreakdown.variableCost} />
-                      <LineItem label="Ferramentas fixas" value={costBreakdown.toolsFixedCost} strong />
-                      <Separator />
-                      <LineItem label="Capital em estoque" value={stockSummary.stockValue} strong />
-                    </CardContent>
-                  </Card>
-                  <Card>
-                    <CardHeader>
-                      <CardTitle className="inline-flex items-center gap-2">
-                        <Trophy className="size-4 text-amber-500" />
-                        Top produtos por lucro
-                      </CardTitle>
-                    </CardHeader>
-                    <CardContent className="space-y-2">
-                      {productChampions.length === 0 ? (
-                        <p className="text-sm text-muted-foreground">
-                          Sem vendas registradas no periodo filtrado.
-                        </p>
-                      ) : (
-                        productChampions.slice(0, 3).map((item) => (
-                          <div
-                            key={item.productId}
-                            className="flex items-center justify-between rounded-none border border-border px-3 py-2 text-sm"
+                        <SelectTrigger>
+                          <SelectValue placeholder="Todos os status" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="all">Todos os status</SelectItem>
+                          <SelectItem value="paid">Pago</SelectItem>
+                          <SelectItem value="ready_to_ship">Pronto para envio</SelectItem>
+                          <SelectItem value="shipped">Enviado</SelectItem>
+                          <SelectItem value="delivered">Entregue</SelectItem>
+                        </SelectContent>
+                      </Select>
+                      <Select value="all-accounts" onValueChange={() => undefined}>
+                        <SelectTrigger>
+                          <SelectValue placeholder="Todas as contas" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="all-accounts">Todas as contas</SelectItem>
+                          <SelectItem value={financeAccountLabel}>{financeAccountLabel}</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+
+                    <div className="flex flex-wrap gap-2">
+                      <Badge variant="secondary">Sem comparar</Badge>
+                      <Badge variant="outline">vs Mes anterior</Badge>
+                      <Badge variant="outline">vs Ano anterior</Badge>
+                      <Badge variant="outline">Sem projecao</Badge>
+                      <Badge variant="outline">Projecao do mes</Badge>
+                    </div>
+
+                    <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-5">
+                      <Card className="border-emerald-200/70 bg-emerald-50/40">
+                        <CardHeader className="pb-2">
+                          <CardDescription className="inline-flex items-center gap-1 text-emerald-700">
+                            <Wallet className="size-3.5" />
+                            Lucro Liquido
+                          </CardDescription>
+                          <CardTitle className={valueToneClass(operatingResultFinal)}>
+                            {formatCurrency(operatingResultFinal)}
+                          </CardTitle>
+                        </CardHeader>
+                        <CardContent className="text-xs text-muted-foreground">
+                          <span
+                            className={cn(
+                              "inline-flex items-center gap-1 rounded-full px-2 py-1 font-medium",
+                              valueBadgeClass(operatingMarginFinal),
+                            )}
                           >
-                            <span className="max-w-[58%] truncate">{item.productName}</span>
-                            <span className="font-medium">{formatCurrency(item.profit)}</span>
+                            {operatingMarginFinal >= 0 ? (
+                              <TrendingUp className="size-3.5" />
+                            ) : (
+                              <TrendingDown className="size-3.5" />
+                            )}
+                            {operatingMarginFinal.toFixed(1)}% margem
+                          </span>
+                        </CardContent>
+                      </Card>
+                      <Card className="border-blue-200/70 bg-blue-50/40">
+                        <CardHeader className="pb-2">
+                          <CardDescription className="inline-flex items-center gap-1 text-blue-700">
+                            <ShoppingBag className="size-3.5" />
+                            Vendas Brutas
+                          </CardDescription>
+                          <CardTitle className="text-blue-700">{formatCurrency(salesInFilterFinal)}</CardTitle>
+                        </CardHeader>
+                        <CardContent className="text-xs text-muted-foreground">
+                          {soldItemsFinal} itens vendidos
+                        </CardContent>
+                      </Card>
+                      <Card className="border-emerald-200/70 bg-emerald-50/40">
+                        <CardHeader className="pb-2">
+                          <CardDescription className="inline-flex items-center gap-1 text-emerald-700">
+                            <CircleDollarSign className="size-3.5" />
+                            Receita
+                          </CardDescription>
+                          <CardTitle className="text-emerald-700">
+                            {formatCurrency(salesInFilterFinal)}
+                          </CardTitle>
+                        </CardHeader>
+                        <CardContent className="text-xs text-muted-foreground">
+                          {salesCountFinal} vendas confirmadas
+                        </CardContent>
+                      </Card>
+                      <Card className="border-orange-200/70 bg-orange-50/40">
+                        <CardHeader className="pb-2">
+                          <CardDescription className="inline-flex items-center gap-1 text-orange-700">
+                            <TrendingDown className="size-3.5" />
+                            Custos Totais
+                          </CardDescription>
+                          <CardTitle className="text-orange-700">
+                            {formatCurrency(expensesInFilterFinal)}
+                          </CardTitle>
+                        </CardHeader>
+                        <CardContent className="text-xs text-muted-foreground">
+                          Soma de todos os custos
+                        </CardContent>
+                      </Card>
+                      <Card className="border-violet-200/70 bg-violet-50/40">
+                        <CardHeader className="pb-2">
+                          <CardDescription className="inline-flex items-center gap-1 text-violet-700">
+                            <CreditCard className="size-3.5" />
+                            Ticket Medio
+                          </CardDescription>
+                          <CardTitle className="text-violet-700">{formatCurrency(ticketMedioFinal)}</CardTitle>
+                        </CardHeader>
+                        <CardContent className="text-xs text-muted-foreground">Valor medio por venda</CardContent>
+                      </Card>
+                    </div>
+
+                    <div className="grid gap-4 xl:grid-cols-3">
+                      <Card className="xl:col-span-2">
+                        <CardHeader className="flex flex-row items-start justify-between">
+                          <div>
+                            <CardDescription className="uppercase tracking-wide">Evolucao</CardDescription>
+                            <CardTitle>Evolucao de Vendas</CardTitle>
+                            <CardDescription>
+                              Acompanhe o desempenho diario das vendas.
+                            </CardDescription>
                           </div>
-                        ))
-                      )}
-                    </CardContent>
-                  </Card>
-                </div>
+                          <Button size="sm" variant="outline">
+                            Exportar
+                          </Button>
+                        </CardHeader>
+                        <CardContent>
+                          <FinancialEvolutionChart data={salesEvolution} />
+                        </CardContent>
+                      </Card>
+                      <Card>
+                        <CardHeader>
+                          <CardDescription className="uppercase tracking-wide">Custos</CardDescription>
+                          <CardTitle>Composicao de Custos</CardTitle>
+                          <CardDescription>Distribuicao dos custos</CardDescription>
+                        </CardHeader>
+                        <CardContent>
+                          <CostCompositionChart items={costComposition} total={expensesInFilterFinal} />
+                        </CardContent>
+                      </Card>
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-2">
+                      <Button
+                        type="button"
+                        variant={financeOverviewTab === "sales" ? "secondary" : "outline"}
+                        onClick={() => setFinanceOverviewTab("sales")}
+                      >
+                        Vendas
+                      </Button>
+                      <Button
+                        type="button"
+                        variant={financeOverviewTab === "ranking" ? "secondary" : "outline"}
+                        onClick={() => setFinanceOverviewTab("ranking")}
+                      >
+                        Ranking
+                      </Button>
+                    </div>
+
+                    {financeOverviewTab === "sales" ? (
+                      <Card>
+                        <CardHeader className="flex flex-row items-start justify-between">
+                          <div>
+                            <CardDescription>Detalhamento</CardDescription>
+                            <CardTitle>Vendas Detalhadas</CardTitle>
+                          </div>
+                          <Button size="sm" variant="outline">
+                            Exportar
+                          </Button>
+                        </CardHeader>
+                        <CardContent className="space-y-3">
+                          <Table>
+                            <TableHeader>
+                              <TableRow>
+                                <TableHead>Pedido</TableHead>
+                                <TableHead>Conta</TableHead>
+                                <TableHead>Data</TableHead>
+                                <TableHead>Status</TableHead>
+                                <TableHead className="text-right">Valor Total</TableHead>
+                                <TableHead className="text-right">Lucro</TableHead>
+                                <TableHead className="text-right">Margem</TableHead>
+                              </TableRow>
+                            </TableHeader>
+                            <TableBody>
+                              {financeDetailedOrders.length === 0 ? (
+                                <TableRow>
+                                  <TableCell colSpan={7} className="text-center text-muted-foreground">
+                                    Sem vendas no filtro selecionado.
+                                  </TableCell>
+                                </TableRow>
+                              ) : (
+                                financeDetailedOrders.slice(0, 10).map((order) => (
+                                  <TableRow key={order.id}>
+                                    <TableCell className="font-medium">{order.title}</TableCell>
+                                    <TableCell className="uppercase">{financeAccountLabel}</TableCell>
+                                    <TableCell>{new Date(order.orderDate).toLocaleString("pt-BR")}</TableCell>
+                                    <TableCell>
+                                      <Badge className={mlStatusBadgeClass(order.status)}>
+                                        {order.status === "paid" ? "Confirmado" : order.status}
+                                      </Badge>
+                                    </TableCell>
+                                    <TableCell className="text-right font-medium">
+                                      {formatCurrency(order.totalAmount)}
+                                    </TableCell>
+                                    <TableCell
+                                      className={cn(
+                                        "text-right font-semibold",
+                                        valueToneClass(order.profit),
+                                      )}
+                                    >
+                                      <span className="inline-flex items-center gap-1">
+                                        {order.profit >= 0 ? (
+                                          <TrendingUp className="size-3.5" />
+                                        ) : (
+                                          <TrendingDown className="size-3.5" />
+                                        )}
+                                        {formatCurrency(order.profit)}
+                                      </span>
+                                    </TableCell>
+                                    <TableCell
+                                      className={cn(
+                                        "text-right font-semibold",
+                                        valueToneClass(order.margin),
+                                      )}
+                                    >
+                                      {order.margin.toFixed(1)}%
+                                    </TableCell>
+                                  </TableRow>
+                                ))
+                              )}
+                            </TableBody>
+                          </Table>
+                          <p className="text-xs text-muted-foreground">
+                            Mostrando 1 a {Math.min(financeDetailedOrders.length, 10)} de{" "}
+                            {financeDetailedOrders.length}
+                          </p>
+                        </CardContent>
+                      </Card>
+                    ) : (
+                      <Card>
+                        <CardHeader>
+                          <CardDescription>Top produtos</CardDescription>
+                          <CardTitle>Ranking por lucro</CardTitle>
+                        </CardHeader>
+                        <CardContent>
+                          {productChampions.length === 0 ? (
+                            <p className="text-sm text-muted-foreground">
+                              Sem vendas registradas no periodo filtrado.
+                            </p>
+                          ) : (
+                            <Table>
+                              <TableHeader>
+                                <TableRow>
+                                  <TableHead>Produto</TableHead>
+                                  <TableHead className="text-right">Unidades</TableHead>
+                                  <TableHead className="text-right">Receita</TableHead>
+                                  <TableHead className="text-right">Lucro</TableHead>
+                                  <TableHead className="text-right">Margem</TableHead>
+                                </TableRow>
+                              </TableHeader>
+                              <TableBody>
+                                {productChampions.map((item) => (
+                                  <TableRow key={item.productId}>
+                                    <TableCell className="max-w-[260px] truncate font-medium">
+                                      {item.productName}
+                                    </TableCell>
+                                    <TableCell className="text-right font-medium">{item.unitsSold}</TableCell>
+                                    <TableCell className="text-right font-medium text-blue-700">
+                                      {formatCurrency(item.revenue)}
+                                    </TableCell>
+                                    <TableCell
+                                      className={cn(
+                                        "text-right font-semibold",
+                                        valueToneClass(item.profit),
+                                      )}
+                                    >
+                                      <span className="inline-flex items-center gap-1">
+                                        {item.profit >= 0 ? (
+                                          <TrendingUp className="size-3.5" />
+                                        ) : (
+                                          <TrendingDown className="size-3.5" />
+                                        )}
+                                        {formatCurrency(item.profit)}
+                                      </span>
+                                    </TableCell>
+                                    <TableCell
+                                      className={cn(
+                                        "text-right font-semibold",
+                                        valueToneClass(item.marginPercent),
+                                      )}
+                                    >
+                                      {item.marginPercent.toFixed(1)}%
+                                    </TableCell>
+                                  </TableRow>
+                                ))}
+                              </TableBody>
+                            </Table>
+                          )}
+                        </CardContent>
+                      </Card>
+                    )}
+                  </CardContent>
+                </Card>
+              </section>
+            )}
+
+            {activeFinanceSection === "abc" && (
+              <section className="space-y-4">
+                <Card>
+                  <CardHeader>
+                    <CardTitle className="inline-flex items-center gap-2">
+                      <PieChart className="size-5 text-orange-500" />
+                      Analise ABC
+                    </CardTitle>
+                    <CardDescription>
+                      Classifique seus produtos por importancia usando a curva ABC.
+                    </CardDescription>
+                  </CardHeader>
+                  <CardContent className="space-y-4">
+                    <div className="grid gap-2 md:grid-cols-2 xl:grid-cols-5">
+                      <div className="rounded-md border bg-muted/20 p-2">
+                        <div className="flex items-center gap-2">
+                          <CalendarDays className="size-4 text-muted-foreground" />
+                          <Input
+                            type="date"
+                            value={filters.startDate ?? ""}
+                            onChange={(event) =>
+                              setFilters((prev) => ({
+                                ...prev,
+                                startDate: event.target.value || undefined,
+                              }))
+                            }
+                          />
+                          <span className="text-xs text-muted-foreground">ate</span>
+                          <Input
+                            type="date"
+                            value={filters.endDate ?? ""}
+                            onChange={(event) =>
+                              setFilters((prev) => ({
+                                ...prev,
+                                endDate: event.target.value || undefined,
+                              }))
+                            }
+                          />
+                        </div>
+                      </div>
+                      <Select value="all-accounts" onValueChange={() => undefined}>
+                        <SelectTrigger>
+                          <SelectValue placeholder="Todas as contas" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="all-accounts">Todas as contas</SelectItem>
+                          <SelectItem value={financeAccountLabel}>{financeAccountLabel}</SelectItem>
+                        </SelectContent>
+                      </Select>
+                      <Input
+                        placeholder="Filtrar por SKU"
+                        value={financeOrdersSkuFilter}
+                        onChange={(event) => setFinanceOrdersSkuFilter(event.target.value)}
+                      />
+                      <Input
+                        placeholder="Filtrar por titulo"
+                        value={financeOrdersTitleFilter}
+                        onChange={(event) => setFinanceOrdersTitleFilter(event.target.value)}
+                      />
+                      <div className="grid grid-cols-3 gap-1">
+                        <Button
+                          variant={financeAbcMetric === "revenue" ? "secondary" : "outline"}
+                          onClick={() => setFinanceAbcMetric("revenue")}
+                        >
+                          Receita
+                        </Button>
+                        <Button
+                          variant={financeAbcMetric === "quantity" ? "secondary" : "outline"}
+                          onClick={() => setFinanceAbcMetric("quantity")}
+                        >
+                          Quantidade
+                        </Button>
+                        <Button
+                          variant={financeAbcMetric === "profit" ? "secondary" : "outline"}
+                          onClick={() => setFinanceAbcMetric("profit")}
+                        >
+                          Lucro
+                        </Button>
+                      </div>
+                    </div>
+                    <div className="flex flex-wrap gap-2">
+                      <Badge
+                        variant="secondary"
+                        className={
+                          abcUsesOrdersData
+                            ? "bg-emerald-100 text-emerald-700"
+                            : "bg-amber-100 text-amber-700"
+                        }
+                      >
+                        {abcUsesOrdersData
+                          ? "Fonte: pedidos Mercado Livre"
+                          : "Fonte: movimentacoes internas (fallback)"}
+                      </Badge>
+                    </div>
+
+                    <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+                      <Card className="bg-muted/20">
+                        <CardHeader className="pb-2">
+                          <CardDescription>Total de produtos</CardDescription>
+                          <CardTitle>{abcRowsFiltered.length}</CardTitle>
+                        </CardHeader>
+                        <CardContent className="text-xs text-muted-foreground">Itens analisados</CardContent>
+                      </Card>
+                      <Card className="border-emerald-200/70 bg-emerald-50/40">
+                        <CardHeader className="pb-2">
+                          <CardDescription>Classe A</CardDescription>
+                          <CardTitle className="text-emerald-700">
+                            {abcSummary.A.count} ({abcSummary.A.share.toFixed(1)}%)
+                          </CardTitle>
+                        </CardHeader>
+                        <CardContent className="text-xs text-muted-foreground">Maior impacto</CardContent>
+                      </Card>
+                      <Card className="border-amber-200/70 bg-amber-50/40">
+                        <CardHeader className="pb-2">
+                          <CardDescription>Classe B</CardDescription>
+                          <CardTitle className="text-amber-700">
+                            {abcSummary.B.count} ({abcSummary.B.share.toFixed(1)}%)
+                          </CardTitle>
+                        </CardHeader>
+                        <CardContent className="text-xs text-muted-foreground">Impacto moderado</CardContent>
+                      </Card>
+                      <Card className="border-rose-200/70 bg-rose-50/40">
+                        <CardHeader className="pb-2">
+                          <CardDescription>Classe C</CardDescription>
+                          <CardTitle className="text-rose-700">
+                            {abcSummary.C.count} ({abcSummary.C.share.toFixed(1)}%)
+                          </CardTitle>
+                        </CardHeader>
+                        <CardContent className="text-xs text-muted-foreground">Baixo impacto</CardContent>
+                      </Card>
+                    </div>
+
+                    <Card>
+                      <CardHeader>
+                        <CardTitle>Curva ABC - Grafico de Pareto</CardTitle>
+                        <CardDescription>
+                          Relacao entre participacao por produto e acumulado da classe.
+                        </CardDescription>
+                      </CardHeader>
+                      <CardContent>
+                        <AbcParetoChart rows={abcRowsFiltered} />
+                      </CardContent>
+                    </Card>
+
+                    <Card>
+                      <CardHeader className="flex flex-row items-start justify-between">
+                        <CardTitle>Ranking de Produtos</CardTitle>
+                        <Button size="sm" variant="outline">
+                          Exportar CSV
+                        </Button>
+                      </CardHeader>
+                      <CardContent>
+                        <Table>
+                          <TableHeader>
+                            <TableRow>
+                              <TableHead>Rank</TableHead>
+                              <TableHead>Produto</TableHead>
+                              <TableHead className="text-right">Quantidade</TableHead>
+                              <TableHead className="text-right">Receita</TableHead>
+                              <TableHead className="text-right">Custo</TableHead>
+                              <TableHead className="text-right">Lucro</TableHead>
+                              <TableHead className="text-right">% Acumulado</TableHead>
+                              <TableHead>Classe</TableHead>
+                            </TableRow>
+                          </TableHeader>
+                          <TableBody>
+                            {abcRowsFiltered.length === 0 ? (
+                              <TableRow>
+                                <TableCell colSpan={8} className="text-center text-muted-foreground">
+                                  Sem vendas suficientes para analise ABC no periodo.
+                                </TableCell>
+                              </TableRow>
+                            ) : (
+                              abcRowsFiltered.map((row, index) => (
+                                <TableRow key={row.productId}>
+                                  <TableCell>{index + 1}</TableCell>
+                                  <TableCell>
+                                    <div className="flex flex-col">
+                                      <span className="font-medium">{row.productName}</span>
+                                      <span className="text-xs text-muted-foreground">{row.sku || "-"}</span>
+                                    </div>
+                                  </TableCell>
+                                  <TableCell className="text-right">{row.quantitySold}</TableCell>
+                                  <TableCell className="text-right">{formatCurrency(row.revenue)}</TableCell>
+                                  <TableCell className="text-right">{formatCurrency(row.totalCost)}</TableCell>
+                                  <TableCell
+                                    className={cn("text-right font-semibold", valueToneClass(row.profit))}
+                                  >
+                                    {formatCurrency(row.profit)}
+                                  </TableCell>
+                                  <TableCell className="text-right">
+                                    {row.cumulativePercent.toFixed(1)}%
+                                  </TableCell>
+                                  <TableCell>
+                                    <Badge
+                                      className={cn(
+                                        row.abcClass === "A" &&
+                                          "border-emerald-600/30 bg-emerald-100 text-emerald-700",
+                                        row.abcClass === "B" &&
+                                          "border-amber-600/30 bg-amber-100 text-amber-700",
+                                        row.abcClass === "C" &&
+                                          "border-rose-600/30 bg-rose-100 text-rose-700",
+                                      )}
+                                    >
+                                      Classe {row.abcClass}
+                                    </Badge>
+                                  </TableCell>
+                                </TableRow>
+                              ))
+                            )}
+                          </TableBody>
+                        </Table>
+                      </CardContent>
+                    </Card>
+                  </CardContent>
+                </Card>
+              </section>
+            )}
+
+            {activeFinanceSection === "dre" && (
+              <section className="space-y-4">
+                <Card>
+                  <CardHeader className="flex flex-row items-start justify-between">
+                    <div>
+                      <CardTitle>DRE - Demonstracao de Resultados</CardTitle>
+                      <CardDescription>
+                        Analise completa de receitas, custos e resultados do periodo.
+                      </CardDescription>
+                    </div>
+                    <Button size="sm" variant="outline">
+                      Exportar
+                    </Button>
+                  </CardHeader>
+                  <CardContent className="space-y-4">
+                    <div className="grid gap-3 rounded-none border bg-muted/20 p-3 md:grid-cols-2 xl:grid-cols-5">
+                      <div className="space-y-1">
+                        <p className="text-xs text-muted-foreground">Periodo</p>
+                        <div className="grid grid-cols-[32px_1fr_80px_32px] gap-1">
+                          <Button
+                            size="icon"
+                            variant="outline"
+                            onClick={() => {
+                              const prev = previousMonth(dreYear, dreMonth)
+                              setDreMonth(prev.month)
+                              setDreYear(prev.year)
+                            }}
+                          >
+                            {"<"}
+                          </Button>
+                          <Select
+                            value={String(dreMonth)}
+                            onValueChange={(value) => setDreMonth(Number(value))}
+                          >
+                            <SelectTrigger>
+                              <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent>
+                              {dreMonthOptions.map((item) => (
+                                <SelectItem key={item.value} value={String(item.value)}>
+                                  {item.label}
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                          <Input
+                            value={String(dreYear)}
+                            onChange={(event) => setDreYear(Number(event.target.value) || dreYear)}
+                          />
+                          <Button
+                            size="icon"
+                            variant="outline"
+                            onClick={() => {
+                              if (dreMonth === 12) {
+                                setDreMonth(1)
+                                setDreYear((prev) => prev + 1)
+                                return
+                              }
+                              setDreMonth((prev) => prev + 1)
+                            }}
+                          >
+                            {">"}
+                          </Button>
+                        </div>
+                      </div>
+                      <div className="space-y-1">
+                        <p className="text-xs text-muted-foreground">Referencia</p>
+                        <Button
+                          variant="outline"
+                          className="w-full"
+                          onClick={() => {
+                            const now = new Date()
+                            setDreMonth(now.getMonth() + 1)
+                            setDreYear(now.getFullYear())
+                          }}
+                        >
+                          Mes Atual
+                        </Button>
+                      </div>
+                      <div className="space-y-1">
+                        <p className="text-xs text-muted-foreground">Contas</p>
+                        <Select value="all-accounts" onValueChange={() => undefined}>
+                          <SelectTrigger>
+                            <SelectValue placeholder="Todas as contas" />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="all-accounts">Todas as contas</SelectItem>
+                            <SelectItem value={financeAccountLabel}>{financeAccountLabel}</SelectItem>
+                          </SelectContent>
+                        </Select>
+                      </div>
+                      <div className="space-y-1 xl:col-span-2">
+                        <p className="text-xs text-muted-foreground">Opcoes</p>
+                        <div className="flex flex-wrap items-center gap-2">
+                          <Button
+                            variant={dreComparePrevious ? "secondary" : "outline"}
+                            onClick={() => setDreComparePrevious((prev) => !prev)}
+                          >
+                            Comparar com mes anterior
+                          </Button>
+                          <Button
+                            variant={dreIncludeMovements ? "secondary" : "outline"}
+                            onClick={() => setDreIncludeMovements((prev) => !prev)}
+                          >
+                            Movimentacoes incluidas
+                          </Button>
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+                      <Card className="border-blue-200/70 bg-blue-50/40">
+                        <CardHeader className="pb-2">
+                          <CardDescription>Vendas Brutas</CardDescription>
+                          <CardTitle className="text-blue-700">
+                            {formatCurrency(dreSnapshot.revenueConfirmed)}
+                          </CardTitle>
+                        </CardHeader>
+                        <CardContent className="text-xs text-muted-foreground">
+                          {dreSnapshot.ordersCount} pedidos
+                        </CardContent>
+                      </Card>
+                      <Card className="border-emerald-200/70 bg-emerald-50/40">
+                        <CardHeader className="pb-2">
+                          <CardDescription>Vendas Confirmadas</CardDescription>
+                          <CardTitle className="text-emerald-700">
+                            {formatCurrency(dreSnapshot.netReceived)}
+                          </CardTitle>
+                        </CardHeader>
+                        <CardContent className="text-xs text-muted-foreground">
+                          Ticket medio:{" "}
+                          {formatCurrency(
+                            dreSnapshot.ordersCount > 0
+                              ? dreSnapshot.revenueConfirmed / dreSnapshot.ordersCount
+                              : 0,
+                          )}
+                        </CardContent>
+                      </Card>
+                      <Card className="border-emerald-200/70 bg-emerald-50/40">
+                        <CardHeader className="pb-2">
+                          <CardDescription>Margem de Contribuicao</CardDescription>
+                          <CardTitle className={valueToneClass(dreSnapshot.grossProfit)}>
+                            {formatCurrency(dreSnapshot.grossProfit)}
+                          </CardTitle>
+                        </CardHeader>
+                        <CardContent className="text-xs text-muted-foreground">
+                          {(dreSnapshot.revenueConfirmed > 0
+                            ? (dreSnapshot.grossProfit / dreSnapshot.revenueConfirmed) * 100
+                            : 0
+                          ).toFixed(2)}
+                          % margem
+                        </CardContent>
+                      </Card>
+                      <Card className="border-emerald-200/70 bg-emerald-50/40">
+                        <CardHeader className="pb-2">
+                          <CardDescription>Lucro Liquido</CardDescription>
+                          <CardTitle className={valueToneClass(dreSnapshot.netProfit)}>
+                            {formatCurrency(dreSnapshot.netProfit)}
+                          </CardTitle>
+                        </CardHeader>
+                        <CardContent className="text-xs text-muted-foreground">
+                          {(dreSnapshot.revenueConfirmed > 0
+                            ? (dreSnapshot.netProfit / dreSnapshot.revenueConfirmed) * 100
+                            : 0
+                          ).toFixed(2)}
+                          % margem
+                        </CardContent>
+                      </Card>
+                    </div>
+
+                    {dreComparePrevious && (
+                      <div className="rounded-none border bg-muted/20 px-3 py-2 text-sm">
+                        <span className="text-muted-foreground">Variacao vs mes anterior:</span>{" "}
+                        <span
+                          className={cn(
+                            "font-semibold",
+                            valueToneClass(dreSnapshot.netProfit - drePreviousSnapshot.netProfit),
+                          )}
+                        >
+                          {formatCurrency(dreSnapshot.netProfit - drePreviousSnapshot.netProfit)}
+                        </span>
+                      </div>
+                    )}
+
+                    <Card>
+                      <CardHeader>
+                        <CardTitle>Demonstrativo de Resultados</CardTitle>
+                      </CardHeader>
+                      <CardContent>
+                        <Table>
+                          <TableHeader>
+                            <TableRow>
+                              <TableHead>Categoria</TableHead>
+                              <TableHead className="text-right">Valor</TableHead>
+                              <TableHead className="text-right">% Receita</TableHead>
+                            </TableRow>
+                          </TableHeader>
+                          <TableBody>
+                            {dreRows.map((row) => (
+                              <TableRow key={row.label} className={row.strong ? "bg-muted/20" : ""}>
+                                <TableCell className={cn(row.strong && "font-semibold")}>{row.label}</TableCell>
+                                <TableCell
+                                  className={cn(
+                                    "text-right font-medium",
+                                    row.color ? row.color : valueToneClass(row.value),
+                                  )}
+                                >
+                                  {formatCurrency(row.value)}
+                                </TableCell>
+                                <TableCell className="text-right text-muted-foreground">
+                                  {((Math.abs(row.value) / dreRevenueBase) * 100).toFixed(2)}%
+                                </TableCell>
+                              </TableRow>
+                            ))}
+                          </TableBody>
+                        </Table>
+                      </CardContent>
+                    </Card>
+
+                    <p className="text-right text-xs text-muted-foreground">
+                      Periodo: {String(dreMonth).padStart(2, "0")}/{dreYear} • {dreSnapshot.ordersCount}{" "}
+                      pedidos.
+                    </p>
+                  </CardContent>
+                </Card>
               </section>
             )}
 
@@ -2154,10 +3425,128 @@ export function FinancialDashboard() {
             )}
 
             {activeFinanceSection === "history" && (
-              <Card>
-                <CardHeader><CardTitle>Historico financeiro</CardTitle></CardHeader>
-                <CardContent className="space-y-4">
-                  {editingTransactionId && (
+              <section className="space-y-4">
+                <Card>
+                  <CardHeader className="flex flex-row items-start justify-between">
+                    <div>
+                      <CardTitle>Movimentacoes Financeiras</CardTitle>
+                      <CardDescription>
+                        Gerencie receitas e despesas da empresa com acesso ao historico completo.
+                      </CardDescription>
+                    </div>
+                    <div className="flex gap-2">
+                      <Button variant="outline" size="sm">
+                        Importar
+                      </Button>
+                      <Button size="sm" onClick={() => setActiveFinanceSection("expenses")}>
+                        Nova Movimentacao
+                      </Button>
+                    </div>
+                  </CardHeader>
+                  <CardContent className="space-y-4">
+                    <div className="grid gap-2 md:grid-cols-2 xl:grid-cols-6">
+                      <Input
+                        className="xl:col-span-2"
+                        placeholder="Buscar por descricao, origem ou categoria..."
+                        value={historySearch}
+                        onChange={(event) => setHistorySearch(event.target.value)}
+                      />
+                      <Select value={historyKindFilter} onValueChange={(value) => setHistoryKindFilter(value as "all" | "income" | "expense")}>
+                        <SelectTrigger><SelectValue placeholder="Tipo" /></SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="all">Todos</SelectItem>
+                          <SelectItem value="income">Entradas</SelectItem>
+                          <SelectItem value="expense">Despesas</SelectItem>
+                        </SelectContent>
+                      </Select>
+                      <Select
+                        value={historyExpenseTypeFilter}
+                        onValueChange={(value) =>
+                          setHistoryExpenseTypeFilter(value as "all" | "fixed" | "variable")
+                        }
+                      >
+                        <SelectTrigger><SelectValue placeholder="Tipo de despesa" /></SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="all">Todas</SelectItem>
+                          <SelectItem value="fixed">Custo fixo</SelectItem>
+                          <SelectItem value="variable">Custo operacional</SelectItem>
+                        </SelectContent>
+                      </Select>
+                      <Select
+                        value={historyPeriodicityFilter}
+                        onValueChange={(value) =>
+                          setHistoryPeriodicityFilter(
+                            value as "all" | TransactionPeriodicity,
+                          )
+                        }
+                      >
+                        <SelectTrigger><SelectValue placeholder="Periodicidade" /></SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="all">Todas</SelectItem>
+                          <SelectItem value="one_time">Unico</SelectItem>
+                          <SelectItem value="weekly">Semanal</SelectItem>
+                          <SelectItem value="monthly">Mensal</SelectItem>
+                          <SelectItem value="quarterly">Trimestral</SelectItem>
+                          <SelectItem value="semiannual">Semestral</SelectItem>
+                          <SelectItem value="annual">Anual</SelectItem>
+                        </SelectContent>
+                      </Select>
+                      <div className="grid grid-cols-2 gap-1">
+                        <Input
+                          type="date"
+                          value={historyStartDate}
+                          onChange={(event) => setHistoryStartDate(event.target.value)}
+                        />
+                        <Input
+                          type="date"
+                          value={historyEndDate}
+                          onChange={(event) => setHistoryEndDate(event.target.value)}
+                        />
+                      </div>
+                    </div>
+
+                    <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+                      <Card className="border-emerald-200/70 bg-emerald-50/40">
+                        <CardHeader className="pb-2">
+                          <CardDescription>Entradas</CardDescription>
+                          <CardTitle className="text-emerald-700">{formatCurrency(historySummary.entries)}</CardTitle>
+                        </CardHeader>
+                        <CardContent className="text-xs text-muted-foreground">
+                          Total de receitas
+                        </CardContent>
+                      </Card>
+                      <Card className="border-amber-200/70 bg-amber-50/40">
+                        <CardHeader className="pb-2">
+                          <CardDescription>Custo Fixo</CardDescription>
+                          <CardTitle className="text-amber-700">{formatCurrency(historySummary.fixedCost)}</CardTitle>
+                        </CardHeader>
+                        <CardContent className="text-xs text-muted-foreground">
+                          Custos fixos mensais
+                        </CardContent>
+                      </Card>
+                      <Card className="border-orange-200/70 bg-orange-50/40">
+                        <CardHeader className="pb-2">
+                          <CardDescription>Custo Operacional</CardDescription>
+                          <CardTitle className="text-orange-700">
+                            {formatCurrency(historySummary.operationalCost)}
+                          </CardTitle>
+                        </CardHeader>
+                        <CardContent className="text-xs text-muted-foreground">
+                          Custos operacionais
+                        </CardContent>
+                      </Card>
+                      <Card className="border-blue-200/70 bg-blue-50/40">
+                        <CardHeader className="pb-2">
+                          <CardDescription>Recorrentes</CardDescription>
+                          <CardTitle className="text-blue-700">{historySummary.recurring}</CardTitle>
+                        </CardHeader>
+                        <CardContent className="text-xs text-muted-foreground">
+                          Movimentacoes recorrentes
+                        </CardContent>
+                      </Card>
+                    </div>
+
+                    {editingTransactionId && (
                     <div className="grid gap-3 rounded-none border border-border p-3 md:grid-cols-2">
                       <Select
                         value={transactionEditForm.kind}
@@ -2280,53 +3669,74 @@ export function FinancialDashboard() {
                       </div>
                     </div>
                   )}
-                  <Table>
-                    <TableHeader>
-                      <TableRow><TableHead>Data</TableHead><TableHead>Descricao</TableHead><TableHead>Categoria</TableHead><TableHead>Tipo</TableHead><TableHead>Periodicidade</TableHead><TableHead className="text-right">Valor</TableHead><TableHead>Acoes</TableHead></TableRow>
-                    </TableHeader>
-                    <TableBody>
-                      {filteredTransactions.slice().sort((a, b) => b.date.localeCompare(a.date)).map((transaction) => (
-                        <TableRow key={transaction.id}>
-                          <TableCell>{formatDate(transaction.date)}</TableCell>
-                          <TableCell>{transaction.description}</TableCell>
-                          <TableCell>{categoryMap.get(transaction.categoryId)?.name ?? "Sem categoria"}</TableCell>
-                          <TableCell>
-                            <Badge variant={transaction.kind === "income" ? "default" : "secondary"}>
-                              {transaction.kind === "income" ? "Entrada" : "Despesa"}
-                            </Badge>
-                          </TableCell>
-                          <TableCell>
-                            <Badge variant="outline">{periodicityLabel(transaction.periodicity)}</Badge>
-                          </TableCell>
-                          <TableCell className="text-right">{formatCurrency(transaction.amount)}</TableCell>
-                          <TableCell>
-                            {transaction.origin === "Venda online" ? (
-                              <Badge variant="secondary">Editar no estoque</Badge>
-                            ) : (
-                              <div className="flex gap-2">
-                                <Button
-                                  size="sm"
-                                  variant="outline"
-                                  onClick={() => startEditTransaction(transaction)}
-                                >
-                                  Editar
-                                </Button>
-                                <Button
-                                  size="sm"
-                                  variant="destructive"
-                                  onClick={() => void removeTransaction(transaction)}
-                                >
-                                  Excluir
-                                </Button>
-                              </div>
-                            )}
-                          </TableCell>
-                        </TableRow>
-                      ))}
-                    </TableBody>
-                  </Table>
-                </CardContent>
-              </Card>
+                    {historyTransactions.length === 0 ? (
+                      <div className="rounded-none border border-dashed border-border bg-muted/20 px-6 py-14 text-center">
+                        <p className="font-medium">Nenhuma movimentacao encontrada</p>
+                        <p className="text-sm text-muted-foreground">
+                          Ajuste os filtros ou registre uma nova movimentacao para visualizar o historico.
+                        </p>
+                      </div>
+                    ) : (
+                      <Table>
+                        <TableHeader>
+                          <TableRow><TableHead>Data</TableHead><TableHead>Descricao</TableHead><TableHead>Categoria</TableHead><TableHead>Tipo</TableHead><TableHead>Origem</TableHead><TableHead>Periodicidade</TableHead><TableHead className="text-right">Valor</TableHead><TableHead>Acoes</TableHead></TableRow>
+                        </TableHeader>
+                        <TableBody>
+                          {historyTransactions.map((transaction) => (
+                            <TableRow key={transaction.id}>
+                              <TableCell>{formatDate(transaction.date)}</TableCell>
+                              <TableCell className="max-w-[240px] truncate">{transaction.description}</TableCell>
+                              <TableCell>{categoryMap.get(transaction.categoryId)?.name ?? "Sem categoria"}</TableCell>
+                              <TableCell>
+                                <Badge variant={transaction.kind === "income" ? "default" : "secondary"}>
+                                  {transaction.kind === "income" ? "Entrada" : "Despesa"}
+                                </Badge>
+                              </TableCell>
+                              <TableCell className="text-xs text-muted-foreground">
+                                {transaction.origin || "-"}
+                              </TableCell>
+                              <TableCell>
+                                <Badge variant="outline">{periodicityLabel(transaction.periodicity)}</Badge>
+                              </TableCell>
+                              <TableCell
+                                className={cn(
+                                  "text-right font-semibold",
+                                  transaction.kind === "income" ? "text-emerald-700" : "text-destructive",
+                                )}
+                              >
+                                {transaction.kind === "income" ? "+" : "-"}
+                                {formatCurrency(transaction.amount)}
+                              </TableCell>
+                              <TableCell>
+                                {transaction.origin === "Venda online" ? (
+                                  <Badge variant="secondary">Editar no estoque</Badge>
+                                ) : (
+                                  <div className="flex gap-2">
+                                    <Button
+                                      size="sm"
+                                      variant="outline"
+                                      onClick={() => startEditTransaction(transaction)}
+                                    >
+                                      Editar
+                                    </Button>
+                                    <Button
+                                      size="sm"
+                                      variant="destructive"
+                                      onClick={() => void removeTransaction(transaction)}
+                                    >
+                                      Excluir
+                                    </Button>
+                                  </div>
+                                )}
+                              </TableCell>
+                            </TableRow>
+                          ))}
+                        </TableBody>
+                      </Table>
+                    )}
+                  </CardContent>
+                </Card>
+              </section>
             )}
           </>
         )}
@@ -3130,7 +4540,11 @@ export function FinancialDashboard() {
                         const step = mlShippingStep(order.shippingStatus)
                         const firstItem = order.items[0]
                         const stockProduct = firstItem?.id ? productMapByMlItemId.get(firstItem.id) : undefined
-                        const estimatedCost = (stockProduct?.unitCost ?? 0) * (firstItem?.quantity ?? 0)
+                        const quantity = firstItem?.quantity ?? 0
+                        const estimatedCost =
+                          (stockProduct?.unitCost ?? 0) * quantity +
+                          quantity * HUB_CENTRALIZE_SHIPPING_PER_ITEM +
+                          quantity * HUB_CENTRALIZE_PACKAGING_PER_ITEM
                         const payout = order.totalPaidAmount
                         const profit = payout - estimatedCost
                         const margin = payout > 0 ? (profit / payout) * 100 : 0
@@ -3465,6 +4879,16 @@ export function FinancialDashboard() {
                                 color: "bg-violet-500",
                               },
                               {
+                                label: "Centralize - envio fixo",
+                                value: mlOrderCostAnalysis.centralizeShipping,
+                                color: "bg-cyan-500",
+                              },
+                              {
+                                label: "Centralize - embalagem fixa",
+                                value: mlOrderCostAnalysis.centralizePackaging,
+                                color: "bg-sky-500",
+                              },
+                              {
                                 label: "Taxa ML",
                                 value: mlOrderCostAnalysis.mlFee,
                                 color: "bg-amber-500",
@@ -3712,6 +5136,102 @@ function CostCompositionChart({
             </div>
           )
         })}
+      </div>
+    </div>
+  )
+}
+
+function AbcParetoChart({ rows }: { rows: AbcProductRow[] }) {
+  if (!rows.length) {
+    return <p className="text-sm text-muted-foreground">Sem dados para montar curva ABC.</p>
+  }
+
+  const width = 860
+  const height = 260
+  const paddingX = 42
+  const paddingY = 24
+  const chartWidth = width - paddingX * 2
+  const chartHeight = height - paddingY * 2
+  const barGap = 8
+  const barWidth = Math.max(12, (chartWidth - barGap * (rows.length - 1)) / rows.length)
+  const maxValue = Math.max(...rows.map((row) => row.metricValue), 1)
+
+  return (
+    <div className="space-y-3">
+      <div className="h-[260px] rounded-none border border-border bg-muted/10 p-2">
+        <svg viewBox={`0 0 ${width} ${height}`} className="h-full w-full">
+          {[0, 25, 50, 75, 100].map((level) => {
+            const y = paddingY + ((100 - level) / 100) * chartHeight
+            return (
+              <line
+                key={level}
+                x1={paddingX}
+                y1={y}
+                x2={paddingX + chartWidth}
+                y2={y}
+                stroke="rgba(148,163,184,0.35)"
+                strokeDasharray="3 3"
+              />
+            )
+          })}
+
+          {rows.map((row, index) => {
+            const x = paddingX + index * (barWidth + barGap)
+            const barHeight = (row.metricValue / maxValue) * chartHeight
+            const y = paddingY + chartHeight - barHeight
+            const fill =
+              row.abcClass === "A" ? "#10b981" : row.abcClass === "B" ? "#f59e0b" : "#ef4444"
+            return (
+              <rect
+                key={`${row.productId}-bar`}
+                x={x}
+                y={y}
+                width={barWidth}
+                height={Math.max(2, barHeight)}
+                fill={fill}
+                opacity="0.9"
+                rx="2"
+              />
+            )
+          })}
+
+          <polyline
+            fill="none"
+            stroke="#7c3aed"
+            strokeWidth="2.5"
+            points={rows
+              .map((row, index) => {
+                const x = paddingX + index * (barWidth + barGap) + barWidth / 2
+                const y = paddingY + ((100 - row.cumulativePercent) / 100) * chartHeight
+                return `${x},${y}`
+              })
+              .join(" ")}
+          />
+
+          {rows.map((row, index) => {
+            const x = paddingX + index * (barWidth + barGap) + barWidth / 2
+            const y = paddingY + ((100 - row.cumulativePercent) / 100) * chartHeight
+            return <circle key={`${row.productId}-dot`} cx={x} cy={y} r="2.8" fill="#7c3aed" />
+          })}
+        </svg>
+      </div>
+      <div className="flex flex-wrap items-center gap-3 text-xs">
+        <span className="inline-flex items-center gap-1">
+          <span className="h-2 w-2 rounded-full bg-emerald-500" />
+          Classe A
+        </span>
+        <span className="inline-flex items-center gap-1">
+          <span className="h-2 w-2 rounded-full bg-amber-500" />
+          Classe B
+        </span>
+        <span className="inline-flex items-center gap-1">
+          <span className="h-2 w-2 rounded-full bg-red-500" />
+          Classe C
+        </span>
+        <span className="inline-flex items-center gap-1">
+          <span className="h-2 w-2 rounded-full bg-violet-600" />
+          % acumulado
+        </span>
       </div>
     </div>
   )

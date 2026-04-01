@@ -4,7 +4,7 @@
    */
 
   /**
-   * @typedef {"real"|"estimated"|"fallback"} ShippingCostSource
+   * @typedef {"real"|"estimated"|"fallback"|"manual"|"ml_subsidy"|"default"} ShippingCostSource
    */
 
   /**
@@ -38,6 +38,11 @@
    * @property {number} otherFixedCosts
    * @property {number} riskPercent
    * @property {number} shippingFallback
+   * @property {boolean|undefined} forceManualShipping
+   * @property {boolean|undefined} freeShippingEnabled
+   * @property {number|undefined} freeShippingMinPrice
+   * @property {number|undefined} freeShippingSubsidyPercent
+   * @property {number|undefined} defaultShippingCost
    */
 
   /**
@@ -55,9 +60,13 @@
    * @property {number} riskAmount
    * @property {number} shippingCostUsed
    * @property {ShippingCostSource} shippingCostSource
+ * @property {string} shippingModeLabel
+ * @property {string} shippingModeDetail
+ * @property {number} centralizeFixedCosts
    * @property {number} totalCosts
    * @property {number} netProfit
    * @property {number} netMarginPercent
+ * @property {number} roiPercent
    */
 
   /**
@@ -98,6 +107,11 @@
       otherFixedCosts: 0,
       riskPercent: 0,
       shippingFallback: 0,
+      forceManualShipping: false,
+      freeShippingEnabled: true,
+      freeShippingMinPrice: 79,
+      freeShippingSubsidyPercent: 50,
+      defaultShippingCost: 12,
     };
   }
 
