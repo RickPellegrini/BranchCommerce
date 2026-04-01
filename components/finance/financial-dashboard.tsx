@@ -3,6 +3,7 @@
 import { UserButton, useUser } from "@clerk/nextjs"
 import { useMutation, useQuery } from "convex/react"
 import {
+  AlertCircle,
   BarChart3,
   CalendarDays,
   CheckCircle2,
@@ -11,6 +12,7 @@ import {
   Boxes,
   DollarSign,
   Eye,
+  FileText,
   CircleDollarSign,
   Copy,
   Home,
@@ -26,14 +28,17 @@ import {
   Tag,
   Truck,
   Percent,
+  PieChart,
   TrendingUp,
   X,
   PackagePlus,
   Printer,
   ReceiptText,
   Repeat,
+  Trophy,
   TrendingDown,
   Wallet,
+  Wrench,
 } from "lucide-react"
 import Image from "next/image"
 import { useEffect, useMemo, useState } from "react"
@@ -54,8 +59,12 @@ import {
 import { Separator } from "@/components/ui/separator"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import {
+  calculateCostBreakdown,
+  calculateProductChampions,
   cashFlowByPeriod,
+  expensesByCategory,
   filterTransactions,
+  forecastFinancialTrend,
   formatCurrency,
   formatDate,
   monthlyEvolution,
@@ -66,6 +75,7 @@ import type {
   FinancialCategory,
   FinancialPeriod,
   FinancialTransaction,
+  TransactionPeriodicity,
   TransactionFilters,
 } from "@/lib/finance/types"
 import { cn } from "@/lib/utils"
@@ -206,6 +216,15 @@ function movementLabel(type: StockMovement["type"]) {
   return "Ajuste"
 }
 
+function periodicityLabel(periodicity: TransactionPeriodicity | undefined) {
+  if (!periodicity || periodicity === "one_time") return "Unico"
+  if (periodicity === "weekly") return "Semanal"
+  if (periodicity === "monthly") return "Mensal"
+  if (periodicity === "quarterly") return "Trimestral"
+  if (periodicity === "semiannual") return "Semestral"
+  return "Anual"
+}
+
 function stockLevelDotClass(quantity: number) {
   if (quantity === 0) return "bg-red-600"
   if (quantity <= 10) return "bg-amber-400"
@@ -282,6 +301,94 @@ function formatElapsedSeconds(fromTimestamp: number, nowTimestamp: number) {
   return `${seconds}s`
 }
 
+type SalesEvolutionPoint = {
+  key: string
+  label: string
+  revenue: number
+  profit: number
+  orders: number
+}
+
+type OrdersFinancialSummary = {
+  grossRevenue: number
+  totalCosts: number
+  netProfit: number
+  ordersCount: number
+  soldItems: number
+}
+
+function buildSalesEvolutionData(
+  transactions: FinancialTransaction[],
+  movements: StockMovement[],
+  days = 7,
+): SalesEvolutionPoint[] {
+  const points: SalesEvolutionPoint[] = []
+  const now = new Date()
+  for (let index = days - 1; index >= 0; index -= 1) {
+    const date = new Date(now.getFullYear(), now.getMonth(), now.getDate() - index)
+    const key = date.toISOString().slice(0, 10)
+    const label = date.toLocaleDateString("pt-BR", { day: "2-digit", month: "2-digit" })
+    const dayTransactions = transactions.filter((item) => item.date === key)
+    const revenue = dayTransactions
+      .filter((item) => item.kind === "income" && item.origin === "Venda online")
+      .reduce((total, item) => total + item.amount, 0)
+    const profit = dayTransactions.reduce(
+      (total, item) => total + (item.kind === "income" ? item.amount : -item.amount),
+      0,
+    )
+    const orders = movements.filter((item) => item.type === "sale" && item.date === key).length
+
+    points.push({ key, label, revenue, profit, orders })
+  }
+
+  return points
+}
+
+function buildOrdersFinancialSummary(
+  orders: MlOrder[],
+  productByMlItemId: Map<string, StockProduct>,
+  range?: { startDate?: string; endDate?: string },
+): OrdersFinancialSummary {
+  const filteredOrders = orders.filter((order) => {
+    const normalized = order.status.toLowerCase()
+    if (normalized === "cancelled") return false
+    const orderDate = order.dateCreated.slice(0, 10)
+    if (range?.startDate && orderDate < range.startDate) return false
+    if (range?.endDate && orderDate > range.endDate) return false
+    return true
+  })
+
+  return filteredOrders.reduce<OrdersFinancialSummary>(
+    (acc, order) => {
+      const estimatedFallbackProductCost = order.items.reduce((total, item) => {
+        const mappedProduct = productByMlItemId.get(item.id)
+        const unitCost = mappedProduct?.unitCost ?? 0
+        return total + unitCost * item.quantity
+      }, 0)
+
+      const productCost = order.productAmount > 0 ? order.productAmount : estimatedFallbackProductCost
+      const shippingCost = Math.max(0, order.shippingCostAmount)
+      const taxes = Math.max(0, order.taxesAmount)
+      const mlFee = Math.max(0, order.mlFeeAmount)
+      const orderCosts = productCost + shippingCost + taxes + mlFee
+
+      acc.grossRevenue += Math.max(0, order.totalAmount)
+      acc.totalCosts += orderCosts
+      acc.netProfit += Math.max(0, order.totalAmount) - orderCosts
+      acc.ordersCount += 1
+      acc.soldItems += order.items.reduce((total, item) => total + item.quantity, 0)
+      return acc
+    },
+    {
+      grossRevenue: 0,
+      totalCosts: 0,
+      netProfit: 0,
+      ordersCount: 0,
+      soldItems: 0,
+    },
+  )
+}
+
 function StockLevelLegend() {
   return (
     <div className="flex flex-wrap items-center gap-4 rounded-none border bg-muted/30 px-3 py-2 text-xs">
@@ -314,6 +421,11 @@ export function FinancialDashboard() {
   const [period, setPeriod] = useState<FinancialPeriod>("month")
   const [filters, setFilters] = useState<TransactionFilters>({ kind: "all" })
   const [isSetupDone, setIsSetupDone] = useState(false)
+  const [launchSaving, setLaunchSaving] = useState(false)
+  const [launchFeedback, setLaunchFeedback] = useState<{
+    type: "success" | "error"
+    message: string
+  } | null>(null)
 
   const [launchForm, setLaunchForm] = useState({
     kind: "expense" as FinancialTransaction["kind"],
@@ -323,6 +435,7 @@ export function FinancialDashboard() {
     categoryId: "" as Id<"categories"> | "",
     origin: "",
     expenseType: "variable" as ExpenseType,
+    periodicity: "one_time" as TransactionPeriodicity,
   })
   const [newCategory, setNewCategory] = useState({
     name: "",
@@ -339,6 +452,7 @@ export function FinancialDashboard() {
     categoryId: "" as Id<"categories"> | "",
     origin: "",
     expenseType: "variable" as ExpenseType,
+    periodicity: "one_time" as TransactionPeriodicity,
   })
 
   const [productForm, setProductForm] = useState({
@@ -518,6 +632,26 @@ export function FinancialDashboard() {
     void loadMlOverviewCards()
   }, [activeModule, mlConnectionStatus?.connected, userId])
 
+  useEffect(() => {
+    if ((activeModule !== "finance" && activeModule !== "home") || !userId) return
+
+    const loadOrdersForFinancial = async () => {
+      try {
+        const connectionResponse = await fetch("/api/ml/account", { cache: "no-store" })
+        const connectionPayload = await connectionResponse.json()
+        if (!connectionResponse.ok || !connectionPayload.ok || !connectionPayload.data?.connected) {
+          return
+        }
+
+        await loadMlOrders()
+      } catch {
+        // Keep financial module resilient when ML integration is unavailable.
+      }
+    }
+
+    void loadOrdersForFinancial()
+  }, [activeModule, userId])
+
   const categories = useMemo<FinancialCategory[]>(
     () =>
       (financeData?.categories ?? []).map((item) => ({
@@ -539,6 +673,7 @@ export function FinancialDashboard() {
         categoryId: item.categoryId,
         origin: item.origin,
         expenseType: item.expenseType,
+        periodicity: item.periodicity,
       })),
     [financeData?.transactions],
   )
@@ -607,7 +742,14 @@ export function FinancialDashboard() {
     [filteredTransactions, period],
   )
   const evolutionReport = useMemo(() => monthlyEvolution(transactions), [transactions])
+  const forecastReport = useMemo(() => forecastFinancialTrend(transactions, 4, 6), [transactions])
   const maxBarValue = Math.max(summary.income, summary.expense, 1)
+  const forecastMaxValue = Math.max(
+    ...forecastReport.map((item) =>
+      Math.max(item.incomeForecast, item.expenseForecast, Math.abs(item.profitForecast)),
+    ),
+    1,
+  )
 
   const salesInFilter = filteredTransactions
     .filter((item) => item.kind === "income" && item.origin === "Venda online")
@@ -616,6 +758,11 @@ export function FinancialDashboard() {
     .filter((item) => item.kind === "expense")
     .reduce((total, item) => total + item.amount, 0)
   const operatingResult = salesInFilter - expensesInFilter
+  const operatingMargin = salesInFilter > 0 ? (operatingResult / salesInFilter) * 100 : 0
+  const costBreakdown = useMemo(
+    () => calculateCostBreakdown(filteredTransactions, categories),
+    [filteredTransactions, categories],
+  )
 
   const stockSummary = useMemo(() => {
     const totalProducts = products.length
@@ -624,6 +771,54 @@ export function FinancialDashboard() {
     const stockValue = products.reduce((total, item) => total + item.quantity * item.unitCost, 0)
     return { totalProducts, totalUnits, lowStockCount, stockValue }
   }, [products])
+  const filteredMovements = useMemo(
+    () =>
+      movements.filter((movement) => {
+        if (filters.startDate && movement.date < filters.startDate) return false
+        if (filters.endDate && movement.date > filters.endDate) return false
+        return true
+      }),
+    [filters.endDate, filters.startDate, movements],
+  )
+  const productChampions = useMemo(
+    () => calculateProductChampions(products, filteredMovements, 5),
+    [filteredMovements, products],
+  )
+  const soldUnitsInFilter = useMemo(
+    () =>
+      filteredMovements
+        .filter((movement) => movement.type === "sale")
+        .reduce((total, movement) => total + movement.quantity, 0),
+    [filteredMovements],
+  )
+  const salesCountInFilter = useMemo(
+    () => filteredMovements.filter((movement) => movement.type === "sale").length,
+    [filteredMovements],
+  )
+  const costComposition = useMemo(
+    () => expensesByCategory(filteredTransactions, categories).slice(0, 5),
+    [categories, filteredTransactions],
+  )
+  const salesEvolution = useMemo(
+    () => buildSalesEvolutionData(filteredTransactions, filteredMovements, 7),
+    [filteredMovements, filteredTransactions],
+  )
+  const ordersFinancialSummary = useMemo(
+    () =>
+      buildOrdersFinancialSummary(mlOrders, productMapByMlItemId, {
+        startDate: filters.startDate,
+        endDate: filters.endDate,
+      }),
+    [filters.endDate, filters.startDate, mlOrders, productMapByMlItemId],
+  )
+  const hasOrdersFinancialData = ordersFinancialSummary.ordersCount > 0
+  const salesInFilterFinal = hasOrdersFinancialData ? ordersFinancialSummary.grossRevenue : salesInFilter
+  const expensesInFilterFinal = hasOrdersFinancialData ? ordersFinancialSummary.totalCosts : expensesInFilter
+  const operatingResultFinal = hasOrdersFinancialData ? ordersFinancialSummary.netProfit : operatingResult
+  const soldItemsFinal = hasOrdersFinancialData ? ordersFinancialSummary.soldItems : soldUnitsInFilter
+  const salesCountFinal = hasOrdersFinancialData ? ordersFinancialSummary.ordersCount : salesCountInFilter
+  const operatingMarginFinal =
+    salesInFilterFinal > 0 ? (operatingResultFinal / salesInFilterFinal) * 100 : 0
 
   const filteredMlOrders = useMemo(() => {
     const filtered = mlOrders.filter((order) => {
@@ -682,24 +877,48 @@ export function FinancialDashboard() {
   ])
 
   const saveLaunch = async () => {
-    if (!userId || !launchForm.amount || !launchForm.description || !launchForm.categoryId) return
-    await addTransaction({
-      userId,
-      kind: launchForm.kind,
-      amount: Number(launchForm.amount),
-      date: launchForm.date,
-      description: launchForm.description,
-      categoryId: launchForm.categoryId,
-      origin: launchForm.kind === "income" ? launchForm.origin || undefined : undefined,
-      expenseType: launchForm.kind === "expense" ? launchForm.expenseType : undefined,
-    })
-    setLaunchForm((previous) => ({
-      ...previous,
-      amount: "",
-      description: "",
-      origin: "",
-      expenseType: "variable",
-    }))
+    if (!userId || !launchForm.amount || !launchForm.description || !launchForm.categoryId) {
+      setLaunchFeedback({
+        type: "error",
+        message: "Preencha valor, descricao e categoria antes de salvar.",
+      })
+      return
+    }
+
+    setLaunchSaving(true)
+    setLaunchFeedback(null)
+    try {
+      await addTransaction({
+        userId,
+        kind: launchForm.kind,
+        amount: Number(launchForm.amount),
+        date: launchForm.date,
+        description: launchForm.description,
+        categoryId: launchForm.categoryId,
+        origin: launchForm.kind === "income" ? launchForm.origin || undefined : undefined,
+        expenseType: launchForm.kind === "expense" ? launchForm.expenseType : undefined,
+        periodicity: launchForm.periodicity,
+      })
+      setLaunchForm((previous) => ({
+        ...previous,
+        amount: "",
+        description: "",
+        origin: "",
+        expenseType: "variable",
+        periodicity: "one_time",
+      }))
+      setLaunchFeedback({
+        type: "success",
+        message: "Lancamento salvo com sucesso no financeiro.",
+      })
+    } catch (error) {
+      setLaunchFeedback({
+        type: "error",
+        message: error instanceof Error ? error.message : "Nao foi possivel salvar o lancamento.",
+      })
+    } finally {
+      setLaunchSaving(false)
+    }
   }
 
   const saveCategory = async () => {
@@ -735,6 +954,7 @@ export function FinancialDashboard() {
       categoryId: transaction.categoryId as Id<"categories">,
       origin: transaction.origin ?? "",
       expenseType: transaction.expenseType ?? "variable",
+      periodicity: transaction.periodicity ?? "one_time",
     })
   }
 
@@ -765,6 +985,7 @@ export function FinancialDashboard() {
         transactionEditForm.kind === "expense"
           ? transactionEditForm.expenseType
           : undefined,
+      periodicity: transactionEditForm.periodicity,
     })
 
     setEditingTransactionId(null)
@@ -1388,10 +1609,27 @@ export function FinancialDashboard() {
               </CardHeader>
             </Card>
             <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
-              <SummaryCard title="Vendas (filtro)" value={salesInFilter} />
-              <SummaryCard title="Despesas (filtro)" value={expensesInFilter} negative />
-              <SummaryCard title="Resultado operacional" value={operatingResult} positive={operatingResult >= 0} negative={operatingResult < 0} />
+              <SummaryCard title="Vendas (filtro)" value={salesInFilterFinal} />
+              <SummaryCard title="Despesas (filtro)" value={expensesInFilterFinal} negative />
+              <SummaryCard
+                title="Resultado operacional"
+                value={operatingResultFinal}
+                positive={operatingResultFinal >= 0}
+                negative={operatingResultFinal < 0}
+              />
               <SummaryCard title="Valor em estoque" value={stockSummary.stockValue} />
+            </div>
+            <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+              <SummaryCard
+                title="Margem operacional"
+                value={operatingMarginFinal}
+                format="percent"
+                positive={operatingMarginFinal >= 0}
+                negative={operatingMarginFinal < 0}
+              />
+              <SummaryCard title="Custo operacional" value={costBreakdown.operationalCost} negative />
+              <SummaryCard title="Custos fixos" value={costBreakdown.fixedCost} negative />
+              <SummaryCard title="Ferramentas fixas" value={costBreakdown.toolsFixedCost} negative />
             </div>
             <div className="grid gap-4 xl:grid-cols-2">
               <Card>
@@ -1415,6 +1653,45 @@ export function FinancialDashboard() {
                 </CardContent>
               </Card>
             </div>
+            <Card>
+              <CardHeader>
+                <CardTitle className="inline-flex items-center gap-2">
+                  <Trophy className="size-4 text-amber-500" />
+                  Produtos campeoes (lucro)
+                </CardTitle>
+                <CardDescription>Ranking por lucro estimado com base nas vendas registradas no periodo.</CardDescription>
+              </CardHeader>
+              <CardContent>
+                {productChampions.length === 0 ? (
+                  <p className="text-sm text-muted-foreground">
+                    Ainda nao ha vendas suficientes para classificar produtos campeoes.
+                  </p>
+                ) : (
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead>Produto</TableHead>
+                        <TableHead className="text-right">Unidades</TableHead>
+                        <TableHead className="text-right">Receita</TableHead>
+                        <TableHead className="text-right">Lucro</TableHead>
+                        <TableHead className="text-right">Margem</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {productChampions.map((item) => (
+                        <TableRow key={item.productId}>
+                          <TableCell className="max-w-[260px] truncate font-medium">{item.productName}</TableCell>
+                          <TableCell className="text-right">{item.unitsSold}</TableCell>
+                          <TableCell className="text-right">{formatCurrency(item.revenue)}</TableCell>
+                          <TableCell className="text-right">{formatCurrency(item.profit)}</TableCell>
+                          <TableCell className="text-right">{item.marginPercent.toFixed(1)}%</TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                )}
+              </CardContent>
+            </Card>
           </section>
         )}
 
@@ -1447,27 +1724,135 @@ export function FinancialDashboard() {
 
             {activeFinanceSection === "overview" && (
               <section className="space-y-4">
+                <Card>
+                  <CardHeader>
+                    <CardTitle>Resumo financeiro</CardTitle>
+                    <CardDescription>
+                      Visao consolidada de vendas, custos e margem do HUB.
+                      {hasOrdersFinancialData
+                        ? " Dados principais calculados a partir dos pedidos vendidos do Mercado Livre."
+                        : " Sem pedidos sincronizados no periodo, exibindo dados do financeiro interno."}
+                    </CardDescription>
+                  </CardHeader>
+                </Card>
                 <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
-                  <SummaryCard title="Vendas online" value={salesInFilter} />
-                  <SummaryCard title="Despesas empresa" value={expensesInFilter} negative />
-                  <SummaryCard title="Resultado operacional" value={operatingResult} positive={operatingResult >= 0} negative={operatingResult < 0} />
-                  <SummaryCard title="Saldo financeiro" value={summary.balance} />
+                  <Card className="border-blue-200/70 bg-blue-50/40">
+                    <CardHeader className="pb-2">
+                      <CardDescription className="inline-flex items-center gap-1">
+                        <Boxes className="size-3.5 text-blue-600" />
+                        Vendas brutas
+                      </CardDescription>
+                      <CardTitle>{formatCurrency(salesInFilterFinal)}</CardTitle>
+                    </CardHeader>
+                    <CardContent className="text-xs text-muted-foreground">{soldItemsFinal} itens vendidos</CardContent>
+                  </Card>
+                  <Card className="border-emerald-200/70 bg-emerald-50/40">
+                    <CardHeader className="pb-2">
+                      <CardDescription className="inline-flex items-center gap-1">
+                        <CircleDollarSign className="size-3.5 text-emerald-600" />
+                        Receita (vendas)
+                      </CardDescription>
+                      <CardTitle>{formatCurrency(salesInFilterFinal)}</CardTitle>
+                    </CardHeader>
+                    <CardContent className="text-xs text-muted-foreground">{salesCountFinal} vendas</CardContent>
+                  </Card>
+                  <Card className="border-orange-200/70 bg-orange-50/40">
+                    <CardHeader className="pb-2">
+                      <CardDescription className="inline-flex items-center gap-1">
+                        <TrendingDown className="size-3.5 text-orange-600" />
+                        Custos totais
+                      </CardDescription>
+                      <CardTitle>{formatCurrency(expensesInFilterFinal)}</CardTitle>
+                    </CardHeader>
+                    <CardContent className="text-xs text-muted-foreground">Soma de todos os custos</CardContent>
+                  </Card>
+                  <Card className="border-primary/30 bg-primary/5">
+                    <CardHeader className="pb-2">
+                      <CardDescription className="inline-flex items-center gap-1">
+                        <Wallet className="size-3.5 text-primary" />
+                        Lucro liquido
+                      </CardDescription>
+                      <CardTitle className={cn(operatingResultFinal < 0 && "text-destructive")}>
+                        {formatCurrency(operatingResultFinal)}
+                      </CardTitle>
+                    </CardHeader>
+                    <CardContent className="text-xs">
+                      <span
+                        className={cn(
+                          "rounded-full px-2 py-1",
+                          operatingMarginFinal >= 0
+                            ? "bg-emerald-100 text-emerald-700"
+                            : "bg-destructive/10 text-destructive",
+                        )}
+                      >
+                        {operatingMarginFinal.toFixed(1)}% margem
+                      </span>
+                    </CardContent>
+                  </Card>
                 </div>
                 <div className="grid gap-4 xl:grid-cols-3">
                   <Card className="xl:col-span-2">
-                    <CardHeader><CardTitle>Entradas vs saidas</CardTitle></CardHeader>
-                    <CardContent className="grid gap-4 sm:grid-cols-2">
-                      <ProgressBlock label="Entradas" value={summary.income} maxValue={maxBarValue} barClassName="bg-primary" />
-                      <ProgressBlock label="Saidas" value={summary.expense} maxValue={maxBarValue} barClassName="bg-destructive" />
+                    <CardHeader>
+                      <CardTitle>Evolucao de vendas</CardTitle>
+                      <CardDescription>Acompanhe o desempenho diario de receita, lucro e pedidos.</CardDescription>
+                    </CardHeader>
+                    <CardContent>
+                      <FinancialEvolutionChart data={salesEvolution} />
                     </CardContent>
                   </Card>
                   <Card>
-                    <CardHeader><CardTitle>Resumo mensal</CardTitle></CardHeader>
+                    <CardHeader>
+                      <CardTitle className="inline-flex items-center gap-2">
+                        <PieChart className="size-4 text-orange-500" />
+                        Composicao de custos
+                      </CardTitle>
+                      <CardDescription>Distribuicao das principais categorias de custo.</CardDescription>
+                    </CardHeader>
+                    <CardContent>
+                      <CostCompositionChart items={costComposition} total={expensesInFilterFinal} />
+                    </CardContent>
+                  </Card>
+                </div>
+                <div className="grid gap-4 xl:grid-cols-2">
+                  <Card>
+                    <CardHeader>
+                      <CardTitle className="inline-flex items-center gap-2">
+                        <Wrench className="size-4 text-orange-500" />
+                        Custos operacionais detalhados
+                      </CardTitle>
+                    </CardHeader>
                     <CardContent className="space-y-2 text-sm">
-                      <LineItem label="Receitas" value={monthlyReport.income} />
-                      <LineItem label="Despesas" value={monthlyReport.expense} />
+                      <LineItem label="Custos operacionais" value={costBreakdown.operationalCost} />
+                      <LineItem label="Custos fixos" value={costBreakdown.fixedCost} />
+                      <LineItem label="Custos variaveis" value={costBreakdown.variableCost} />
+                      <LineItem label="Ferramentas fixas" value={costBreakdown.toolsFixedCost} strong />
                       <Separator />
-                      <LineItem label="Resultado" value={monthlyReport.balance} strong />
+                      <LineItem label="Capital em estoque" value={stockSummary.stockValue} strong />
+                    </CardContent>
+                  </Card>
+                  <Card>
+                    <CardHeader>
+                      <CardTitle className="inline-flex items-center gap-2">
+                        <Trophy className="size-4 text-amber-500" />
+                        Top produtos por lucro
+                      </CardTitle>
+                    </CardHeader>
+                    <CardContent className="space-y-2">
+                      {productChampions.length === 0 ? (
+                        <p className="text-sm text-muted-foreground">
+                          Sem vendas registradas no periodo filtrado.
+                        </p>
+                      ) : (
+                        productChampions.slice(0, 3).map((item) => (
+                          <div
+                            key={item.productId}
+                            className="flex items-center justify-between rounded-none border border-border px-3 py-2 text-sm"
+                          >
+                            <span className="max-w-[58%] truncate">{item.productName}</span>
+                            <span className="font-medium">{formatCurrency(item.profit)}</span>
+                          </div>
+                        ))
+                      )}
                     </CardContent>
                   </Card>
                 </div>
@@ -1475,55 +1860,168 @@ export function FinancialDashboard() {
             )}
 
             {activeFinanceSection === "expenses" && (
-              <Card>
+              <Card className="border-primary/20 bg-primary/5">
                 <CardHeader>
-                  <CardTitle>Registrar lancamento</CardTitle>
-                  <CardDescription>Lance despesas da empresa ou entradas de capital.</CardDescription>
+                  <CardTitle className="inline-flex items-center gap-2">
+                    <ReceiptText className="size-5 text-primary" />
+                    Registrar lancamento
+                  </CardTitle>
+                  <CardDescription>
+                    Lance despesas da empresa ou entradas de capital com tipo e periodicidade.
+                  </CardDescription>
                 </CardHeader>
                 <CardContent className="grid gap-3 md:grid-cols-2">
-                  <Select
-                    value={launchForm.kind}
-                    onValueChange={(value) =>
-                      setLaunchForm((prev) => ({
-                        ...prev,
-                        kind: value as FinancialTransaction["kind"],
-                        categoryId: "",
-                      }))
-                    }
-                  >
-                    <SelectTrigger className="w-full"><SelectValue placeholder="Tipo do lancamento" /></SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="expense">Despesa</SelectItem>
-                      <SelectItem value="income">Entrada de capital</SelectItem>
-                    </SelectContent>
-                  </Select>
-                  <Input type="number" placeholder="Valor" value={launchForm.amount} onChange={(event) => setLaunchForm((prev) => ({ ...prev, amount: event.target.value }))} />
-                  <Input type="date" value={launchForm.date} onChange={(event) => setLaunchForm((prev) => ({ ...prev, date: event.target.value }))} />
-                  <Input className="md:col-span-2" placeholder="Descricao" value={launchForm.description} onChange={(event) => setLaunchForm((prev) => ({ ...prev, description: event.target.value }))} />
-                  <Select value={launchForm.categoryId || undefined} onValueChange={(value) => setLaunchForm((prev) => ({ ...prev, categoryId: value as Id<"categories"> }))}>
-                    <SelectTrigger className="w-full"><SelectValue placeholder="Categoria" /></SelectTrigger>
-                    <SelectContent>
-                      {(launchForm.kind === "income" ? incomeCategories : expenseCategories).map((category) => (
-                        <SelectItem key={category.id} value={category.id}>{category.name}</SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                  {launchForm.kind === "expense" ? (
-                    <Select value={launchForm.expenseType} onValueChange={(value) => setLaunchForm((prev) => ({ ...prev, expenseType: value as ExpenseType }))}>
-                      <SelectTrigger className="w-full"><SelectValue placeholder="Tipo da despesa" /></SelectTrigger>
+                  {launchFeedback && (
+                    <div
+                      className={cn(
+                        "md:col-span-2 flex items-center gap-2 rounded-none border px-3 py-2 text-sm",
+                        launchFeedback.type === "success"
+                          ? "border-emerald-300 bg-emerald-50 text-emerald-700"
+                          : "border-destructive/30 bg-destructive/10 text-destructive",
+                      )}
+                    >
+                      {launchFeedback.type === "success" ? (
+                        <CheckCircle2 className="size-4" />
+                      ) : (
+                        <AlertCircle className="size-4" />
+                      )}
+                      <span>{launchFeedback.message}</span>
+                    </div>
+                  )}
+                  <div className="space-y-1">
+                    <p className="inline-flex items-center gap-1 text-xs text-muted-foreground">
+                      <Tag className="size-3.5" />
+                      Tipo do lancamento
+                    </p>
+                    <Select
+                      value={launchForm.kind}
+                      onValueChange={(value) =>
+                        setLaunchForm((prev) => ({
+                          ...prev,
+                          kind: value as FinancialTransaction["kind"],
+                          categoryId: "",
+                        }))
+                      }
+                    >
+                      <SelectTrigger className="w-full border-primary/20 bg-background">
+                        <SelectValue placeholder="Tipo do lancamento" />
+                      </SelectTrigger>
                       <SelectContent>
-                        <SelectItem value="fixed">Fixo</SelectItem>
-                        <SelectItem value="variable">Variavel</SelectItem>
+                        <SelectItem value="expense">Despesa</SelectItem>
+                        <SelectItem value="income">Entrada de capital</SelectItem>
                       </SelectContent>
                     </Select>
-                  ) : (
+                  </div>
+                  <div className="space-y-1">
+                    <p className="inline-flex items-center gap-1 text-xs text-muted-foreground">
+                      <CircleDollarSign className="size-3.5" />
+                      Valor
+                    </p>
                     <Input
-                      placeholder="Origem da entrada (ex: aporte)"
-                      value={launchForm.origin}
-                      onChange={(event) => setLaunchForm((prev) => ({ ...prev, origin: event.target.value }))}
+                      type="number"
+                      className="border-primary/20 bg-background"
+                      placeholder="Valor"
+                      value={launchForm.amount}
+                      onChange={(event) => setLaunchForm((prev) => ({ ...prev, amount: event.target.value }))}
                     />
+                  </div>
+                  <div className="space-y-1">
+                    <p className="inline-flex items-center gap-1 text-xs text-muted-foreground">
+                      <CalendarDays className="size-3.5" />
+                      Data
+                    </p>
+                    <Input
+                      type="date"
+                      className="border-primary/20 bg-background"
+                      value={launchForm.date}
+                      onChange={(event) => setLaunchForm((prev) => ({ ...prev, date: event.target.value }))}
+                    />
+                  </div>
+                  <div className="space-y-1 md:col-span-2">
+                    <p className="inline-flex items-center gap-1 text-xs text-muted-foreground">
+                      <FileText className="size-3.5" />
+                      Descricao
+                    </p>
+                    <Input
+                      className="border-primary/20 bg-background"
+                      placeholder="Descricao"
+                      value={launchForm.description}
+                      onChange={(event) => setLaunchForm((prev) => ({ ...prev, description: event.target.value }))}
+                    />
+                  </div>
+                  <div className="space-y-1">
+                    <p className="inline-flex items-center gap-1 text-xs text-muted-foreground">
+                      <FolderTree className="size-3.5" />
+                      Categoria
+                    </p>
+                    <Select value={launchForm.categoryId || undefined} onValueChange={(value) => setLaunchForm((prev) => ({ ...prev, categoryId: value as Id<"categories"> }))}>
+                      <SelectTrigger className="w-full border-primary/20 bg-background"><SelectValue placeholder="Categoria" /></SelectTrigger>
+                      <SelectContent>
+                        {(launchForm.kind === "income" ? incomeCategories : expenseCategories).map((category) => (
+                          <SelectItem key={category.id} value={category.id}>{category.name}</SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  {launchForm.kind === "expense" ? (
+                    <div className="space-y-1">
+                      <p className="inline-flex items-center gap-1 text-xs text-muted-foreground">
+                        <CreditCard className="size-3.5" />
+                        Tipo da despesa
+                      </p>
+                      <Select value={launchForm.expenseType} onValueChange={(value) => setLaunchForm((prev) => ({ ...prev, expenseType: value as ExpenseType }))}>
+                        <SelectTrigger className="w-full border-primary/20 bg-background"><SelectValue placeholder="Tipo da despesa" /></SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="fixed">Fixo</SelectItem>
+                          <SelectItem value="variable">Variavel</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+                  ) : (
+                    <div className="space-y-1">
+                      <p className="inline-flex items-center gap-1 text-xs text-muted-foreground">
+                        <Store className="size-3.5" />
+                        Origem da entrada
+                      </p>
+                      <Input
+                        className="border-primary/20 bg-background"
+                        placeholder="Origem da entrada (ex: aporte)"
+                        value={launchForm.origin}
+                        onChange={(event) => setLaunchForm((prev) => ({ ...prev, origin: event.target.value }))}
+                      />
+                    </div>
                   )}
-                  <Button className="md:col-span-2" onClick={saveLaunch}>Salvar lancamento</Button>
+                  <div className="space-y-1 md:col-span-2">
+                    <p className="inline-flex items-center gap-1 text-xs text-muted-foreground">
+                      <Repeat className="size-3.5" />
+                      Periodicidade
+                    </p>
+                    <Select
+                      value={launchForm.periodicity}
+                      onValueChange={(value) =>
+                        setLaunchForm((prev) => ({
+                          ...prev,
+                          periodicity: value as TransactionPeriodicity,
+                        }))
+                      }
+                    >
+                      <SelectTrigger className="w-full border-primary/20 bg-background">
+                        <SelectValue placeholder="Periodicidade" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="one_time">Unico</SelectItem>
+                        <SelectItem value="weekly">Semanal</SelectItem>
+                        <SelectItem value="monthly">Mensal</SelectItem>
+                        <SelectItem value="quarterly">Trimestral</SelectItem>
+                        <SelectItem value="semiannual">Semestral</SelectItem>
+                        <SelectItem value="annual">Anual</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <Button className="md:col-span-2 gap-2 bg-primary hover:bg-primary/90" onClick={saveLaunch} disabled={launchSaving}>
+                    {launchSaving ? <RefreshCw className="size-4 animate-spin" /> : <CheckCircle2 className="size-4" />}
+                    {launchSaving ? "Salvando..." : "Salvar lancamento"}
+                  </Button>
                 </CardContent>
               </Card>
             )}
@@ -1569,43 +2067,87 @@ export function FinancialDashboard() {
             )}
 
             {activeFinanceSection === "reports" && (
-              <section className="grid gap-4 xl:grid-cols-2">
+              <section className="space-y-4">
+                <div className="grid gap-4 xl:grid-cols-2">
+                  <Card>
+                    <CardHeader><CardTitle>Fluxo de caixa (dia/semana/mes)</CardTitle></CardHeader>
+                    <CardContent className="space-y-4">
+                      <div className="flex flex-wrap gap-2">
+                        {(["day", "week", "month"] as FinancialPeriod[]).map((value) => (
+                          <Button key={value} size="sm" variant={period === value ? "default" : "outline"} onClick={() => setPeriod(value)}>
+                            {value === "day" ? "Dia" : value === "week" ? "Semana" : "Mes"}
+                          </Button>
+                        ))}
+                      </div>
+                      <Table>
+                        <TableHeader>
+                          <TableRow><TableHead>Periodo</TableHead><TableHead>Entradas</TableHead><TableHead>Saidas</TableHead><TableHead className="text-right">Saldo</TableHead></TableRow>
+                        </TableHeader>
+                        <TableBody>
+                          {flowData.map((item) => (
+                            <TableRow key={item.label}>
+                              <TableCell>{item.label}</TableCell>
+                              <TableCell>{formatCurrency(item.income)}</TableCell>
+                              <TableCell>{formatCurrency(item.expense)}</TableCell>
+                              <TableCell className="text-right">{formatCurrency(item.net)}</TableCell>
+                            </TableRow>
+                          ))}
+                        </TableBody>
+                      </Table>
+                    </CardContent>
+                  </Card>
+                  <Card>
+                    <CardHeader><CardTitle>Evolucao mensal</CardTitle></CardHeader>
+                    <CardContent className="grid gap-2">
+                      {evolutionReport.map((item) => (
+                        <div key={item.monthLabel} className="flex items-center justify-between rounded-none border border-border p-2 text-sm">
+                          <span>{item.monthLabel}</span>
+                          <span>{formatCurrency(item.result)}</span>
+                        </div>
+                      ))}
+                    </CardContent>
+                  </Card>
+                </div>
                 <Card>
-                  <CardHeader><CardTitle>Fluxo de caixa (dia/semana/mes)</CardTitle></CardHeader>
+                  <CardHeader>
+                    <CardTitle className="inline-flex items-center gap-2">
+                      <LineChart className="size-4 text-primary" />
+                      Previsao de custos e lucros (proximos meses)
+                    </CardTitle>
+                    <CardDescription>
+                      Projecao baseada na media e tendencia dos ultimos 6 meses.
+                    </CardDescription>
+                  </CardHeader>
                   <CardContent className="space-y-4">
-                    <div className="flex flex-wrap gap-2">
-                      {(["day", "week", "month"] as FinancialPeriod[]).map((value) => (
-                        <Button key={value} size="sm" variant={period === value ? "default" : "outline"} onClick={() => setPeriod(value)}>
-                          {value === "day" ? "Dia" : value === "week" ? "Semana" : "Mes"}
-                        </Button>
+                    <div className="flex flex-wrap gap-2 text-xs">
+                      <Badge variant="secondary" className="bg-emerald-100 text-emerald-700">Entrada prevista</Badge>
+                      <Badge variant="secondary" className="bg-destructive/10 text-destructive">Custo previsto</Badge>
+                      <Badge variant="secondary" className="bg-blue-100 text-blue-700">Lucro previsto</Badge>
+                    </div>
+                    <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+                      {forecastReport.map((item) => (
+                        <Card key={item.monthLabel} className="rounded-none border-dashed">
+                          <CardHeader className="pb-2">
+                            <CardDescription>{item.monthLabel}</CardDescription>
+                          </CardHeader>
+                          <CardContent className="space-y-2">
+                            <ProgressBlock
+                              label="Entrada"
+                              value={item.incomeForecast}
+                              maxValue={forecastMaxValue}
+                              barClassName="bg-emerald-500"
+                            />
+                            <ProgressBlock
+                              label="Custos"
+                              value={item.expenseForecast}
+                              maxValue={forecastMaxValue}
+                              barClassName="bg-destructive"
+                            />
+                            <LineItem label="Lucro previsto" value={item.profitForecast} strong />
+                          </CardContent>
+                        </Card>
                       ))}
                     </div>
-                    <Table>
-                      <TableHeader>
-                        <TableRow><TableHead>Periodo</TableHead><TableHead>Entradas</TableHead><TableHead>Saidas</TableHead><TableHead className="text-right">Saldo</TableHead></TableRow>
-                      </TableHeader>
-                      <TableBody>
-                        {flowData.map((item) => (
-                          <TableRow key={item.label}>
-                            <TableCell>{item.label}</TableCell>
-                            <TableCell>{formatCurrency(item.income)}</TableCell>
-                            <TableCell>{formatCurrency(item.expense)}</TableCell>
-                            <TableCell className="text-right">{formatCurrency(item.net)}</TableCell>
-                          </TableRow>
-                        ))}
-                      </TableBody>
-                    </Table>
-                  </CardContent>
-                </Card>
-                <Card>
-                  <CardHeader><CardTitle>Evolucao mensal</CardTitle></CardHeader>
-                  <CardContent className="grid gap-2">
-                    {evolutionReport.map((item) => (
-                      <div key={item.monthLabel} className="flex items-center justify-between rounded-none border border-border p-2 text-sm">
-                        <span>{item.monthLabel}</span>
-                        <span>{formatCurrency(item.result)}</span>
-                      </div>
-                    ))}
                   </CardContent>
                 </Card>
               </section>
@@ -1709,6 +2251,27 @@ export function FinancialDashboard() {
                           </SelectContent>
                         </Select>
                       )}
+                      <Select
+                        value={transactionEditForm.periodicity}
+                        onValueChange={(value) =>
+                          setTransactionEditForm((prev) => ({
+                            ...prev,
+                            periodicity: value as TransactionPeriodicity,
+                          }))
+                        }
+                      >
+                        <SelectTrigger className="w-full md:col-span-2">
+                          <SelectValue placeholder="Periodicidade" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="one_time">Unico</SelectItem>
+                          <SelectItem value="weekly">Semanal</SelectItem>
+                          <SelectItem value="monthly">Mensal</SelectItem>
+                          <SelectItem value="quarterly">Trimestral</SelectItem>
+                          <SelectItem value="semiannual">Semestral</SelectItem>
+                          <SelectItem value="annual">Anual</SelectItem>
+                        </SelectContent>
+                      </Select>
                       <div className="flex gap-2 md:col-span-2">
                         <Button onClick={saveTransactionEdit}>Salvar alteracoes</Button>
                         <Button variant="outline" onClick={() => setEditingTransactionId(null)}>
@@ -1719,7 +2282,7 @@ export function FinancialDashboard() {
                   )}
                   <Table>
                     <TableHeader>
-                      <TableRow><TableHead>Data</TableHead><TableHead>Descricao</TableHead><TableHead>Categoria</TableHead><TableHead>Tipo</TableHead><TableHead className="text-right">Valor</TableHead><TableHead>Acoes</TableHead></TableRow>
+                      <TableRow><TableHead>Data</TableHead><TableHead>Descricao</TableHead><TableHead>Categoria</TableHead><TableHead>Tipo</TableHead><TableHead>Periodicidade</TableHead><TableHead className="text-right">Valor</TableHead><TableHead>Acoes</TableHead></TableRow>
                     </TableHeader>
                     <TableBody>
                       {filteredTransactions.slice().sort((a, b) => b.date.localeCompare(a.date)).map((transaction) => (
@@ -1731,6 +2294,9 @@ export function FinancialDashboard() {
                             <Badge variant={transaction.kind === "income" ? "default" : "secondary"}>
                               {transaction.kind === "income" ? "Entrada" : "Despesa"}
                             </Badge>
+                          </TableCell>
+                          <TableCell>
+                            <Badge variant="outline">{periodicityLabel(transaction.periodicity)}</Badge>
                           </TableCell>
                           <TableCell className="text-right">{formatCurrency(transaction.amount)}</TableCell>
                           <TableCell>
@@ -2844,7 +3410,7 @@ export function FinancialDashboard() {
                               Resumo financeiro
                             </CardTitle>
                           </CardHeader>
-                          <CardContent className="grid gap-3 sm:grid-cols-3">
+                          <CardContent className="grid gap-3 sm:grid-cols-4">
                             <div className="rounded-none border bg-muted/30 p-3">
                               <p className="text-xs text-muted-foreground">Receita total</p>
                               <p className="text-2xl font-semibold text-emerald-700">
@@ -2855,6 +3421,12 @@ export function FinancialDashboard() {
                               <p className="text-xs text-muted-foreground">Valor recebido</p>
                               <p className="text-2xl font-semibold">
                                 {formatCurrency(mlOrderCostAnalysis.receivedAmount)}
+                              </p>
+                            </div>
+                            <div className="rounded-none border bg-muted/30 p-3">
+                              <p className="text-xs text-muted-foreground">Custo do produto</p>
+                              <p className="text-2xl font-semibold text-orange-600">
+                                {formatCurrency(mlOrderCostAnalysis.productCost)}
                               </p>
                             </div>
                             <div className="rounded-none border bg-muted/30 p-3">
@@ -2883,7 +3455,7 @@ export function FinancialDashboard() {
                           <CardContent className="space-y-4">
                             {[
                               {
-                                label: "Produtos",
+                                label: "Custo do produto",
                                 value: mlOrderCostAnalysis.productCost,
                                 color: "bg-orange-500",
                               },
@@ -3009,6 +3581,142 @@ export function FinancialDashboard() {
   )
 }
 
+function FinancialEvolutionChart({ data }: { data: SalesEvolutionPoint[] }) {
+  if (data.length === 0) {
+    return <p className="text-sm text-muted-foreground">Sem dados suficientes para montar o grafico.</p>
+  }
+
+  const width = 640
+  const height = 230
+  const paddingX = 28
+  const paddingY = 24
+  const chartWidth = width - paddingX * 2
+  const chartHeight = height - paddingY * 2
+  const maxValue = Math.max(
+    ...data.map((item) => Math.max(item.revenue, item.profit, item.orders)),
+    1,
+  )
+
+  const pointFor = (value: number, index: number) => {
+    const x = paddingX + (index / Math.max(1, data.length - 1)) * chartWidth
+    const y = paddingY + (1 - value / maxValue) * chartHeight
+    return { x, y }
+  }
+
+  const toPolyline = (values: number[]) =>
+    values
+      .map((value, index) => {
+        const point = pointFor(value, index)
+        return `${point.x},${point.y}`
+      })
+      .join(" ")
+
+  const revenuePoints = toPolyline(data.map((item) => item.revenue))
+  const profitPoints = toPolyline(data.map((item) => Math.max(0, item.profit)))
+  const ordersPoints = toPolyline(data.map((item) => item.orders))
+  const revenueArea =
+    `${paddingX},${height - paddingY} ` +
+    revenuePoints +
+    ` ${paddingX + chartWidth},${height - paddingY}`
+
+  return (
+    <div className="space-y-3">
+      <div className="h-[230px] rounded-none border border-border bg-muted/10 p-2">
+        <svg viewBox={`0 0 ${width} ${height}`} className="h-full w-full">
+          <polygon points={revenueArea} fill="rgba(249, 115, 22, 0.15)" />
+          <polyline points={revenuePoints} fill="none" stroke="#f97316" strokeWidth="3" />
+          <polyline points={profitPoints} fill="none" stroke="#fb923c" strokeWidth="2.5" />
+          <polyline
+            points={ordersPoints}
+            fill="none"
+            stroke="#f59e0b"
+            strokeWidth="2"
+            strokeDasharray="5 5"
+          />
+          {data.map((item, index) => {
+            const point = pointFor(item.revenue, index)
+            return <circle key={item.key} cx={point.x} cy={point.y} r="3.5" fill="#f97316" />
+          })}
+        </svg>
+      </div>
+      <div className="flex flex-wrap items-center gap-3 text-xs">
+        <span className="inline-flex items-center gap-1">
+          <span className="h-2 w-2 rounded-full bg-orange-500" />
+          Receita
+        </span>
+        <span className="inline-flex items-center gap-1">
+          <span className="h-2 w-2 rounded-full bg-orange-400" />
+          Lucro
+        </span>
+        <span className="inline-flex items-center gap-1">
+          <span className="h-2 w-2 rounded-full bg-amber-500" />
+          Pedidos
+        </span>
+      </div>
+      <div className="flex flex-wrap gap-2 text-xs text-muted-foreground">
+        {data.map((item) => (
+          <span key={`${item.key}-label`} className="min-w-[44px]">
+            {item.label}
+          </span>
+        ))}
+      </div>
+    </div>
+  )
+}
+
+function CostCompositionChart({
+  items,
+  total,
+}: {
+  items: Array<{ categoryName: string; total: number }>
+  total: number
+}) {
+  if (!items.length || total <= 0) {
+    return <p className="text-sm text-muted-foreground">Sem custos suficientes para compor grafico.</p>
+  }
+
+  const palette = ["#f59e0b", "#fb923c", "#f97316", "#ea580c", "#fdba74"]
+  let accumulated = 0
+  const segments = items.map((item, index) => {
+    const start = (accumulated / total) * 360
+    accumulated += item.total
+    const end = (accumulated / total) * 360
+    return `${palette[index % palette.length]} ${start}deg ${end}deg`
+  })
+
+  return (
+    <div className="grid gap-4 md:grid-cols-[120px_1fr] md:items-center">
+      <div className="mx-auto flex h-28 w-28 items-center justify-center rounded-full border-8 border-background bg-background shadow-inner">
+        <div
+          className="h-24 w-24 rounded-full"
+          style={{
+            background: `conic-gradient(${segments.join(",")})`,
+          }}
+        />
+      </div>
+      <div className="space-y-1.5 text-sm">
+        {items.map((item, index) => {
+          const percentage = (item.total / total) * 100
+          return (
+            <div key={item.categoryName} className="flex items-center justify-between gap-2">
+              <span className="inline-flex items-center gap-2 text-muted-foreground">
+                <span
+                  className="h-2.5 w-2.5 rounded-full"
+                  style={{ backgroundColor: palette[index % palette.length] }}
+                />
+                <span className="max-w-[170px] truncate">{item.categoryName}</span>
+              </span>
+              <span className="font-medium">
+                {formatCurrency(item.total)} ({percentage.toFixed(1)}%)
+              </span>
+            </div>
+          )
+        })}
+      </div>
+    </div>
+  )
+}
+
 function SidebarButton({
   icon: Icon,
   label,
@@ -3039,14 +3747,21 @@ function SummaryCard({
   value: number
   positive?: boolean
   negative?: boolean
-  format?: "currency" | "number"
+  format?: "currency" | "number" | "percent"
 }) {
+  const formattedValue =
+    format === "currency"
+      ? formatCurrency(value)
+      : format === "percent"
+        ? `${value.toFixed(1)}%`
+        : Math.trunc(value)
+
   return (
     <Card>
       <CardHeader>
         <CardDescription>{title}</CardDescription>
         <CardTitle className={cn(positive && "text-primary", negative && "text-destructive")}>
-          {format === "currency" ? formatCurrency(value) : Math.trunc(value)}
+          {formattedValue}
         </CardTitle>
       </CardHeader>
     </Card>

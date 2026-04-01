@@ -13,6 +13,7 @@
    * @property {string|null} listingType
    * @property {number|null} saleFeePercent
    * @property {number|null} saleFeeAmount
+ * @property {number|null} reviewRating
    * @property {string|null} categoryId
    * @property {string|null} categoryName
    * @property {string|null} shippingMode
@@ -22,6 +23,7 @@
    *   salePrice: DataSourceKind,
    *   listingType: DataSourceKind,
    *   saleFeePercent: DataSourceKind,
+ *   reviewRating: DataSourceKind,
    *   shippingEstimatedCost: DataSourceKind,
    *   shippingRealCost: DataSourceKind
    * }} source
@@ -67,6 +69,7 @@
       listingType: null,
       saleFeePercent: null,
       saleFeeAmount: null,
+      reviewRating: null,
       categoryId: null,
       categoryName: null,
       shippingMode: null,
@@ -76,6 +79,7 @@
         salePrice: null,
         listingType: null,
         saleFeePercent: null,
+        reviewRating: null,
         shippingEstimatedCost: null,
         shippingRealCost: null,
       },

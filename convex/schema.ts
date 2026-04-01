@@ -19,6 +19,16 @@ export default defineSchema({
     categoryId: v.id("categories"),
     origin: v.optional(v.string()),
     expenseType: v.optional(v.union(v.literal("fixed"), v.literal("variable"))),
+    periodicity: v.optional(
+      v.union(
+        v.literal("one_time"),
+        v.literal("weekly"),
+        v.literal("monthly"),
+        v.literal("quarterly"),
+        v.literal("semiannual"),
+        v.literal("annual"),
+      ),
+    ),
     createdAt: v.number(),
   })
     .index("by_user", ["userId"])
@@ -49,13 +59,15 @@ export default defineSchema({
     quantity: v.number(),
     minStock: v.number(),
     unitCost: v.number(),
+    unitCostSource: v.optional(v.union(v.literal("manual"), v.literal("extension"))),
     sellingPrice: v.optional(v.number()),
     createdAt: v.number(),
     updatedAt: v.number(),
   })
     .index("by_user", ["userId"])
     .index("by_user_sku", ["userId", "sku"])
-    .index("by_user_ml_item", ["userId", "mlItemId"]),
+    .index("by_user_ml_item", ["userId", "mlItemId"])
+    .index("by_ml_item", ["mlItemId"]),
 
   stockMovements: defineTable({
     userId: v.string(),

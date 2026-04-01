@@ -86,9 +86,55 @@ export const updateProduct = mutation({
       quantity: args.quantity,
       minStock: args.minStock,
       unitCost: args.unitCost,
+      unitCostSource: "manual",
       sellingPrice: args.sellingPrice,
       updatedAt: Date.now(),
     })
+  },
+})
+
+export const upsertCostFromBranchHunter = mutation({
+  args: {
+    mlItemId: v.string(),
+    unitCost: v.number(),
+  },
+  handler: async (ctx, args) => {
+    const normalizedItemId = args.mlItemId.trim()
+    if (!normalizedItemId) {
+      throw new Error("mlItemId invalido.")
+    }
+    if (!Number.isFinite(args.unitCost) || args.unitCost < 0) {
+      throw new Error("unitCost invalido.")
+    }
+
+    const products = await ctx.db
+      .query("stockProducts")
+      .withIndex("by_ml_item", (queryBuilder) => queryBuilder.eq("mlItemId", normalizedItemId))
+      .collect()
+
+    let updated = 0
+    let skippedManual = 0
+    const now = Date.now()
+
+    for (const product of products) {
+      if (product.unitCostSource === "manual") {
+        skippedManual += 1
+        continue
+      }
+
+      await ctx.db.patch(product._id, {
+        unitCost: args.unitCost,
+        unitCostSource: "extension",
+        updatedAt: now,
+      })
+      updated += 1
+    }
+
+    return {
+      totalMatched: products.length,
+      updated,
+      skippedManual,
+    }
   },
 })
 
