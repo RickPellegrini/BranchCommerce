@@ -57,6 +57,12 @@ export async function updateMlTokens(params: {
   await client.mutation(api.mercadolivre.updateTokens, params)
 }
 
+export async function disconnectMlConnection(appUserId: string) {
+  const client = getConvexClient()
+  // Convex codegen may be out-of-date until next `npx convex dev`.
+  return client.mutation((api as any).mercadolivre.disconnectConnection, { appUserId })
+}
+
 async function refreshConnection(connection: Exclude<MlConnection, null>) {
   const refreshed = await refreshMlAccessToken(connection.refreshToken)
   const expiresAt = Date.now() + refreshed.expires_in * 1000

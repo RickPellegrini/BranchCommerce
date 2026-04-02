@@ -111,3 +111,22 @@ export const updateTokens = mutation({
     })
   },
 })
+
+export const disconnectConnection = mutation({
+  args: {
+    appUserId: v.string(),
+  },
+  handler: async (ctx, args) => {
+    const existing = await ctx.db
+      .query("mercadoLivreAccounts")
+      .withIndex("by_app_user", (queryBuilder) => queryBuilder.eq("appUserId", args.appUserId))
+      .first()
+
+    if (!existing) {
+      return { removed: false }
+    }
+
+    await ctx.db.delete(existing._id)
+    return { removed: true }
+  },
+})

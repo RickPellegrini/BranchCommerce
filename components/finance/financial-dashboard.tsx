@@ -79,6 +79,7 @@ import type {
   TransactionFilters,
 } from "@/lib/finance/types"
 import { cn } from "@/lib/utils"
+import { AnalysisModal } from "@/features/product-analysis/components/AnalysisModal"
 
 type ModuleKey = "home" | "finance" | "stock" | "mercadolivre" | "branchhunter"
 type FinanceSection = "overview" | "abc" | "dre" | "expenses" | "categories" | "reports" | "history"
@@ -167,27 +168,30 @@ type MlOrder = {
   }>
 }
 
-type MlCatalogData = {
+type MlCatalogCompetitionSummary = {
+  total: number
+  winning: number
+  sharingFirstPlace: number
+  competing: number
+  listed: number
+}
+
+type MlCatalogCompetitionRow = {
   itemId: string
-  itemTitle: string
+  title: string
+  thumbnail?: string
+  status: string
+  price: number
+  availableQuantity: number
   catalogProductId: string | null
-  sellers: Array<{
-    sellerId: string
-    sellerNickname: string
-    listingsCount: number
-  }>
-  listings: Array<{
-    id: string
-    title: string
-    price: number
-    permalink?: string
-    thumbnail?: string
-    availableQuantity: number
-    sellerId: string
-    sellerNickname: string
-  }>
-  totalListings?: number
-  message?: string
+  competitionStatus: string
+  currentPrice: number
+  priceToWin: number | null
+  winnerPrice: number | null
+  winnerItemId: string | null
+  visitShare: string | null
+  reasons: string[]
+  competitorsSharingFirstPlace: number | null
 }
 
 type OrderCostAnalysis = {
@@ -258,6 +262,27 @@ function mlStatusBadgeClass(status: string) {
     return "border-warning/40 bg-warning/10 text-warning"
   }
   return "border-destructive/40 bg-destructive/10 text-destructive"
+}
+
+function catalogCompetitionBadgeClass(status: string) {
+  const normalized = String(status ?? "").toLowerCase()
+  if (normalized === "winning") return "border-emerald-500/40 bg-emerald-500/10 text-emerald-700"
+  if (normalized === "sharing_first_place")
+    return "border-amber-500/40 bg-amber-500/10 text-amber-700"
+  if (normalized === "competing") return "border-red-500/40 bg-red-500/10 text-red-700"
+  if (normalized === "listed") return "border-slate-500/40 bg-slate-500/10 text-slate-700"
+  return "border-muted bg-muted/30 text-muted-foreground"
+}
+
+function catalogCompetitionLabel(status: string) {
+  const normalized = String(status ?? "").toLowerCase()
+  if (normalized === "winning") return "Ganhando"
+  if (normalized === "sharing_first_place") return "Dividindo 1o"
+  if (normalized === "competing") return "Perdendo"
+  if (normalized === "listed") return "Listado"
+  if (normalized === "unknown") return "Indisponivel"
+  if (!normalized) return "-"
+  return status || "Desconhecido"
 }
 
 function mlShippingStep(status: string) {
@@ -1023,6 +1048,7 @@ export function FinancialDashboard() {
   })
   const [mlConnectionStatus, setMlConnectionStatus] = useState<MlConnectionStatus | null>(null)
   const [mlLoading, setMlLoading] = useState(false)
+  const [mlDisconnecting, setMlDisconnecting] = useState(false)
   const [mlListingsCount, setMlListingsCount] = useState<number | null>(null)
   const [mlListings, setMlListings] = useState<MlListing[]>([])
   const [mlListingsLoading, setMlListingsLoading] = useState(false)
@@ -1060,8 +1086,14 @@ export function FinancialDashboard() {
   const [mlLastSyncAt, setMlLastSyncAt] = useState<number | null>(null)
   const [mlLastSyncDurationMs, setMlLastSyncDurationMs] = useState<number | null>(null)
   const [mlNowTimestamp, setMlNowTimestamp] = useState<number>(Date.now())
-  const [mlCatalogLoadingId, setMlCatalogLoadingId] = useState<string | null>(null)
-  const [mlCatalogData, setMlCatalogData] = useState<MlCatalogData | null>(null)
+  const [analysisItemId, setAnalysisItemId] = useState<string | null>(null)
+  const [mlCatalogCompetitionLoading, setMlCatalogCompetitionLoading] = useState(false)
+  const [mlCatalogCompetitionSummary, setMlCatalogCompetitionSummary] =
+    useState<MlCatalogCompetitionSummary | null>(null)
+  const [mlCatalogCompetitionRows, setMlCatalogCompetitionRows] = useState<MlCatalogCompetitionRow[]>([])
+  const [mlCatalogSearchTerm, setMlCatalogSearchTerm] = useState("")
+  const [mlCatalogStatusFilter, setMlCatalogStatusFilter] = useState("all")
+  const [mlCatalogSortBy, setMlCatalogSortBy] = useState("difference_desc")
   const [mlOrderCostAnalysis, setMlOrderCostAnalysis] = useState<OrderCostAnalysis | null>(null)
   const [financeOrdersTitleFilter, setFinanceOrdersTitleFilter] = useState("")
   const [financeOrdersSkuFilter, setFinanceOrdersSkuFilter] = useState("")
@@ -1528,6 +1560,77 @@ export function FinancialDashboard() {
     financeOrdersTitleFilter,
     mlOrders,
   ])
+
+  const mlListingById = useMemo(
+    () => new Map(mlListings.map((listing) => [listing.id, listing])),
+    [mlListings],
+  )
+
+  const filteredCatalogCompetitionRows = useMemo(() => {
+    const term = mlCatalogSearchTerm.trim().toLowerCase()
+    const statusFilter = mlCatalogStatusFilter.toLowerCase()
+
+    const rows = mlCatalogCompetitionRows.filter((row) => {
+      if (row.competitionStatus.toLowerCase() === "not_listed") return false
+      if (statusFilter !== "all" && row.competitionStatus.toLowerCase() !== statusFilter) return false
+      if (!term) return true
+      return (
+        row.title.toLowerCase().includes(term) ||
+        row.itemId.toLowerCase().includes(term) ||
+        (row.catalogProductId ?? "").toLowerCase().includes(term)
+      )
+    })
+
+    rows.sort((a, b) => {
+      const diffA = (a.price - (a.winnerPrice ?? a.price))
+      const diffB = (b.price - (b.winnerPrice ?? b.price))
+      if (mlCatalogSortBy === "difference_asc") return diffA - diffB
+      if (mlCatalogSortBy === "price_desc") return b.price - a.price
+      if (mlCatalogSortBy === "price_asc") return a.price - b.price
+      return diffB - diffA
+    })
+
+    return rows
+  }, [mlCatalogCompetitionRows, mlCatalogSearchTerm, mlCatalogSortBy, mlCatalogStatusFilter])
+
+  const exportCatalogCompetitionCsv = () => {
+    const header = [
+      "item_id",
+      "titulo",
+      "status_competicao",
+      "preco_atual",
+      "preco_vencedor",
+      "diferenca",
+      "lucro_venda_estimado",
+      "catalog_product_id",
+    ]
+    const rows = filteredCatalogCompetitionRows.map((row) => {
+      const product = productMapByMlItemId.get(row.itemId)
+      const unitCost = product?.unitCost ?? 0
+      const diff = row.price - (row.winnerPrice ?? row.price)
+      const estimatedProfitPerSale = row.price - unitCost
+      return [
+        row.itemId,
+        row.title.replace(/"/g, '""'),
+        row.competitionStatus,
+        row.price.toFixed(2),
+        row.winnerPrice?.toFixed(2) ?? "",
+        diff.toFixed(2),
+        estimatedProfitPerSale.toFixed(2),
+        row.catalogProductId ?? "",
+      ]
+    })
+    const csv = [header, ...rows]
+      .map((line) => line.map((cell) => `"${String(cell)}"`).join(";"))
+      .join("\n")
+    const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" })
+    const url = URL.createObjectURL(blob)
+    const link = document.createElement("a")
+    link.href = url
+    link.download = "catalogos-competicao.csv"
+    link.click()
+    URL.revokeObjectURL(url)
+  }
 
   const abcRows = useMemo(() => {
     const fromOrders = buildAbcRowsFromOrders(
@@ -2007,11 +2110,48 @@ export function FinancialDashboard() {
     setMovementForm((previous) => ({ ...previous, quantity: "", unitPrice: "", note: "" }))
   }
 
+  const disconnectMlAccount = async () => {
+    if (mlDisconnecting) return
+    const confirmed = window.confirm("Deseja desconectar a conta do Mercado Livre deste hub?")
+    if (!confirmed) return
+
+    setMlDisconnecting(true)
+    setMlError(null)
+    setMlInfo(null)
+    try {
+      const response = await fetch("/api/ml/disconnect", { method: "POST" })
+      const payload = await response.json()
+      if (!response.ok || !payload.ok) {
+        throw new Error(payload.error ?? "Falha ao desconectar conta do Mercado Livre.")
+      }
+
+      setMlConnectionStatus({ connected: false })
+      setMlListings([])
+      setMlListingsCount(0)
+      setMlOrders([])
+      setMlOrdersCount(0)
+      setMlMetrics(null)
+      setMlCatalogCompetitionRows([])
+      setMlCatalogCompetitionSummary({
+        total: 0,
+        winning: 0,
+        sharingFirstPlace: 0,
+        competing: 0,
+        listed: 0,
+      })
+      setMlInfo("Conta do Mercado Livre desconectada com sucesso.")
+    } catch (error) {
+      setMlError(error instanceof Error ? error.message : "Erro ao desconectar conta do Mercado Livre.")
+    } finally {
+      setMlDisconnecting(false)
+    }
+  }
+
   const loadMlListings = async () => {
     setMlError(null)
     setMlListingsLoading(true)
     try {
-      const response = await fetch("/api/ml/listings?limit=20&offset=0", { cache: "no-store" })
+      const response = await fetch("/api/ml/listings?limit=50&offset=0", { cache: "no-store" })
       const payload = await response.json()
       if (!response.ok || !payload.ok) {
         throw new Error(payload.error ?? "Falha ao buscar anuncios.")
@@ -2225,20 +2365,27 @@ export function FinancialDashboard() {
     await Promise.all([syncStockWithMl(), loadMlOverviewCards()])
   }
 
-  const loadMlCatalog = async (listingId: string) => {
+  const openAnalysis = (itemId: string) => setAnalysisItemId(itemId)
+
+  const loadMlCatalogCompetition = async () => {
     setMlError(null)
-    setMlCatalogLoadingId(listingId)
+    setMlCatalogCompetitionLoading(true)
     try {
-      const response = await fetch(`/api/ml/catalog/${listingId}`, { cache: "no-store" })
+      const response = await fetch(`/api/ml/catalog/hub?action=competition&ts=${Date.now()}`, {
+        cache: "no-store",
+      })
       const payload = await response.json()
       if (!response.ok || !payload.ok) {
-        throw new Error(payload.error ?? "Falha ao consultar catalogo.")
+        throw new Error(payload.error ?? "Falha ao carregar competicao de catalogo.")
       }
-      setMlCatalogData(payload.data as MlCatalogData)
+      setMlCatalogCompetitionSummary((payload.data.summary ?? null) as MlCatalogCompetitionSummary | null)
+      setMlCatalogCompetitionRows((payload.data.rows ?? []) as MlCatalogCompetitionRow[])
     } catch (error) {
-      setMlError(error instanceof Error ? error.message : "Erro ao consultar catalogo do anuncio.")
+      setMlError(
+        error instanceof Error ? error.message : "Erro ao carregar dados de competicao do catalogo.",
+      )
     } finally {
-      setMlCatalogLoadingId(null)
+      setMlCatalogCompetitionLoading(false)
     }
   }
 
@@ -2297,8 +2444,13 @@ export function FinancialDashboard() {
   useEffect(() => {
     if (activeModule !== "mercadolivre" || !mlConnectionStatus?.connected) return
 
-    if (activeMlSection === "listings" && mlListings.length === 0 && !mlListingsLoading) {
-      void loadMlListings()
+    if (activeMlSection === "listings") {
+      if (mlListings.length === 0 && !mlListingsLoading) {
+        void loadMlListings()
+      }
+      if (mlCatalogCompetitionRows.length === 0 && !mlCatalogCompetitionLoading) {
+        void loadMlCatalogCompetition()
+      }
       return
     }
     if (activeMlSection === "orders" && mlOrders.length === 0 && !mlOrdersLoading) {
@@ -2311,6 +2463,8 @@ export function FinancialDashboard() {
   }, [
     activeMlSection,
     activeModule,
+    mlCatalogCompetitionLoading,
+    mlCatalogCompetitionRows.length,
     mlConnectionStatus?.connected,
     mlListings.length,
     mlListingsLoading,
@@ -4380,6 +4534,16 @@ export function FinancialDashboard() {
                     <p className="text-muted-foreground">
                       Token expira em: {new Date(mlConnectionStatus.expiresAt).toLocaleString("pt-BR")}
                     </p>
+                    <div className="pt-1">
+                      <Button
+                        variant="destructive"
+                        size="sm"
+                        onClick={() => void disconnectMlAccount()}
+                        disabled={mlDisconnecting}
+                      >
+                        {mlDisconnecting ? "Desconectando..." : "Desconectar Mercado Livre"}
+                      </Button>
+                    </div>
                   </div>
                 ) : (
                   <div className="space-y-2">
@@ -4493,221 +4657,202 @@ export function FinancialDashboard() {
                     <CardHeader>
                       <CardTitle>Catalogos</CardTitle>
                       <CardDescription>
-                        Itens com catalogo do Mercado Livre vinculados a sua conta.
+                        Competicao em catalogo, buscador de produtos e recursos avancados da API.
                       </CardDescription>
                     </CardHeader>
-                    <CardContent>
-                      {mlListingsLoading ? (
-                        <p className="text-sm text-muted-foreground">Carregando anuncios...</p>
-                      ) : mlListings.filter((listing) => listing.catalogProductId).length === 0 ? (
-                        <div className="space-y-2">
-                          <p className="text-sm text-muted-foreground">
-                            Nenhum item de catalogo encontrado nos anuncios carregados.
-                          </p>
-                          <Button variant="outline" onClick={() => void loadMlListings()}>
-                            Carregar anuncios
-                          </Button>
-                        </div>
+                    <CardContent className="space-y-4">
+                      <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-5">
+                        <Card className="rounded-none border-dashed">
+                          <CardHeader className="pb-2">
+                            <CardDescription>Total</CardDescription>
+                            <CardTitle className="text-lg">{mlCatalogCompetitionSummary?.total ?? 0}</CardTitle>
+                          </CardHeader>
+                        </Card>
+                        <Card className="rounded-none border-dashed">
+                          <CardHeader className="pb-2">
+                            <CardDescription className="text-emerald-700">Ganhando</CardDescription>
+                            <CardTitle className="text-lg text-emerald-700">
+                              {mlCatalogCompetitionSummary?.winning ?? 0}
+                            </CardTitle>
+                          </CardHeader>
+                        </Card>
+                        <Card className="rounded-none border-dashed">
+                          <CardHeader className="pb-2">
+                            <CardDescription className="text-amber-700">Dividindo 1o</CardDescription>
+                            <CardTitle className="text-lg text-amber-700">
+                              {mlCatalogCompetitionSummary?.sharingFirstPlace ?? 0}
+                            </CardTitle>
+                          </CardHeader>
+                        </Card>
+                        <Card className="rounded-none border-dashed">
+                          <CardHeader className="pb-2">
+                            <CardDescription className="text-red-700">Perdendo</CardDescription>
+                            <CardTitle className="text-lg text-red-700">
+                              {mlCatalogCompetitionSummary?.competing ?? 0}
+                            </CardTitle>
+                          </CardHeader>
+                        </Card>
+                        <Card className="rounded-none border-dashed">
+                          <CardHeader className="pb-2">
+                            <CardDescription className="text-slate-700">Listado</CardDescription>
+                            <CardTitle className="text-lg text-slate-700">
+                              {mlCatalogCompetitionSummary?.listed ?? 0}
+                            </CardTitle>
+                          </CardHeader>
+                        </Card>
+                      </div>
+
+                      <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-6">
+                        <Input
+                          placeholder="Buscar por titulo, item ou catalogo..."
+                          value={mlCatalogSearchTerm}
+                          onChange={(event) => setMlCatalogSearchTerm(event.target.value)}
+                          className="xl:col-span-2"
+                        />
+                        <Select value={mlCatalogStatusFilter} onValueChange={setMlCatalogStatusFilter}>
+                          <SelectTrigger>
+                            <SelectValue placeholder="Todos os status" />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="all">Todos</SelectItem>
+                            <SelectItem value="winning">Ganhando</SelectItem>
+                            <SelectItem value="sharing_first_place">Dividindo 1o</SelectItem>
+                            <SelectItem value="competing">Perdendo</SelectItem>
+                            <SelectItem value="listed">Listado</SelectItem>
+                          </SelectContent>
+                        </Select>
+                        <Select value={mlCatalogSortBy} onValueChange={setMlCatalogSortBy}>
+                          <SelectTrigger>
+                            <SelectValue placeholder="Ordenar" />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="difference_desc">Diferenca de preco (maior)</SelectItem>
+                            <SelectItem value="difference_asc">Diferenca de preco (menor)</SelectItem>
+                            <SelectItem value="price_desc">Maior preco</SelectItem>
+                            <SelectItem value="price_asc">Menor preco</SelectItem>
+                          </SelectContent>
+                        </Select>
+                        <Button variant="outline" onClick={() => void loadMlCatalogCompetition()}>
+                          Recarregar
+                        </Button>
+                        <Button variant="outline" onClick={exportCatalogCompetitionCsv}>
+                          Exportar
+                        </Button>
+                      </div>
+
+                      {mlCatalogCompetitionLoading ? (
+                        <p className="text-sm text-muted-foreground">Carregando competicao de catalogo...</p>
+                      ) : filteredCatalogCompetitionRows.length === 0 ? (
+                        <p className="text-sm text-muted-foreground">
+                          Nenhum item de catalogo encontrado com os filtros atuais.
+                        </p>
                       ) : (
-                        <Table>
-                        <TableHeader>
-                          <TableRow>
-                            <TableHead>Titulo</TableHead>
-                            <TableHead className="w-[140px] text-right">Preco</TableHead>
-                            <TableHead className="w-[130px] text-right">Estoque</TableHead>
-                            <TableHead className="w-[130px]">Status</TableHead>
-                            <TableHead className="w-[220px] text-right">Acoes</TableHead>
-                          </TableRow>
-                        </TableHeader>
-                        <TableBody>
-                          {mlListings.filter((listing) => listing.catalogProductId).map((listing) => (
-                            <TableRow key={listing.id}>
-                              <TableCell>
-                                {editingMlListingId === listing.id ? (
-                                  <Input
-                                    value={mlListingEditForm.title}
-                                    onChange={(event) =>
-                                      setMlListingEditForm((prev) => ({
-                                        ...prev,
-                                        title: event.target.value,
-                                      }))
-                                    }
-                                  />
-                                ) : (
-                                  <div className="flex items-start gap-3">
-                                    <div className="h-14 w-14 overflow-hidden rounded border bg-muted">
-                                      {listing.thumbnail ? (
-                                        <img
-                                          src={listing.thumbnail}
-                                          alt={listing.title}
-                                          className="h-full w-full object-cover"
-                                          loading="lazy"
-                                        />
-                                      ) : (
-                                        <div className="flex h-full w-full items-center justify-center text-[10px] text-muted-foreground">
-                                          Sem imagem
-                                        </div>
-                                      )}
+                        <div className="space-y-2">
+                          {filteredCatalogCompetitionRows.map((row) => {
+                            const listing = mlListingById.get(row.itemId)
+                            const product = productMapByMlItemId.get(row.itemId)
+                            const unitCost = product?.unitCost ?? 0
+                            const difference = row.price - (row.winnerPrice ?? row.price)
+                            const estimatedProfitPerSale = row.price - unitCost
+                            return (
+                              <Card key={row.itemId} className="rounded-none border">
+                                <CardContent className="pt-4">
+                                  <div className="flex flex-wrap items-start justify-between gap-3">
+                                    <div className="flex items-start gap-3">
+                                      <div className="h-12 w-12 overflow-hidden rounded border bg-muted">
+                                        {row.thumbnail ? (
+                                          <img
+                                            src={row.thumbnail}
+                                            alt={row.title}
+                                            className="h-full w-full object-cover"
+                                            loading="lazy"
+                                          />
+                                        ) : (
+                                          <div className="flex h-full w-full items-center justify-center text-[10px] text-muted-foreground">
+                                            Sem imagem
+                                          </div>
+                                        )}
+                                      </div>
+                                      <div>
+                                        <p className="font-medium">{row.title}</p>
+                                        <p className="text-xs text-muted-foreground">
+                                          {row.catalogProductId ?? row.itemId}
+                                        </p>
+                                      </div>
                                     </div>
-                                    <div className="space-y-1">
-                                      <p className="font-medium">{listing.title}</p>
-                                      {listing.permalink && (
-                                        <a
-                                          href={listing.permalink}
-                                          target="_blank"
-                                          rel="noreferrer"
-                                          className="text-xs text-primary underline-offset-2 hover:underline"
-                                        >
-                                          Ver anuncio no Mercado Livre
-                                        </a>
-                                      )}
+                                    <Badge
+                                      variant="outline"
+                                      className={catalogCompetitionBadgeClass(row.competitionStatus)}
+                                    >
+                                      {catalogCompetitionLabel(row.competitionStatus)}
+                                    </Badge>
+                                  </div>
+
+                                  <div className="mt-3 grid gap-3 text-sm md:grid-cols-4">
+                                    <div>
+                                      <p className="text-muted-foreground">Seu Preco</p>
+                                      <p className="font-semibold">{formatCurrency(row.price)}</p>
+                                    </div>
+                                    <div>
+                                      <p className="text-muted-foreground">Preco Ganhador</p>
+                                      <p className="font-semibold">
+                                        {row.winnerPrice !== null ? formatCurrency(row.winnerPrice) : "-"}
+                                      </p>
+                                    </div>
+                                    <div>
+                                      <p className="text-muted-foreground">Diferenca</p>
+                                      <p
+                                        className={cn(
+                                          "font-semibold",
+                                          difference > 0
+                                            ? "text-red-700"
+                                            : difference < 0
+                                              ? "text-emerald-700"
+                                              : "text-muted-foreground",
+                                        )}
+                                      >
+                                        {difference > 0 ? "+" : ""}
+                                        {formatCurrency(difference)}
+                                      </p>
+                                    </div>
+                                    <div>
+                                      <p className="text-muted-foreground">Lucro/Venda</p>
+                                      <p
+                                        className={cn(
+                                          "font-semibold",
+                                          estimatedProfitPerSale >= 0 ? "text-emerald-700" : "text-red-700",
+                                        )}
+                                      >
+                                        ~ {formatCurrency(estimatedProfitPerSale)}
+                                      </p>
                                     </div>
                                   </div>
-                                )}
-                              </TableCell>
-                              <TableCell className="text-right">
-                                {editingMlListingId === listing.id ? (
-                                  <Input
-                                    type="number"
-                                    min="0"
-                                    step="0.01"
-                                    value={mlListingEditForm.price}
-                                    onChange={(event) =>
-                                      setMlListingEditForm((prev) => ({
-                                        ...prev,
-                                        price: event.target.value,
-                                      }))
-                                    }
-                                  />
-                                ) : (
-                                  formatCurrency(listing.price)
-                                )}
-                              </TableCell>
-                              <TableCell className="text-right">
-                                {editingMlListingId === listing.id ? (
-                                  <Input
-                                    type="number"
-                                    min="0"
-                                    step="1"
-                                    value={mlListingEditForm.availableQuantity}
-                                    onChange={(event) =>
-                                      setMlListingEditForm((prev) => ({
-                                        ...prev,
-                                        availableQuantity: event.target.value,
-                                      }))
-                                    }
-                                  />
-                                ) : (
-                                  listing.available_quantity
-                                )}
-                              </TableCell>
-                              <TableCell>
-                                {editingMlListingId === listing.id ? (
-                                  <Select
-                                    value={mlListingEditForm.status}
-                                    onValueChange={(value) =>
-                                      setMlListingEditForm((prev) => ({
-                                        ...prev,
-                                        status: value as "active" | "paused" | "closed",
-                                      }))
-                                    }
-                                  >
-                                    <SelectTrigger className="w-full">
-                                      <SelectValue placeholder="Status" />
-                                    </SelectTrigger>
-                                    <SelectContent>
-                                      <SelectItem value="active">active</SelectItem>
-                                      <SelectItem value="paused">paused</SelectItem>
-                                      <SelectItem value="closed">closed</SelectItem>
-                                    </SelectContent>
-                                  </Select>
-                                ) : (
-                                  <Badge variant="outline" className={mlStatusBadgeClass(listing.status)}>
-                                    {listing.status}
-                                  </Badge>
-                                )}
-                              </TableCell>
-                              <TableCell className="text-right">
-                                {editingMlListingId === listing.id ? (
-                                  <div className="flex justify-end gap-2">
-                                    <Button size="sm" onClick={() => void saveMlListing(listing.id)}>
-                                      Salvar
-                                    </Button>
-                                    <Button size="sm" variant="ghost" onClick={cancelEditMlListing}>
-                                      Cancelar
-                                    </Button>
-                                  </div>
-                                ) : (
-                                  <div className="flex justify-end gap-2">
-                                    <Button size="sm" variant="outline" onClick={() => startEditMlListing(listing)}>
-                                      Editar
-                                    </Button>
-                                    {listing.status === "active" ? (
+
+                                  <div className="mt-3 flex justify-end gap-2">
+                                    {listing ? (
                                       <Button
                                         size="sm"
-                                        variant="ghost"
-                                        onClick={() => void updateMlListingStatus(listing.id, "paused")}
+                                        variant="outline"
+                                        onClick={() => startEditMlListing(listing)}
                                       >
-                                        Pausar
-                                      </Button>
-                                    ) : listing.status === "paused" ? (
-                                      <Button
-                                        size="sm"
-                                        variant="ghost"
-                                        onClick={() => void updateMlListingStatus(listing.id, "active")}
-                                      >
-                                        Ativar
+                                        Alterar Preco
                                       </Button>
                                     ) : null}
                                     <Button
                                       size="sm"
-                                      variant="ghost"
-                                      onClick={() => void loadMlCatalog(listing.id)}
-                                      disabled={mlCatalogLoadingId === listing.id}
+                                      variant="outline"
+                                      onClick={() => openAnalysis(row.itemId)}
                                     >
-                                      {mlCatalogLoadingId === listing.id
-                                        ? "Buscando..."
-                                        : "Catalogo/vendedores"}
+                                      Abrir Analise
                                     </Button>
                                   </div>
-                                )}
-                              </TableCell>
-                            </TableRow>
-                          ))}
-                        </TableBody>
-                        </Table>
+                                </CardContent>
+                              </Card>
+                            )
+                          })}
+                        </div>
                       )}
 
-                      {mlCatalogData && (
-                        <Card className="mt-4">
-                          <CardHeader>
-                            <CardTitle className="text-base">Catalogo e vendedores</CardTitle>
-                            <CardDescription>
-                              {mlCatalogData.itemTitle}{" "}
-                              {mlCatalogData.catalogProductId
-                                ? `- Catalogo: ${mlCatalogData.catalogProductId}`
-                                : "- Sem catalogo vinculado"}
-                            </CardDescription>
-                          </CardHeader>
-                          <CardContent className="space-y-3">
-                            {mlCatalogData.message && (
-                              <p className="text-sm text-muted-foreground">{mlCatalogData.message}</p>
-                            )}
-                            {mlCatalogData.sellers.length > 0 && (
-                              <div className="space-y-1">
-                                <p className="text-sm font-medium">Vendedores ({mlCatalogData.sellers.length})</p>
-                                <div className="grid gap-1 text-sm">
-                                  {mlCatalogData.sellers.map((seller) => (
-                                    <p key={seller.sellerId} className="text-muted-foreground">
-                                      {seller.sellerNickname} ({seller.listingsCount} anuncio{seller.listingsCount > 1 ? "s" : ""})
-                                    </p>
-                                  ))}
-                                </div>
-                              </div>
-                            )}
-                          </CardContent>
-                        </Card>
-                      )}
                     </CardContent>
                   </Card>
                 )}
@@ -5264,6 +5409,13 @@ export function FinancialDashboard() {
               </Button>
             </CardContent>
           </Card>
+        )}
+
+        {activeModule === "mercadolivre" && analysisItemId && (
+          <AnalysisModal
+            itemId={analysisItemId}
+            onClose={() => setAnalysisItemId(null)}
+          />
         )}
       </section>
     </main>

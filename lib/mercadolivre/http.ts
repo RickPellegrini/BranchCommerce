@@ -7,7 +7,14 @@ export function jsonError(message: string, status = 400, details?: unknown) {
       error: message,
       details,
     },
-    { status },
+    {
+      status,
+      headers: {
+        "Cache-Control": "no-store, no-cache, must-revalidate, proxy-revalidate",
+        Pragma: "no-cache",
+        Expires: "0",
+      },
+    },
   )
 }
 
@@ -17,6 +24,13 @@ export function jsonOk(data: unknown, status = 200) {
       ok: true,
       data,
     },
-    { status },
+    {
+      status,
+      headers: {
+        "Cache-Control": "no-store, no-cache, must-revalidate, proxy-revalidate",
+        Pragma: "no-cache",
+        Expires: "0",
+      },
+    },
   )
 }
