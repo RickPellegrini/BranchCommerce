@@ -292,6 +292,131 @@ function previousMonth(year: number, month1to12: number) {
   return { year, month: month1to12 - 1 }
 }
 
+function toIsoDate(date: Date) {
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(
+    date.getDate(),
+  ).padStart(2, "0")}`
+}
+
+function addDays(base: Date, days: number) {
+  return new Date(base.getFullYear(), base.getMonth(), base.getDate() + days)
+}
+
+function startOfWeekMonday(base: Date) {
+  const day = base.getDay()
+  const diff = day === 0 ? -6 : 1 - day
+  return addDays(base, diff)
+}
+
+function startOfMonth(base: Date) {
+  return new Date(base.getFullYear(), base.getMonth(), 1)
+}
+
+function endOfMonth(base: Date) {
+  return new Date(base.getFullYear(), base.getMonth() + 1, 0)
+}
+
+function getCurrentPeriodRange(period: FinancialPeriod) {
+  const now = new Date()
+  if (period === "day") {
+    const today = toIsoDate(now)
+    return { startDate: today, endDate: today }
+  }
+  if (period === "week") {
+    const start = startOfWeekMonday(now)
+    return { startDate: toIsoDate(start), endDate: toIsoDate(addDays(start, 6)) }
+  }
+  return { startDate: toIsoDate(startOfMonth(now)), endDate: toIsoDate(endOfMonth(now)) }
+}
+
+function toBucketKey(dateIso: string, period: FinancialPeriod) {
+  if (period === "day") return dateIso
+  const date = new Date(`${dateIso}T00:00:00`)
+  if (period === "week") return toIsoDate(startOfWeekMonday(date))
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}`
+}
+
+function bucketLabel(bucketKey: string, period: FinancialPeriod) {
+  if (period === "day") {
+    const date = new Date(`${bucketKey}T00:00:00`)
+    return date.toLocaleDateString("pt-BR", { day: "2-digit", month: "2-digit" })
+  }
+  if (period === "week") {
+    const start = new Date(`${bucketKey}T00:00:00`)
+    const end = addDays(start, 6)
+    return `${start.toLocaleDateString("pt-BR", { day: "2-digit", month: "2-digit" })} - ${end.toLocaleDateString("pt-BR", { day: "2-digit", month: "2-digit" })}`
+  }
+  const [year, month] = bucketKey.split("-").map(Number)
+  const date = new Date(year, (month ?? 1) - 1, 1)
+  return date.toLocaleDateString("pt-BR", { month: "short", year: "2-digit" })
+}
+
+function buildBucketKeys(range: { startDate?: string; endDate?: string }, period: FinancialPeriod) {
+  if (!range.startDate || !range.endDate) return []
+
+  const keys: string[] = []
+  if (period === "day") {
+    let current = new Date(`${range.startDate}T00:00:00`)
+    const end = new Date(`${range.endDate}T00:00:00`)
+    while (current <= end) {
+      keys.push(toIsoDate(current))
+      current = addDays(current, 1)
+    }
+    return keys
+  }
+
+  if (period === "week") {
+    let current = startOfWeekMonday(new Date(`${range.startDate}T00:00:00`))
+    const end = new Date(`${range.endDate}T00:00:00`)
+    while (current <= end) {
+      keys.push(toIsoDate(current))
+      current = addDays(current, 7)
+    }
+    return keys
+  }
+
+  let current = startOfMonth(new Date(`${range.startDate}T00:00:00`))
+  const end = new Date(`${range.endDate}T00:00:00`)
+  while (current <= end) {
+    keys.push(`${current.getFullYear()}-${String(current.getMonth() + 1).padStart(2, "0")}`)
+    current = new Date(current.getFullYear(), current.getMonth() + 1, 1)
+  }
+  return keys
+}
+
+function formatIsoToBrDate(value?: string) {
+  if (!value) return ""
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value)
+  if (!match) return ""
+  return `${match[3]}/${match[2]}/${match[1]}`
+}
+
+function normalizeBrDateInput(raw: string) {
+  const digits = raw.replace(/\D/g, "").slice(0, 8)
+  if (digits.length <= 2) return digits
+  if (digits.length <= 4) return `${digits.slice(0, 2)}/${digits.slice(2)}`
+  return `${digits.slice(0, 2)}/${digits.slice(2, 4)}/${digits.slice(4)}`
+}
+
+function parseBrDateToIso(value: string) {
+  const normalized = value.trim()
+  const match = /^(\d{2})\/(\d{2})\/(\d{4})$/.exec(normalized)
+  if (!match) return null
+  const day = Number(match[1])
+  const month = Number(match[2])
+  const year = Number(match[3])
+  if (month < 1 || month > 12 || day < 1 || day > 31) return null
+  const date = new Date(year, month - 1, day)
+  if (
+    date.getFullYear() !== year ||
+    date.getMonth() !== month - 1 ||
+    date.getDate() !== day
+  ) {
+    return null
+  }
+  return `${year}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`
+}
+
 function calculateDreSnapshot({
   orders,
   productByMlItemId,
@@ -474,28 +599,82 @@ type DreSnapshot = {
 function buildSalesEvolutionData(
   transactions: FinancialTransaction[],
   movements: StockMovement[],
-  days = 7,
+  options: {
+    period: FinancialPeriod
+    range: { startDate?: string; endDate?: string }
+  },
 ): SalesEvolutionPoint[] {
-  const points: SalesEvolutionPoint[] = []
-  const now = new Date()
-  for (let index = days - 1; index >= 0; index -= 1) {
-    const date = new Date(now.getFullYear(), now.getMonth(), now.getDate() - index)
-    const key = date.toISOString().slice(0, 10)
-    const label = date.toLocaleDateString("pt-BR", { day: "2-digit", month: "2-digit" })
-    const dayTransactions = transactions.filter((item) => item.date === key)
-    const revenue = dayTransactions
-      .filter((item) => item.kind === "income" && item.origin === "Venda online")
-      .reduce((total, item) => total + item.amount, 0)
-    const profit = dayTransactions.reduce(
-      (total, item) => total + (item.kind === "income" ? item.amount : -item.amount),
-      0,
-    )
-    const orders = movements.filter((item) => item.type === "sale" && item.date === key).length
+  const bucketKeys = buildBucketKeys(options.range, options.period)
+  const buckets = new Map<string, SalesEvolutionPoint>(
+    bucketKeys.map((key) => [
+      key,
+      { key, label: bucketLabel(key, options.period), revenue: 0, profit: 0, orders: 0 },
+    ]),
+  )
 
-    points.push({ key, label, revenue, profit, orders })
+  for (const transaction of transactions) {
+    const key = toBucketKey(transaction.date, options.period)
+    const bucket = buckets.get(key)
+    if (!bucket) continue
+    if (transaction.kind === "income" && transaction.origin === "Venda online") {
+      bucket.revenue += transaction.amount
+    }
+    bucket.profit += transaction.kind === "income" ? transaction.amount : -transaction.amount
   }
 
-  return points
+  for (const movement of movements) {
+    if (movement.type !== "sale") continue
+    const key = toBucketKey(movement.date, options.period)
+    const bucket = buckets.get(key)
+    if (!bucket) continue
+    bucket.orders += 1
+  }
+
+  return Array.from(buckets.values())
+}
+
+function buildOrdersSalesEvolutionData(
+  orders: MlOrder[],
+  productByMlItemId: Map<string, StockProduct>,
+  options: {
+    period: FinancialPeriod
+    range: { startDate?: string; endDate?: string }
+  },
+): SalesEvolutionPoint[] {
+  const bucketKeys = buildBucketKeys(options.range, options.period)
+  const buckets = new Map<string, SalesEvolutionPoint>(
+    bucketKeys.map((key) => [
+      key,
+      { key, label: bucketLabel(key, options.period), revenue: 0, profit: 0, orders: 0 },
+    ]),
+  )
+
+  for (const order of orders) {
+    const status = order.status.toLowerCase()
+    if (status === "cancelled") continue
+    const orderDate = order.dateCreated.slice(0, 10)
+    const key = toBucketKey(orderDate, options.period)
+    const bucket = buckets.get(key)
+    if (!bucket) continue
+
+    const fallbackProductCost = order.items.reduce((sum, item) => {
+      const mappedProduct = productByMlItemId.get(item.id)
+      const unitCost = mappedProduct?.unitCost ?? 0
+      return sum + unitCost * item.quantity
+    }, 0)
+    const productCost = order.productAmount > 0 ? order.productAmount : fallbackProductCost
+    const shippingCost = Math.max(0, order.shippingCostAmount)
+    const taxes = Math.max(0, order.taxesAmount)
+    const mlFee = Math.max(0, order.mlFeeAmount)
+    const totalCosts = productCost + shippingCost + taxes + mlFee
+    const revenue = Math.max(0, order.totalAmount)
+
+    bucket.revenue += revenue
+    bucket.profit += revenue - totalCosts
+    bucket.orders += 1
+  }
+
+  return Array.from(buckets.values())
 }
 
 function buildOrdersFinancialSummary(
@@ -541,6 +720,51 @@ function buildOrdersFinancialSummary(
       soldItems: 0,
     },
   )
+}
+
+function buildOrdersCostComposition(
+  orders: MlOrder[],
+  productByMlItemId: Map<string, StockProduct>,
+  range?: { startDate?: string; endDate?: string },
+) {
+  const filteredOrders = orders.filter((order) => {
+    const normalized = order.status.toLowerCase()
+    if (normalized === "cancelled") return false
+    const orderDate = order.dateCreated.slice(0, 10)
+    if (range?.startDate && orderDate < range.startDate) return false
+    if (range?.endDate && orderDate > range.endDate) return false
+    return true
+  })
+
+  const totals = {
+    products: 0,
+    fees: 0,
+    shipping: 0,
+    taxes: 0,
+  }
+
+  for (const order of filteredOrders) {
+    const estimatedFallbackProductCost = order.items.reduce((sum, item) => {
+      const mappedProduct = productByMlItemId.get(item.id)
+      const unitCost = mappedProduct?.unitCost ?? 0
+      return sum + unitCost * item.quantity
+    }, 0)
+
+    totals.products += Math.max(
+      0,
+      order.productAmount > 0 ? order.productAmount : estimatedFallbackProductCost,
+    )
+    totals.fees += Math.max(0, order.mlFeeAmount)
+    totals.shipping += Math.max(0, order.shippingCostAmount)
+    totals.taxes += Math.max(0, order.taxesAmount)
+  }
+
+  return [
+    { categoryName: "Produtos", total: totals.products },
+    { categoryName: "Taxas ML", total: totals.fees },
+    { categoryName: "Envio", total: totals.shipping },
+    { categoryName: "Impostos", total: totals.taxes },
+  ].filter((item) => item.total > 0)
 }
 
 function finalizeAbcRows(
@@ -727,7 +951,10 @@ export function FinancialDashboard() {
   const [activeMlSection, setActiveMlSection] = useState<MlSection>("listings")
   const [activeMlSidebarGroup, setActiveMlSidebarGroup] = useState<MlSidebarGroup>("anuncios")
   const [period, setPeriod] = useState<FinancialPeriod>("month")
-  const [filters, setFilters] = useState<TransactionFilters>({ kind: "all" })
+  const [filters, setFilters] = useState<TransactionFilters>(() => ({
+    kind: "all",
+    ...getCurrentPeriodRange("month"),
+  }))
   const [isSetupDone, setIsSetupDone] = useState(false)
   const [launchSaving, setLaunchSaving] = useState(false)
   const [launchFeedback, setLaunchFeedback] = useState<{
@@ -1187,13 +1414,26 @@ export function FinancialDashboard() {
     () => filteredMovements.filter((movement) => movement.type === "sale").length,
     [filteredMovements],
   )
-  const costComposition = useMemo(
-    () => expensesByCategory(filteredTransactions, categories).slice(0, 5),
-    [categories, filteredTransactions],
-  )
-  const salesEvolution = useMemo(
-    () => buildSalesEvolutionData(filteredTransactions, filteredMovements, 7),
-    [filteredMovements, filteredTransactions],
+  const costComposition = useMemo(() => {
+    const fromOrders = buildOrdersCostComposition(mlOrders, productMapByMlItemId, {
+      startDate: filters.startDate,
+      endDate: filters.endDate,
+    })
+    if (fromOrders.length > 0) {
+      return fromOrders
+    }
+    return expensesByCategory(filteredTransactions, categories)
+  }, [
+    categories,
+    filteredTransactions,
+    filters.endDate,
+    filters.startDate,
+    mlOrders,
+    productMapByMlItemId,
+  ])
+  const costCompositionTotal = useMemo(
+    () => costComposition.reduce((sum, item) => sum + item.total, 0),
+    [costComposition],
   )
   const ordersFinancialSummary = useMemo(
     () =>
@@ -1204,6 +1444,27 @@ export function FinancialDashboard() {
     [filters.endDate, filters.startDate, mlOrders, productMapByMlItemId],
   )
   const hasOrdersFinancialData = ordersFinancialSummary.ordersCount > 0
+  const salesEvolution = useMemo(() => {
+    const options = {
+      period: "day" as FinancialPeriod,
+      range: {
+        startDate: filters.startDate,
+        endDate: filters.endDate,
+      },
+    }
+    if (hasOrdersFinancialData) {
+      return buildOrdersSalesEvolutionData(mlOrders, productMapByMlItemId, options)
+    }
+    return buildSalesEvolutionData(filteredTransactions, filteredMovements, options)
+  }, [
+    filteredMovements,
+    filteredTransactions,
+    filters.endDate,
+    filters.startDate,
+    hasOrdersFinancialData,
+    mlOrders,
+    productMapByMlItemId,
+  ])
   const salesInFilterFinal = hasOrdersFinancialData ? ordersFinancialSummary.grossRevenue : salesInFilter
   const expensesInFilterFinal = hasOrdersFinancialData ? ordersFinancialSummary.totalCosts : expensesInFilter
   const operatingResultFinal = hasOrdersFinancialData ? ordersFinancialSummary.netProfit : operatingResult
@@ -2303,8 +2564,18 @@ export function FinancialDashboard() {
                 <CardTitle>Filtros financeiros</CardTitle>
               </CardHeader>
               <CardContent className="grid gap-3 md:grid-cols-4">
-                <Input type="date" value={filters.startDate ?? ""} onChange={(event) => setFilters((prev) => ({ ...prev, startDate: event.target.value || undefined }))} />
-                <Input type="date" value={filters.endDate ?? ""} onChange={(event) => setFilters((prev) => ({ ...prev, endDate: event.target.value || undefined }))} />
+                <BrDateInput
+                  value={filters.startDate ?? ""}
+                  onValueChange={(value) =>
+                    setFilters((prev) => ({ ...prev, startDate: value || undefined }))
+                  }
+                />
+                <BrDateInput
+                  value={filters.endDate ?? ""}
+                  onValueChange={(value) =>
+                    setFilters((prev) => ({ ...prev, endDate: value || undefined }))
+                  }
+                />
                 <Select value={filters.categoryId ?? "all-categories"} onValueChange={(value) => setFilters((prev) => ({ ...prev, categoryId: value === "all-categories" ? undefined : value }))}>
                   <SelectTrigger className="w-full"><SelectValue placeholder="Categoria" /></SelectTrigger>
                   <SelectContent>
@@ -2343,24 +2614,22 @@ export function FinancialDashboard() {
                       <div className="rounded-md border bg-muted/20 p-2">
                         <div className="flex items-center gap-2">
                           <CalendarDays className="size-4 text-muted-foreground" />
-                          <Input
-                            type="date"
+                          <BrDateInput
                             value={filters.startDate ?? ""}
-                            onChange={(event) =>
+                            onValueChange={(value) =>
                               setFilters((prev) => ({
                                 ...prev,
-                                startDate: event.target.value || undefined,
+                                startDate: value || undefined,
                               }))
                             }
                           />
                           <span className="text-xs text-muted-foreground">ate</span>
-                          <Input
-                            type="date"
+                          <BrDateInput
                             value={filters.endDate ?? ""}
-                            onChange={(event) =>
+                            onValueChange={(value) =>
                               setFilters((prev) => ({
                                 ...prev,
-                                endDate: event.target.value || undefined,
+                                endDate: value || undefined,
                               }))
                             }
                           />
@@ -2496,7 +2765,7 @@ export function FinancialDashboard() {
                             <CardDescription className="uppercase tracking-wide">Evolucao</CardDescription>
                             <CardTitle>Evolucao de Vendas</CardTitle>
                             <CardDescription>
-                              Acompanhe o desempenho diario das vendas.
+                              Acompanhe o desempenho por data no intervalo filtrado.
                             </CardDescription>
                           </div>
                           <Button size="sm" variant="outline">
@@ -2514,7 +2783,7 @@ export function FinancialDashboard() {
                           <CardDescription>Distribuicao dos custos</CardDescription>
                         </CardHeader>
                         <CardContent>
-                          <CostCompositionChart items={costComposition} total={expensesInFilterFinal} />
+                          <CostCompositionChart items={costComposition} total={costCompositionTotal} />
                         </CardContent>
                       </Card>
                     </div>
@@ -2700,24 +2969,22 @@ export function FinancialDashboard() {
                       <div className="rounded-md border bg-muted/20 p-2">
                         <div className="flex items-center gap-2">
                           <CalendarDays className="size-4 text-muted-foreground" />
-                          <Input
-                            type="date"
+                          <BrDateInput
                             value={filters.startDate ?? ""}
-                            onChange={(event) =>
+                            onValueChange={(value) =>
                               setFilters((prev) => ({
                                 ...prev,
-                                startDate: event.target.value || undefined,
+                                startDate: value || undefined,
                               }))
                             }
                           />
                           <span className="text-xs text-muted-foreground">ate</span>
-                          <Input
-                            type="date"
+                          <BrDateInput
                             value={filters.endDate ?? ""}
-                            onChange={(event) =>
+                            onValueChange={(value) =>
                               setFilters((prev) => ({
                                 ...prev,
-                                endDate: event.target.value || undefined,
+                                endDate: value || undefined,
                               }))
                             }
                           />
@@ -3201,11 +3468,10 @@ export function FinancialDashboard() {
                       <CalendarDays className="size-3.5" />
                       Data
                     </p>
-                    <Input
-                      type="date"
+                    <BrDateInput
                       className="border-primary/20 bg-background"
                       value={launchForm.date}
-                      onChange={(event) => setLaunchForm((prev) => ({ ...prev, date: event.target.value }))}
+                      onValueChange={(value) => setLaunchForm((prev) => ({ ...prev, date: value }))}
                     />
                   </div>
                   <div className="space-y-1 md:col-span-2">
@@ -3492,15 +3758,13 @@ export function FinancialDashboard() {
                         </SelectContent>
                       </Select>
                       <div className="grid grid-cols-2 gap-1">
-                        <Input
-                          type="date"
+                        <BrDateInput
                           value={historyStartDate}
-                          onChange={(event) => setHistoryStartDate(event.target.value)}
+                          onValueChange={setHistoryStartDate}
                         />
-                        <Input
-                          type="date"
+                        <BrDateInput
                           value={historyEndDate}
-                          onChange={(event) => setHistoryEndDate(event.target.value)}
+                          onValueChange={setHistoryEndDate}
                         />
                       </div>
                     </div>
@@ -3572,11 +3836,10 @@ export function FinancialDashboard() {
                           setTransactionEditForm((prev) => ({ ...prev, amount: event.target.value }))
                         }
                       />
-                      <Input
-                        type="date"
+                      <BrDateInput
                         value={transactionEditForm.date}
-                        onChange={(event) =>
-                          setTransactionEditForm((prev) => ({ ...prev, date: event.target.value }))
+                        onValueChange={(value) =>
+                          setTransactionEditForm((prev) => ({ ...prev, date: value }))
                         }
                       />
                       <Select
@@ -4028,7 +4291,10 @@ export function FinancialDashboard() {
                       </SelectContent>
                     </Select>
                     <Input type="number" placeholder="Quantidade" value={movementForm.quantity} onChange={(event) => setMovementForm((prev) => ({ ...prev, quantity: event.target.value }))} />
-                    <Input type="date" value={movementForm.date} onChange={(event) => setMovementForm((prev) => ({ ...prev, date: event.target.value }))} />
+                    <BrDateInput
+                      value={movementForm.date}
+                      onValueChange={(value) => setMovementForm((prev) => ({ ...prev, date: value }))}
+                    />
                     {movementForm.type === "sale" && (
                       <Input type="number" placeholder="Preco unitario da venda" value={movementForm.unitPrice} onChange={(event) => setMovementForm((prev) => ({ ...prev, unitPrice: event.target.value }))} />
                     )}
@@ -4457,11 +4723,10 @@ export function FinancialDashboard() {
                         <CardDescription>Monitore pedidos com filtros e detalhes operacionais.</CardDescription>
                       </CardHeader>
                       <CardContent className="grid gap-3 md:grid-cols-2 xl:grid-cols-7">
-                        <Input
-                          type="date"
+                        <BrDateInput
                           value={mlOrdersPeriodDate}
-                          onChange={(event) => setMlOrdersPeriodDate(event.target.value)}
-                          aria-label="Selecionar periodo"
+                          onValueChange={setMlOrdersPeriodDate}
+                          ariaLabel="Selecionar periodo"
                         />
                         <Input
                           placeholder="Buscar pedido..."
@@ -5010,79 +5275,160 @@ function FinancialEvolutionChart({ data }: { data: SalesEvolutionPoint[] }) {
     return <p className="text-sm text-muted-foreground">Sem dados suficientes para montar o grafico.</p>
   }
 
-  const width = 640
-  const height = 230
-  const paddingX = 28
-  const paddingY = 24
-  const chartWidth = width - paddingX * 2
-  const chartHeight = height - paddingY * 2
-  const maxValue = Math.max(
-    ...data.map((item) => Math.max(item.revenue, item.profit, item.orders)),
-    1,
-  )
+  const width = 760
+  const height = 280
+  const paddingLeft = 58
+  const paddingRight = 48
+  const paddingTop = 18
+  const paddingBottom = 38
+  const chartWidth = width - paddingLeft - paddingRight
+  const chartHeight = height - paddingTop - paddingBottom
 
-  const pointFor = (value: number, index: number) => {
-    const x = paddingX + (index / Math.max(1, data.length - 1)) * chartWidth
-    const y = paddingY + (1 - value / maxValue) * chartHeight
-    return { x, y }
-  }
+  const revenueMax = Math.max(...data.map((item) => item.revenue), 1)
+  const profitMax = Math.max(...data.map((item) => Math.max(0, item.profit)), 1)
+  const moneyMax = Math.max(revenueMax, profitMax, 1)
+  const ordersMax = Math.max(...data.map((item) => item.orders), 1)
 
-  const toPolyline = (values: number[]) =>
+  const xForIndex = (index: number) =>
+    paddingLeft + (index / Math.max(1, data.length - 1)) * chartWidth
+  const yForMoney = (value: number) => paddingTop + (1 - Math.max(0, value) / moneyMax) * chartHeight
+  const yForOrders = (value: number) =>
+    paddingTop + (1 - Math.max(0, value) / Math.max(1, ordersMax)) * chartHeight
+
+  const toPolyline = (values: number[], yFn: (v: number) => number) =>
     values
-      .map((value, index) => {
-        const point = pointFor(value, index)
-        return `${point.x},${point.y}`
-      })
+      .map((value, index) => `${xForIndex(index)},${yFn(value)}`)
       .join(" ")
 
-  const revenuePoints = toPolyline(data.map((item) => item.revenue))
-  const profitPoints = toPolyline(data.map((item) => Math.max(0, item.profit)))
-  const ordersPoints = toPolyline(data.map((item) => item.orders))
-  const revenueArea =
-    `${paddingX},${height - paddingY} ` +
-    revenuePoints +
-    ` ${paddingX + chartWidth},${height - paddingY}`
+  const revenueValues = data.map((item) => item.revenue)
+  const profitValues = data.map((item) => item.profit)
+  const ordersValues = data.map((item) => item.orders)
+
+  const revenuePoints = toPolyline(revenueValues, yForMoney)
+  const profitPoints = toPolyline(profitValues, yForMoney)
+  const revenueArea = `${paddingLeft},${paddingTop + chartHeight} ${revenuePoints} ${paddingLeft + chartWidth},${paddingTop + chartHeight}`
+  const yTicks = [0, 0.25, 0.5, 0.75, 1]
+  const barStep = chartWidth / Math.max(1, data.length)
+  const barWidth = Math.max(8, Math.min(20, barStep * 0.45))
 
   return (
     <div className="space-y-3">
-      <div className="h-[230px] rounded-none border border-border bg-muted/10 p-2">
+      <div className="h-[280px] rounded-none border border-border bg-muted/10 p-2">
         <svg viewBox={`0 0 ${width} ${height}`} className="h-full w-full">
-          <polygon points={revenueArea} fill="rgba(249, 115, 22, 0.15)" />
-          <polyline points={revenuePoints} fill="none" stroke="#f97316" strokeWidth="3" />
-          <polyline points={profitPoints} fill="none" stroke="#fb923c" strokeWidth="2.5" />
-          <polyline
-            points={ordersPoints}
-            fill="none"
-            stroke="#f59e0b"
-            strokeWidth="2"
-            strokeDasharray="5 5"
-          />
-          {data.map((item, index) => {
-            const point = pointFor(item.revenue, index)
-            return <circle key={item.key} cx={point.x} cy={point.y} r="3.5" fill="#f97316" />
+          {yTicks.map((tick) => {
+            const y = paddingTop + (1 - tick) * chartHeight
+            const moneyValue = moneyMax * tick
+            const ordersValue = Math.round(ordersMax * tick)
+            return (
+              <g key={`ytick-${tick}`}>
+                <line
+                  x1={paddingLeft}
+                  y1={y}
+                  x2={paddingLeft + chartWidth}
+                  y2={y}
+                  stroke="rgba(148,163,184,0.28)"
+                  strokeDasharray="3 3"
+                />
+                <text
+                  x={paddingLeft - 10}
+                  y={y + 4}
+                  textAnchor="end"
+                  fontSize="10"
+                  fill="rgb(100 116 139)"
+                >
+                  {formatCurrency(moneyValue)}
+                </text>
+                <text
+                  x={paddingLeft + chartWidth + 8}
+                  y={y + 4}
+                  textAnchor="start"
+                  fontSize="10"
+                  fill="rgb(100 116 139)"
+                >
+                  {ordersValue}
+                </text>
+              </g>
+            )
           })}
+
+          <line
+            x1={paddingLeft}
+            y1={paddingTop + chartHeight}
+            x2={paddingLeft + chartWidth}
+            y2={paddingTop + chartHeight}
+            stroke="rgba(100,116,139,0.55)"
+          />
+
+          {ordersValues.map((value, index) => {
+            const xCenter = xForIndex(index)
+            const y = yForOrders(value)
+            const h = paddingTop + chartHeight - y
+            return (
+              <rect
+                key={`order-bar-${data[index]?.key ?? index}`}
+                x={xCenter - barWidth / 2}
+                y={y}
+                width={barWidth}
+                height={Math.max(1, h)}
+                fill="rgba(168,85,247,0.38)"
+                stroke="rgba(168,85,247,0.75)"
+                strokeWidth="0.8"
+                rx="3"
+              />
+            )
+          })}
+
+          <polygon points={revenueArea} fill="rgba(59, 130, 246, 0.12)" />
+          <polyline points={revenuePoints} fill="none" stroke="#2563eb" strokeWidth="3" />
+          <polyline points={profitPoints} fill="none" stroke="#16a34a" strokeWidth="2.5" />
+
+          {revenueValues.map((value, index) => (
+            <circle
+              key={`rev-dot-${data[index]?.key ?? index}`}
+              cx={xForIndex(index)}
+              cy={yForMoney(value)}
+              r="3.2"
+              fill="#2563eb"
+            />
+          ))}
+
+          {profitValues.map((value, index) => (
+            <circle
+              key={`profit-dot-${data[index]?.key ?? index}`}
+              cx={xForIndex(index)}
+              cy={yForMoney(value)}
+              r="2.8"
+              fill="#16a34a"
+            />
+          ))}
+
+          {data.map((item, index) => (
+            <text
+              key={`xlabel-${item.key}`}
+              x={xForIndex(index)}
+              y={height - 8}
+              textAnchor="middle"
+              fontSize="10"
+              fill="rgb(100 116 139)"
+            >
+              {item.label}
+            </text>
+          ))}
         </svg>
       </div>
       <div className="flex flex-wrap items-center gap-3 text-xs">
         <span className="inline-flex items-center gap-1">
-          <span className="h-2 w-2 rounded-full bg-orange-500" />
+          <span className="h-2 w-2 rounded-full bg-blue-600" />
           Receita
         </span>
         <span className="inline-flex items-center gap-1">
-          <span className="h-2 w-2 rounded-full bg-orange-400" />
+          <span className="h-2 w-2 rounded-full bg-emerald-600" />
           Lucro
         </span>
         <span className="inline-flex items-center gap-1">
-          <span className="h-2 w-2 rounded-full bg-amber-500" />
-          Pedidos
+          <span className="h-2 w-2 rounded-full bg-purple-500" />
+          Pedidos (barras)
         </span>
-      </div>
-      <div className="flex flex-wrap gap-2 text-xs text-muted-foreground">
-        {data.map((item) => (
-          <span key={`${item.key}-label`} className="min-w-[44px]">
-            {item.label}
-          </span>
-        ))}
       </div>
     </div>
   )
@@ -5099,7 +5445,20 @@ function CostCompositionChart({
     return <p className="text-sm text-muted-foreground">Sem custos suficientes para compor grafico.</p>
   }
 
-  const palette = ["#f59e0b", "#fb923c", "#f97316", "#ea580c", "#fdba74"]
+  const palette = [
+    "#06b6d4",
+    "#22c55e",
+    "#ef4444",
+    "#8b5cf6",
+    "#3b82f6",
+    "#f97316",
+    "#d946ef",
+    "#14b8a6",
+    "#eab308",
+    "#84cc16",
+    "#fb923c",
+    "#f59e0b",
+  ]
   let accumulated = 0
   const segments = items.map((item, index) => {
     const start = (accumulated / total) * 360
@@ -5109,14 +5468,19 @@ function CostCompositionChart({
   })
 
   return (
-    <div className="grid gap-4 md:grid-cols-[120px_1fr] md:items-center">
-      <div className="mx-auto flex h-28 w-28 items-center justify-center rounded-full border-8 border-background bg-background shadow-inner">
+    <div className="grid gap-4 md:grid-cols-[170px_1fr] md:items-center">
+      <div className="mx-auto flex h-40 w-40 items-center justify-center rounded-full border-8 border-background bg-background shadow-inner">
         <div
-          className="h-24 w-24 rounded-full"
+          className="relative h-36 w-36 rounded-full"
           style={{
             background: `conic-gradient(${segments.join(",")})`,
           }}
-        />
+        >
+          <div className="absolute left-1/2 top-1/2 flex h-20 w-20 -translate-x-1/2 -translate-y-1/2 flex-col items-center justify-center rounded-full bg-background text-center shadow-inner">
+            <span className="text-[10px] uppercase tracking-wide text-muted-foreground">Total</span>
+            <span className="text-xs font-semibold">{formatCurrency(total)}</span>
+          </div>
+        </div>
       </div>
       <div className="space-y-1.5 text-sm">
         {items.map((item, index) => {
@@ -5234,6 +5598,60 @@ function AbcParetoChart({ rows }: { rows: AbcProductRow[] }) {
         </span>
       </div>
     </div>
+  )
+}
+
+function BrDateInput({
+  value,
+  onValueChange,
+  className,
+  ariaLabel,
+}: {
+  value: string
+  onValueChange: (nextIsoDate: string) => void
+  className?: string
+  ariaLabel?: string
+}) {
+  const [displayValue, setDisplayValue] = useState(formatIsoToBrDate(value))
+
+  useEffect(() => {
+    setDisplayValue(formatIsoToBrDate(value))
+  }, [value])
+
+  return (
+    <Input
+      type="text"
+      inputMode="numeric"
+      placeholder="dd/mm/aaaa"
+      className={className}
+      aria-label={ariaLabel}
+      value={displayValue}
+      onChange={(event) => {
+        const nextDisplay = normalizeBrDateInput(event.target.value)
+        setDisplayValue(nextDisplay)
+        if (!nextDisplay) {
+          onValueChange("")
+          return
+        }
+        const parsed = parseBrDateToIso(nextDisplay)
+        if (parsed) {
+          onValueChange(parsed)
+        }
+      }}
+      onBlur={() => {
+        if (!displayValue) {
+          onValueChange("")
+          return
+        }
+        const parsed = parseBrDateToIso(displayValue)
+        if (parsed) {
+          setDisplayValue(formatIsoToBrDate(parsed))
+          onValueChange(parsed)
+          return
+        }
+        setDisplayValue(formatIsoToBrDate(value))
+      }}
+    />
   )
 }
 
