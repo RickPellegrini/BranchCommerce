@@ -18,6 +18,24 @@ import {
   TrendingUp,
 } from "lucide-react"
 
+/** Rotulos em portugues para os criterios da checklist (score interno BranchCommerce, nao e nota do ML). */
+const COMPLETENESS_FIELD_LABELS: Record<string, string> = {
+  catalog_product_id: "Vinculo ao catalogo ML",
+  gtin: "Codigo de barras (GTIN)",
+  brand: "Marca preenchida",
+  model: "Modelo preenchido",
+  "pictures_3+": "3 ou mais fotos",
+  "attributes_5+": "5 ou mais atributos",
+  free_shipping: "Frete gratis",
+  original_price: "Preco promocional (original > atual)",
+  condition_new: "Condicao: novo",
+  stock_positive: "Estoque disponivel",
+}
+
+function completenessFieldLabel(field: string): string {
+  return COMPLETENESS_FIELD_LABELS[field] ?? field.replace(/_/g, " ")
+}
+
 const statusConfig: Record<string, { label: string; bg: string; text: string; border: string }> = {
   linked: { label: "Vinculado ao Catalogo", bg: "bg-emerald-50", text: "text-emerald-700", border: "border-emerald-200" },
   eligible: { label: "Elegivel", bg: "bg-amber-50", text: "text-amber-700", border: "border-amber-200" },
@@ -213,33 +231,45 @@ export function CatalogOverview({ data }: { data: CatalogSection }) {
         {ptw && <PriceToWinCard ptw={ptw} />}
 
         <div className="rounded-xl border bg-white p-4 shadow-sm">
-          <div className="flex items-center gap-2 mb-3">
-            <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-emerald-50">
+          <div className="mb-2 flex items-start gap-2">
+            <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-emerald-50">
               <ShieldCheck className="h-4 w-4 text-emerald-600" />
             </div>
-            <h4 className="text-xs font-bold uppercase tracking-wider text-muted-foreground">Completude</h4>
-            <span className="ml-auto text-lg font-bold">{data.completenessScore}%</span>
+            <div className="min-w-0 flex-1">
+              <div className="flex items-baseline justify-between gap-2">
+                <h4 className="text-xs font-bold uppercase tracking-wider text-muted-foreground">
+                  Qualidade do anuncio
+                </h4>
+                <span className="shrink-0 text-lg font-bold tabular-nums">{data.completenessScore}%</span>
+              </div>
+              <p className="mt-1 text-[11px] leading-snug text-muted-foreground">
+                Checklist interno: o quanto seu anuncio preenche boas praticas (fotos, catalogo, frete,
+                etc.). Nao e pontuacao oficial do Mercado Livre — serve para voce ver o que falta melhorar.
+              </p>
+            </div>
           </div>
-          <div className="w-full bg-gray-100 rounded-full h-2.5 mb-3">
+          <div className="mb-3 h-2.5 w-full rounded-full bg-muted">
             <div
-              className="h-2.5 rounded-full transition-all duration-500"
-              style={{
-                width: `${data.completenessScore}%`,
-                backgroundColor:
-                  data.completenessScore >= 80 ? "#10b981" : data.completenessScore >= 50 ? "#f59e0b" : "#ef4444",
-              }}
+              className={`h-2.5 rounded-full transition-all duration-500 ${
+                data.completenessScore >= 80
+                  ? "bg-primary"
+                  : data.completenessScore >= 50
+                    ? "bg-chart-4"
+                    : "bg-destructive"
+              }`}
+              style={{ width: `${data.completenessScore}%` }}
             />
           </div>
           <div className="grid grid-cols-2 gap-1.5">
             {data.completenessDetails.map((d) => (
               <div key={d.field} className="flex items-center gap-1.5 text-[11px]">
                 {d.present ? (
-                  <CheckCircle className="h-3.5 w-3.5 text-emerald-500 shrink-0" />
+                  <CheckCircle className="h-3.5 w-3.5 shrink-0 text-emerald-500" />
                 ) : (
-                  <XCircle className="h-3.5 w-3.5 text-rose-400 shrink-0" />
+                  <XCircle className="h-3.5 w-3.5 shrink-0 text-rose-400" />
                 )}
-                <span className={d.present ? "text-foreground font-medium" : "text-muted-foreground"}>
-                  {d.field.replace(/_/g, " ")}
+                <span className={d.present ? "font-medium text-foreground" : "text-muted-foreground"}>
+                  {completenessFieldLabel(d.field)}
                 </span>
               </div>
             ))}

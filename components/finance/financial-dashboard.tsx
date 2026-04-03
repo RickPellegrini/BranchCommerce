@@ -12,10 +12,14 @@ import {
   Boxes,
   DollarSign,
   Eye,
+  EyeOff,
   FileText,
   CircleDollarSign,
   Copy,
   Home,
+  ArrowDownLeft,
+  ArrowUpRight,
+  Banknote,
   LineChart,
   MapPin,
   Package,
@@ -80,6 +84,14 @@ import type {
 } from "@/lib/finance/types"
 import { cn } from "@/lib/utils"
 import { AnalysisModal } from "@/features/product-analysis/components/AnalysisModal"
+
+/**
+ * Unicos valores fixos na secao Mercado Pago (Caixa). O restante vem das APIs.
+ * 74,71: so entra no saldo estimado enquanto o extrato nao mostrar debitos.
+ * 250: garantia — exibida em box separada, nao somada ao saldo estimado.
+ */
+const MP_SALDO_ESTIMADO_BASE_MANUAL_BRL = 74.71
+const MP_SALDO_ESTIMADO_GARANTIA_MANUAL_BRL = 250
 
 type ModuleKey = "home" | "finance" | "stock" | "mercadolivre" | "branchhunter"
 type FinanceSection = "overview" | "abc" | "dre" | "expenses" | "categories" | "reports" | "history" | "cashflow"
@@ -321,6 +333,70 @@ function toIsoDate(date: Date) {
   return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(
     date.getDate(),
   ).padStart(2, "0")}`
+}
+
+/** Desloca inicio e fim pelo mesmo numero de meses (comparacao vs mes/ano anterior). */
+function shiftIsoRangeByMonths(startIso: string, endIso: string, monthDelta: number): { start: string; end: string } {
+  const [ys, ms, ds] = startIso.split("-").map(Number)
+  const [ye, me, de] = endIso.split("-").map(Number)
+  const s = new Date(ys, ms - 1 + monthDelta, ds)
+  const e = new Date(ye, me - 1 + monthDelta, de)
+  return { start: toIsoDate(s), end: toIsoDate(e) }
+}
+
+function summarizeInternalFinancialRange(
+  txs: FinancialTransaction[],
+  start: string,
+  end: string,
+): { revenue: number; costs: number; profit: number } {
+  let revenue = 0
+  let costs = 0
+  for (const t of txs) {
+    const d = t.date.slice(0, 10)
+    if (d < start || d > end) continue
+    if (t.kind === "income" && t.origin === "Venda online") revenue += t.amount
+    if (t.kind === "expense") costs += t.amount
+  }
+  return { revenue, costs, profit: revenue - costs }
+}
+
+/** Projeção linear ate o fim do mes civil do ultimo dia do filtro. */
+function computeLinearMonthProjection(
+  startIso: string,
+  endIso: string,
+  revenue: number,
+  costs: number,
+  profit: number,
+): {
+  projectedRevenue: number
+  projectedCosts: number
+  projectedProfit: number
+  daysInRange: number
+  daysInMonth: number
+} | null {
+  const [y1, m1, d1] = startIso.split("-").map(Number)
+  const [y2, m2, d2] = endIso.split("-").map(Number)
+  const sd = new Date(y1, m1 - 1, d1)
+  const ed = new Date(y2, m2 - 1, d2)
+  const daysInRange = Math.max(1, Math.round((ed.getTime() - sd.getTime()) / 86400000) + 1)
+  const daysInMonth = new Date(y2, m2, 0).getDate()
+  if (y1 === y2 && m1 === m2 && d1 === 1 && d2 === daysInMonth) {
+    return null
+  }
+  const factor = daysInMonth / daysInRange
+  return {
+    projectedRevenue: revenue * factor,
+    projectedCosts: costs * factor,
+    projectedProfit: profit * factor,
+    daysInRange,
+    daysInMonth,
+  }
+}
+
+function formatPctVsPrevious(current: number, previous: number): string {
+  if (previous === 0) return current === 0 ? "0%" : "—"
+  const p = ((current - previous) / Math.abs(previous)) * 100
+  return `${p >= 0 ? "+" : ""}${p.toFixed(1)}% vs periodo comparado`
 }
 
 function addDays(base: Date, days: number) {
@@ -1099,6 +1175,12 @@ export function FinancialDashboard() {
   const [financeOrdersSkuFilter, setFinanceOrdersSkuFilter] = useState("")
   const [financeOrdersStatusFilter, setFinanceOrdersStatusFilter] = useState("all")
   const [financeOverviewTab, setFinanceOverviewTab] = useState<"sales" | "ranking">("sales")
+  const [financeOverviewCompare, setFinanceOverviewCompare] = useState<
+    "none" | "prev_month" | "prev_year"
+  >("none")
+  const [financeOverviewProjection, setFinanceOverviewProjection] = useState<"none" | "month">(
+    "none",
+  )
   const [financeAbcMetric, setFinanceAbcMetric] = useState<"revenue" | "quantity" | "profit">(
     "revenue",
   )
@@ -1133,6 +1215,9 @@ export function FinancialDashboard() {
   }>>([])
   const [mpLoading, setMpLoading] = useState(false)
   const [mpError, setMpError] = useState<string | null>(null)
+  const [mpBalanceUnavailable, setMpBalanceUnavailable] = useState(false)
+  const [mpSaldoOculto, setMpSaldoOculto] = useState(false)
+  const [mpExtratoVerTudo, setMpExtratoVerTudo] = useState(false)
 
   type DayGroupUI = {
     date: string
@@ -1162,10 +1247,29 @@ export function FinancialDashboard() {
       const balJson = await balRes.json()
       const txJson = await txRes.json()
 
-      if (balJson.ok) {
-        setMpBalance(balJson.data)
-      } else {
+      if (balJson.ok && balJson.data) {
+        const d = balJson.data as {
+          balanceUnavailable?: boolean
+          availableBalance?: number
+          unavailableBalance?: number
+          totalAmount?: number
+          currencyId?: string
+        }
+        if (d.balanceUnavailable) {
+          setMpBalance(null)
+          setMpBalanceUnavailable(true)
+        } else {
+          setMpBalanceUnavailable(false)
+          setMpBalance({
+            availableBalance: d.availableBalance ?? 0,
+            unavailableBalance: d.unavailableBalance ?? 0,
+            totalAmount: d.totalAmount ?? 0,
+            currencyId: d.currencyId ?? "BRL",
+          })
+        }
+      } else if (!balJson.ok) {
         console.error("[mp] balance error:", balJson.error)
+        setMpBalanceUnavailable(false)
         setMpError(balJson.error ?? "Erro ao buscar saldo")
       }
 
@@ -1214,6 +1318,66 @@ export function FinancialDashboard() {
       setMpFutureLoading(false)
     }
   }, [])
+
+  useEffect(() => {
+    if (activeModule !== "finance" || activeFinanceSection !== "cashflow") return
+    void fetchMpData()
+    void fetchFutureReleases()
+  }, [activeModule, activeFinanceSection, fetchMpData, fetchFutureReleases])
+
+  const mpFutureAPagarTotal = 0
+
+  /** IDs de pagamentos que ainda entram em "lancamentos futuros" (evita somar credito no extrato + net a receber). */
+  const mpFutureReleaseIds = useMemo(
+    () => new Set(mpDayGroups.flatMap((g) => g.releases.map((r) => r.sourceId))),
+    [mpDayGroups],
+  )
+
+  const mpExtratoLiquidoSemDuplicarFuturo = useMemo(() => {
+    let entradas = 0
+    let saidas = 0
+    for (const t of mpTransactions) {
+      if (t.type === "debit") saidas += t.amount
+      else if (!mpFutureReleaseIds.has(t.id)) entradas += t.amount
+    }
+    return entradas - saidas
+  }, [mpTransactions, mpFutureReleaseIds])
+
+  /** Liberacoes com data local = hoje (momento da consulta no navegador); nao soma o restante do mes. */
+  const mpFuturePendingAteHoje = useMemo(() => {
+    const now = new Date()
+    let s = 0
+    for (const g of mpDayGroups) {
+      for (const r of g.releases) {
+        const d = new Date(r.releaseDate)
+        if (
+          d.getFullYear() === now.getFullYear() &&
+          d.getMonth() === now.getMonth() &&
+          d.getDate() === now.getDate()
+        ) {
+          s += r.amount
+        }
+      }
+    }
+    return s
+  }, [mpDayGroups])
+
+  const mpExtratoTemSaida = useMemo(
+    () => mpTransactions.some((t) => t.type === "debit"),
+    [mpTransactions],
+  )
+
+  /** 74,71 so com extrato sem debitos; compras/uso do saldo aparecem no extrato e esse complemento deixa de somar. */
+  const mpSaldoBaseManualEfetivo = mpExtratoTemSaida ? 0 : MP_SALDO_ESTIMADO_BASE_MANUAL_BRL
+
+  const mpSaldoEstimadoSemApi = useMemo(
+    () =>
+      mpExtratoLiquidoSemDuplicarFuturo +
+      mpFuturePendingAteHoje -
+      mpFutureAPagarTotal +
+      mpSaldoBaseManualEfetivo,
+    [mpExtratoLiquidoSemDuplicarFuturo, mpFuturePendingAteHoje, mpSaldoBaseManualEfetivo],
+  )
 
   const financeData = useQuery(
     api.finance.getDashboardData,
@@ -1603,6 +1767,68 @@ export function FinancialDashboard() {
   const operatingMarginFinal =
     salesInFilterFinal > 0 ? (operatingResultFinal / salesInFilterFinal) * 100 : 0
   const ticketMedioFinal = salesCountFinal > 0 ? salesInFilterFinal / salesCountFinal : 0
+
+  const comparePeriodOverview = useMemo(() => {
+    if (financeOverviewCompare === "none" || !filters.startDate || !filters.endDate) return null
+    const monthsBack = financeOverviewCompare === "prev_month" ? -1 : -12
+    const { start, end } = shiftIsoRangeByMonths(filters.startDate, filters.endDate, monthsBack)
+    const subtitle =
+      financeOverviewCompare === "prev_month"
+        ? "Mesmo intervalo, 1 mes antes"
+        : "Mesmo intervalo, 1 ano antes"
+    if (hasOrdersFinancialData) {
+      const s = buildOrdersFinancialSummary(mlOrders, productMapByMlItemId, {
+        startDate: start,
+        endDate: end,
+      })
+      return {
+        revenue: s.grossRevenue,
+        costs: s.totalCosts,
+        profit: s.netProfit,
+        ordersCount: s.ordersCount,
+        rangeLabel: `${formatIsoToBrDate(start)} – ${formatIsoToBrDate(end)}`,
+        subtitle,
+      }
+    }
+    const internal = summarizeInternalFinancialRange(transactions, start, end)
+    return {
+      revenue: internal.revenue,
+      costs: internal.costs,
+      profit: internal.profit,
+      ordersCount: 0,
+      rangeLabel: `${formatIsoToBrDate(start)} – ${formatIsoToBrDate(end)}`,
+      subtitle,
+    }
+  }, [
+    financeOverviewCompare,
+    filters.endDate,
+    filters.startDate,
+    hasOrdersFinancialData,
+    mlOrders,
+    productMapByMlItemId,
+    transactions,
+  ])
+
+  const monthProjectionOverview = useMemo(() => {
+    if (financeOverviewProjection !== "month" || !filters.startDate || !filters.endDate) {
+      return null
+    }
+    return computeLinearMonthProjection(
+      filters.startDate,
+      filters.endDate,
+      salesInFilterFinal,
+      expensesInFilterFinal,
+      operatingResultFinal,
+    )
+  }, [
+    financeOverviewProjection,
+    filters.endDate,
+    filters.startDate,
+    expensesInFilterFinal,
+    operatingResultFinal,
+    salesInFilterFinal,
+  ])
+
   const financeAccountLabel =
     mlConnectionStatus?.connected && mlConnectionStatus.mlNickname
       ? mlConnectionStatus.mlNickname
@@ -2824,40 +3050,66 @@ export function FinancialDashboard() {
 
         {activeModule === "finance" && (
           <>
-            <Card>
-              <CardHeader>
-                <CardTitle>Filtros financeiros</CardTitle>
-              </CardHeader>
-              <CardContent className="grid gap-3 md:grid-cols-4">
-                <BrDateInput
-                  value={filters.startDate ?? ""}
-                  onValueChange={(value) =>
-                    setFilters((prev) => ({ ...prev, startDate: value || undefined }))
-                  }
-                />
-                <BrDateInput
-                  value={filters.endDate ?? ""}
-                  onValueChange={(value) =>
-                    setFilters((prev) => ({ ...prev, endDate: value || undefined }))
-                  }
-                />
-                <Select value={filters.categoryId ?? "all-categories"} onValueChange={(value) => setFilters((prev) => ({ ...prev, categoryId: value === "all-categories" ? undefined : value }))}>
-                  <SelectTrigger className="w-full"><SelectValue placeholder="Categoria" /></SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="all-categories">Todas categorias</SelectItem>
-                    {categories.map((category) => <SelectItem key={category.id} value={category.id}>{category.name}</SelectItem>)}
-                  </SelectContent>
-                </Select>
-                <Select value={filters.kind ?? "all"} onValueChange={(value) => setFilters((prev) => ({ ...prev, kind: value as TransactionFilters["kind"] }))}>
-                  <SelectTrigger className="w-full"><SelectValue placeholder="Tipo" /></SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="all">Entradas e saidas</SelectItem>
-                    <SelectItem value="income">Entradas</SelectItem>
-                    <SelectItem value="expense">Saidas</SelectItem>
-                  </SelectContent>
-                </Select>
-              </CardContent>
-            </Card>
+            {activeFinanceSection !== "overview" && (
+              <Card>
+                <CardHeader>
+                  <CardTitle>Filtros financeiros</CardTitle>
+                </CardHeader>
+                <CardContent className="grid gap-3 md:grid-cols-4">
+                  <BrDateInput
+                    value={filters.startDate ?? ""}
+                    onValueChange={(value) =>
+                      setFilters((prev) => ({ ...prev, startDate: value || undefined }))
+                    }
+                  />
+                  <BrDateInput
+                    value={filters.endDate ?? ""}
+                    onValueChange={(value) =>
+                      setFilters((prev) => ({ ...prev, endDate: value || undefined }))
+                    }
+                  />
+                  <Select
+                    value={filters.categoryId ?? "all-categories"}
+                    onValueChange={(value) =>
+                      setFilters((prev) => ({
+                        ...prev,
+                        categoryId: value === "all-categories" ? undefined : value,
+                      }))
+                    }
+                  >
+                    <SelectTrigger className="w-full">
+                      <SelectValue placeholder="Categoria" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="all-categories">Todas categorias</SelectItem>
+                      {categories.map((category) => (
+                        <SelectItem key={category.id} value={category.id}>
+                          {category.name}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  <Select
+                    value={filters.kind ?? "all"}
+                    onValueChange={(value) =>
+                      setFilters((prev) => ({
+                        ...prev,
+                        kind: value as TransactionFilters["kind"],
+                      }))
+                    }
+                  >
+                    <SelectTrigger className="w-full">
+                      <SelectValue placeholder="Tipo" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="all">Entradas e saidas</SelectItem>
+                      <SelectItem value="income">Entradas</SelectItem>
+                      <SelectItem value="expense">Saidas</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </CardContent>
+              </Card>
+            )}
 
             {activeFinanceSection === "overview" && (
               <section className="space-y-4">
@@ -2875,73 +3127,181 @@ export function FinancialDashboard() {
                     </CardDescription>
                   </CardHeader>
                   <CardContent className="space-y-4">
-                    <div className="grid gap-2 md:grid-cols-2 xl:grid-cols-5">
-                      <div className="rounded-md border bg-muted/20 p-2">
-                        <div className="flex items-center gap-2">
-                          <CalendarDays className="size-4 text-muted-foreground" />
-                          <BrDateInput
-                            value={filters.startDate ?? ""}
-                            onValueChange={(value) =>
-                              setFilters((prev) => ({
-                                ...prev,
-                                startDate: value || undefined,
-                              }))
-                            }
-                          />
-                          <span className="text-xs text-muted-foreground">ate</span>
-                          <BrDateInput
-                            value={filters.endDate ?? ""}
-                            onValueChange={(value) =>
-                              setFilters((prev) => ({
-                                ...prev,
-                                endDate: value || undefined,
-                              }))
-                            }
-                          />
+                    <div className="rounded-lg border border-border/70 bg-muted/15 p-4 shadow-sm">
+                      <div className="mb-3 flex items-center gap-2">
+                        <CalendarDays className="size-4 text-muted-foreground" />
+                        <h3 className="text-sm font-semibold text-foreground">Filtros</h3>
+                        <span className="text-xs text-muted-foreground">
+                          Periodo, movimentacoes e pedidos do Mercado Livre
+                        </span>
+                      </div>
+
+                      <div className="flex flex-col gap-4">
+                        <div>
+                          <p className="mb-2 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+                            Periodo e categorias
+                          </p>
+                          <div className="flex flex-wrap items-end gap-3">
+                            <div className="flex min-w-0 flex-wrap items-center gap-2 rounded-md border border-border/60 bg-background px-2 py-1.5">
+                              <BrDateInput
+                                value={filters.startDate ?? ""}
+                                onValueChange={(value) =>
+                                  setFilters((prev) => ({
+                                    ...prev,
+                                    startDate: value || undefined,
+                                  }))
+                                }
+                              />
+                              <span className="text-xs text-muted-foreground">ate</span>
+                              <BrDateInput
+                                value={filters.endDate ?? ""}
+                                onValueChange={(value) =>
+                                  setFilters((prev) => ({
+                                    ...prev,
+                                    endDate: value || undefined,
+                                  }))
+                                }
+                              />
+                            </div>
+                            <Select
+                              value={filters.categoryId ?? "all-categories"}
+                              onValueChange={(value) =>
+                                setFilters((prev) => ({
+                                  ...prev,
+                                  categoryId: value === "all-categories" ? undefined : value,
+                                }))
+                              }
+                            >
+                              <SelectTrigger className="h-9 w-full min-w-[160px] max-w-[220px]">
+                                <SelectValue placeholder="Categoria" />
+                              </SelectTrigger>
+                              <SelectContent>
+                                <SelectItem value="all-categories">Todas categorias</SelectItem>
+                                {categories.map((category) => (
+                                  <SelectItem key={category.id} value={category.id}>
+                                    {category.name}
+                                  </SelectItem>
+                                ))}
+                              </SelectContent>
+                            </Select>
+                            <Select
+                              value={filters.kind ?? "all"}
+                              onValueChange={(value) =>
+                                setFilters((prev) => ({
+                                  ...prev,
+                                  kind: value as TransactionFilters["kind"],
+                                }))
+                              }
+                            >
+                              <SelectTrigger className="h-9 w-full min-w-[180px] max-w-[240px]">
+                                <SelectValue placeholder="Tipo" />
+                              </SelectTrigger>
+                              <SelectContent>
+                                <SelectItem value="all">Entradas e saidas</SelectItem>
+                                <SelectItem value="income">Entradas</SelectItem>
+                                <SelectItem value="expense">Saidas</SelectItem>
+                              </SelectContent>
+                            </Select>
+                          </div>
+                        </div>
+
+                        <Separator className="bg-border/60" />
+
+                        <div>
+                          <p className="mb-2 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+                            Pedidos (tabela e metricas ML)
+                          </p>
+                          <div className="flex flex-wrap items-end gap-3">
+                            <Input
+                              className="h-9 min-w-[min(100%,200px)] max-w-[240px] flex-1"
+                              placeholder="Titulo do pedido"
+                              value={financeOrdersTitleFilter}
+                              onChange={(event) => setFinanceOrdersTitleFilter(event.target.value)}
+                            />
+                            <Input
+                              className="h-9 min-w-[min(100%,120px)] max-w-[160px] flex-1"
+                              placeholder="SKU"
+                              value={financeOrdersSkuFilter}
+                              onChange={(event) => setFinanceOrdersSkuFilter(event.target.value)}
+                            />
+                            <Select
+                              value={financeOrdersStatusFilter}
+                              onValueChange={setFinanceOrdersStatusFilter}
+                            >
+                              <SelectTrigger className="h-9 min-w-[160px] max-w-[200px]">
+                                <SelectValue placeholder="Status" />
+                              </SelectTrigger>
+                              <SelectContent>
+                                <SelectItem value="all">Todos os status</SelectItem>
+                                <SelectItem value="paid">Pago</SelectItem>
+                                <SelectItem value="ready_to_ship">Pronto para envio</SelectItem>
+                                <SelectItem value="shipped">Enviado</SelectItem>
+                                <SelectItem value="delivered">Entregue</SelectItem>
+                              </SelectContent>
+                            </Select>
+                            <Select value="all-accounts" onValueChange={() => undefined}>
+                              <SelectTrigger className="h-9 min-w-[160px] max-w-[220px]">
+                                <SelectValue placeholder="Conta" />
+                              </SelectTrigger>
+                              <SelectContent>
+                                <SelectItem value="all-accounts">Todas as contas</SelectItem>
+                                <SelectItem value={financeAccountLabel}>{financeAccountLabel}</SelectItem>
+                              </SelectContent>
+                            </Select>
+                          </div>
+                        </div>
+
+                        <div className="flex flex-wrap items-center gap-2 border-t border-border/50 pt-3">
+                          <span className="mr-1 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+                            Comparar / projetar
+                          </span>
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant={financeOverviewCompare === "none" ? "secondary" : "outline"}
+                            className="h-7 rounded-none px-2.5 text-[10px] font-normal"
+                            onClick={() => setFinanceOverviewCompare("none")}
+                          >
+                            Sem comparar
+                          </Button>
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant={financeOverviewCompare === "prev_month" ? "secondary" : "outline"}
+                            className="h-7 rounded-none px-2.5 text-[10px] font-normal"
+                            onClick={() => setFinanceOverviewCompare("prev_month")}
+                          >
+                            vs Mes anterior
+                          </Button>
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant={financeOverviewCompare === "prev_year" ? "secondary" : "outline"}
+                            className="h-7 rounded-none px-2.5 text-[10px] font-normal"
+                            onClick={() => setFinanceOverviewCompare("prev_year")}
+                          >
+                            vs Ano anterior
+                          </Button>
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant={financeOverviewProjection === "none" ? "secondary" : "outline"}
+                            className="h-7 rounded-none px-2.5 text-[10px] font-normal"
+                            onClick={() => setFinanceOverviewProjection("none")}
+                          >
+                            Sem projecao
+                          </Button>
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant={financeOverviewProjection === "month" ? "secondary" : "outline"}
+                            className="h-7 rounded-none px-2.5 text-[10px] font-normal"
+                            onClick={() => setFinanceOverviewProjection("month")}
+                          >
+                            Projecao do mes
+                          </Button>
                         </div>
                       </div>
-                      <Input
-                        placeholder="Filtrar por titulo"
-                        value={financeOrdersTitleFilter}
-                        onChange={(event) => setFinanceOrdersTitleFilter(event.target.value)}
-                      />
-                      <Input
-                        placeholder="Filtrar por SKU"
-                        value={financeOrdersSkuFilter}
-                        onChange={(event) => setFinanceOrdersSkuFilter(event.target.value)}
-                      />
-                      <Select
-                        value={financeOrdersStatusFilter}
-                        onValueChange={setFinanceOrdersStatusFilter}
-                      >
-                        <SelectTrigger>
-                          <SelectValue placeholder="Todos os status" />
-                        </SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="all">Todos os status</SelectItem>
-                          <SelectItem value="paid">Pago</SelectItem>
-                          <SelectItem value="ready_to_ship">Pronto para envio</SelectItem>
-                          <SelectItem value="shipped">Enviado</SelectItem>
-                          <SelectItem value="delivered">Entregue</SelectItem>
-                        </SelectContent>
-                      </Select>
-                      <Select value="all-accounts" onValueChange={() => undefined}>
-                        <SelectTrigger>
-                          <SelectValue placeholder="Todas as contas" />
-                        </SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="all-accounts">Todas as contas</SelectItem>
-                          <SelectItem value={financeAccountLabel}>{financeAccountLabel}</SelectItem>
-                        </SelectContent>
-                      </Select>
-                    </div>
-
-                    <div className="flex flex-wrap gap-2">
-                      <Badge variant="secondary">Sem comparar</Badge>
-                      <Badge variant="outline">vs Mes anterior</Badge>
-                      <Badge variant="outline">vs Ano anterior</Badge>
-                      <Badge variant="outline">Sem projecao</Badge>
-                      <Badge variant="outline">Projecao do mes</Badge>
                     </div>
 
                     <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-5">
@@ -3022,6 +3382,108 @@ export function FinancialDashboard() {
                         <CardContent className="text-xs text-muted-foreground">Valor medio por venda</CardContent>
                       </Card>
                     </div>
+
+                    {(financeOverviewCompare !== "none" || financeOverviewProjection === "month") && (
+                      <div className="space-y-3 rounded-lg border border-border/70 bg-muted/15 px-4 py-3 text-sm">
+                        {financeOverviewCompare !== "none" && comparePeriodOverview && (
+                          <div>
+                            <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                              Comparacao
+                            </p>
+                            <p className="text-xs text-muted-foreground">{comparePeriodOverview.subtitle}</p>
+                            <p className="mt-0.5 text-xs font-medium text-foreground">
+                              {comparePeriodOverview.rangeLabel}
+                            </p>
+                            <div className="mt-2 flex flex-col gap-1.5 text-xs sm:flex-row sm:flex-wrap sm:gap-x-6">
+                              <span>
+                                <span className="text-muted-foreground">Receita comparada: </span>
+                                <span className="font-medium tabular-nums text-foreground">
+                                  {formatCurrency(comparePeriodOverview.revenue)}
+                                </span>
+                                <span className="ml-1.5 text-muted-foreground">
+                                  ({formatPctVsPrevious(salesInFilterFinal, comparePeriodOverview.revenue)})
+                                </span>
+                              </span>
+                              <span>
+                                <span className="text-muted-foreground">Custos comparados: </span>
+                                <span className="font-medium tabular-nums text-foreground">
+                                  {formatCurrency(comparePeriodOverview.costs)}
+                                </span>
+                                <span className="ml-1.5 text-muted-foreground">
+                                  ({formatPctVsPrevious(expensesInFilterFinal, comparePeriodOverview.costs)})
+                                </span>
+                              </span>
+                              <span>
+                                <span className="text-muted-foreground">Lucro comparado: </span>
+                                <span
+                                  className={cn(
+                                    "font-medium tabular-nums",
+                                    valueToneClass(comparePeriodOverview.profit),
+                                  )}
+                                >
+                                  {formatCurrency(comparePeriodOverview.profit)}
+                                </span>
+                                <span className="ml-1.5 text-muted-foreground">
+                                  ({formatPctVsPrevious(operatingResultFinal, comparePeriodOverview.profit)})
+                                </span>
+                              </span>
+                            </div>
+                            {hasOrdersFinancialData && comparePeriodOverview.ordersCount === 0 && (
+                              <p className="mt-2 text-xs text-amber-700 dark:text-amber-500">
+                                Nenhum pedido no periodo de comparacao (valores podem ser zero).
+                              </p>
+                            )}
+                          </div>
+                        )}
+                        {monthProjectionOverview && financeOverviewProjection === "month" && (
+                          <div
+                            className={cn(
+                              financeOverviewCompare !== "none" && comparePeriodOverview
+                                ? "border-t border-border/50 pt-3"
+                                : undefined,
+                            )}
+                          >
+                            <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                              Projecao do mes (linear)
+                            </p>
+                            <p className="text-xs text-muted-foreground">
+                              Base: {monthProjectionOverview.daysInRange} dia(s) no filtro, mes com{" "}
+                              {monthProjectionOverview.daysInMonth} dias. Estimativa se o ritmo se mantiver.
+                            </p>
+                            <div className="mt-2 flex flex-col gap-1.5 text-xs sm:flex-row sm:flex-wrap sm:gap-x-6">
+                              <span>
+                                <span className="text-muted-foreground">Receita projetada: </span>
+                                <span className="font-medium tabular-nums text-foreground">
+                                  {formatCurrency(monthProjectionOverview.projectedRevenue)}
+                                </span>
+                              </span>
+                              <span>
+                                <span className="text-muted-foreground">Custos projetados: </span>
+                                <span className="font-medium tabular-nums text-foreground">
+                                  {formatCurrency(monthProjectionOverview.projectedCosts)}
+                                </span>
+                              </span>
+                              <span>
+                                <span className="text-muted-foreground">Lucro projetado: </span>
+                                <span
+                                  className={cn(
+                                    "font-medium tabular-nums",
+                                    valueToneClass(monthProjectionOverview.projectedProfit),
+                                  )}
+                                >
+                                  {formatCurrency(monthProjectionOverview.projectedProfit)}
+                                </span>
+                              </span>
+                            </div>
+                          </div>
+                        )}
+                        {financeOverviewProjection === "month" && monthProjectionOverview === null && (
+                          <p className="text-xs text-muted-foreground">
+                            O filtro ja cobre o mes civil inteiro — projecao linear nao se aplica.
+                          </p>
+                        )}
+                      </div>
+                    )}
 
                     <div className="grid gap-4 xl:grid-cols-3">
                       <Card className="xl:col-span-2">
@@ -4268,225 +4730,284 @@ export function FinancialDashboard() {
             )}
 
             {activeFinanceSection === "cashflow" && (
-              <section className="space-y-4">
-                <Card>
-                  <CardHeader className="flex flex-row items-center justify-between">
-                    <div>
-                      <CardTitle>Mercado Pago</CardTitle>
-                      <CardDescription>
-                        Saldo e extrato da sua conta Mercado Pago.
-                      </CardDescription>
-                    </div>
-                    <Button
-                      size="sm"
-                      disabled={mpLoading}
-                      onClick={fetchMpData}
-                    >
-                      <RefreshCw className={cn("mr-1 size-4", mpLoading && "animate-spin")} />
-                      {mpLoading ? "Carregando..." : "Atualizar"}
-                    </Button>
-                  </CardHeader>
-                  {mpError && (
-                    <CardContent>
-                      <p className="text-sm text-destructive">{mpError}</p>
-                    </CardContent>
-                  )}
-                </Card>
+              <section className="mx-auto max-w-md space-y-3">
+                <div className="flex items-center justify-between gap-2">
+                  <h2 className="text-lg font-semibold tracking-tight">Mercado Pago</h2>
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    disabled={mpLoading}
+                    onClick={fetchMpData}
+                    className="text-sky-600 hover:text-sky-700"
+                  >
+                    <RefreshCw className={cn("mr-1 size-4", mpLoading && "animate-spin")} />
+                    {mpLoading ? "Atualizando..." : "Atualizar"}
+                  </Button>
+                </div>
 
-                {/* Balance Card */}
-                <Card>
-                  <CardHeader>
-                    <CardDescription>Saldo disponivel</CardDescription>
-                    <CardTitle className="text-3xl text-primary">
-                      {mpBalance
-                        ? formatCurrency(mpBalance.availableBalance)
-                        : "—"}
-                    </CardTitle>
-                    {mpBalance && mpBalance.unavailableBalance > 0 && (
-                      <CardDescription className="text-xs">
-                        Bloqueado: {formatCurrency(mpBalance.unavailableBalance)}
-                      </CardDescription>
-                    )}
-                  </CardHeader>
-                  <CardContent className="flex gap-2">
-                    <Button variant="outline" size="sm" disabled>
-                      <Wallet className="mr-1 size-4" />
-                      Depositar
-                    </Button>
-                    <Button variant="outline" size="sm" disabled>
-                      <CreditCard className="mr-1 size-4" />
-                      Transferir
-                    </Button>
-                  </CardContent>
-                </Card>
+                {mpError && (
+                  <p className="text-sm text-destructive">{mpError}</p>
+                )}
 
-                {/* Transactions List */}
-                <Card>
-                  <CardHeader>
-                    <CardTitle>Extrato</CardTitle>
-                    <CardDescription>
-                      Ultimas {mpTransactions.length} transacoes
-                    </CardDescription>
-                  </CardHeader>
-                  <CardContent>
-                    {mpTransactions.length === 0 && !mpLoading ? (
-                      <p className="text-sm text-muted-foreground">
-                        Nenhuma transacao encontrada. Clique em &quot;Atualizar&quot; para buscar dados do Mercado Pago.
-                      </p>
-                    ) : (
-                      <div className="space-y-2">
-                        {mpTransactions.map((tx) => (
-                          <div
-                            key={tx.id}
-                            className="flex items-center justify-between rounded-lg border p-3"
-                          >
-                            <div className="flex-1 min-w-0">
-                              <p className="truncate text-sm font-medium">
-                                {tx.description || "Transacao"}
-                              </p>
-                              <p className="text-xs text-muted-foreground">
-                                {new Date(tx.date).toLocaleDateString("pt-BR", {
-                                  day: "2-digit",
-                                  month: "short",
-                                  year: "numeric",
-                                  hour: "2-digit",
-                                  minute: "2-digit",
-                                })}
-                              </p>
+                <div className="rounded-xl border border-border/80 bg-muted/50 px-4 py-3 shadow-sm dark:bg-muted/30">
+                  <p className="text-xs text-muted-foreground">Dinheiro em garantia</p>
+                  <p className="text-lg font-semibold tabular-nums">
+                    {formatCurrency(MP_SALDO_ESTIMADO_GARANTIA_MANUAL_BRL)}
+                  </p>
+                </div>
+
+                <Card className="overflow-hidden border-border/80 shadow-sm">
+                  <CardContent className="space-y-5 pt-6 pb-5">
+                    <div className="flex items-start justify-between gap-2">
+                      <div className="min-w-0 flex-1">
+                        {mpBalanceUnavailable ? (
+                          <div>
+                            <div className="flex flex-wrap items-center gap-2">
+                              <p className="text-xs font-medium text-muted-foreground">Saldo estimado</p>
+                              <Badge
+                                variant="secondary"
+                                className="text-[10px] font-normal uppercase tracking-wide"
+                              >
+                                Estimado
+                              </Badge>
                             </div>
-                            <span
-                              className={cn(
-                                "ml-4 whitespace-nowrap text-sm font-semibold",
-                                tx.type === "credit"
-                                  ? "text-emerald-600"
-                                  : "text-red-500",
-                              )}
-                            >
-                              {tx.type === "credit" ? "+" : "-"}{" "}
-                              {formatCurrency(Math.abs(tx.amount))}
-                            </span>
+                            <p className="mt-2 text-4xl font-bold tracking-tight tabular-nums">
+                              {formatCurrency(mpSaldoEstimadoSemApi)}
+                            </p>
+                            <p className="mt-3 text-xs leading-relaxed text-muted-foreground">
+                              A API nao libera o saldo para esta conta; estimativa ate{" "}
+                              <span className="font-medium text-foreground">hoje</span> com extrato e
+                              lancamentos futuros (API). Dinheiro em garantia esta no box acima, separado
+                              deste saldo.{" "}
+                              {mpExtratoTemSaida ? (
+                                <>
+                                  Com saidas no extrato, os{" "}
+                                  <span className="font-medium text-foreground">
+                                    {formatCurrency(MP_SALDO_ESTIMADO_BASE_MANUAL_BRL)}
+                                  </span>{" "}
+                                  de complemento manual nao entram — so o que vem das APIs entra aqui.
+                                </>
+                              ) : (
+                                <>
+                                  Sem debito no extrato ainda, somam-se os{" "}
+                                  <span className="font-medium text-foreground">
+                                    {formatCurrency(MP_SALDO_ESTIMADO_BASE_MANUAL_BRL)}
+                                  </span>{" "}
+                                  nao expostos pela API (unico fixo neste valor).
+                                </>
+                              )}{" "}
+                              Confira no app do Mercado Pago.
+                            </p>
                           </div>
-                        ))}
+                        ) : mpSaldoOculto && mpBalance ? (
+                          <p className="text-4xl font-bold tracking-tight tabular-nums">R$ ••••</p>
+                        ) : (
+                          <p className="text-4xl font-bold tracking-tight tabular-nums">
+                            {mpBalance ? formatCurrency(mpBalance.availableBalance) : "—"}
+                          </p>
+                        )}
+                      </div>
+                      {!mpBalanceUnavailable && mpBalance && (
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="icon"
+                          className="shrink-0 text-sky-600 hover:text-sky-700"
+                          onClick={() => setMpSaldoOculto((v) => !v)}
+                          aria-label={mpSaldoOculto ? "Mostrar saldo" : "Ocultar saldo"}
+                        >
+                          {mpSaldoOculto ? <EyeOff className="size-5" /> : <Eye className="size-5" />}
+                        </Button>
+                      )}
+                    </div>
+
+                    {!mpBalanceUnavailable && (
+                      <div className="grid grid-cols-2 gap-3">
+                        <Button
+                          variant="outline"
+                          disabled
+                          className="h-auto flex-col gap-1 border-sky-200/80 bg-sky-50 py-3 text-sky-900 hover:bg-sky-100 dark:border-sky-900 dark:bg-sky-950/40 dark:text-sky-100"
+                        >
+                          <ArrowDownLeft className="size-5" />
+                          <span className="text-sm font-medium">Depositar</span>
+                        </Button>
+                        <Button
+                          variant="outline"
+                          disabled
+                          className="h-auto flex-col gap-1 border-sky-200/80 bg-sky-50 py-3 text-sky-900 hover:bg-sky-100 dark:border-sky-900 dark:bg-sky-950/40 dark:text-sky-100"
+                        >
+                          <ArrowUpRight className="size-5" />
+                          <span className="text-sm font-medium">Transferir</span>
+                        </Button>
                       </div>
                     )}
                   </CardContent>
                 </Card>
 
-                <Separator />
-
-                {/* Calendario de Lancamentos */}
-                <Card>
-                  <CardHeader className="flex flex-row items-center justify-between">
-                    <div>
-                      <CardTitle className="flex items-center gap-2">
-                        <CalendarDays className="size-5" />
-                        Calendario de lancamentos
-                      </CardTitle>
-                    </div>
-                    <Button
-                      size="sm"
-                      variant="outline"
+                {/* Lancamentos futuros */}
+                <div className="rounded-xl border border-border/80 bg-card px-4 py-4 shadow-sm">
+                  <div className="mb-4 flex items-start justify-between gap-2">
+                    <h3 className="text-base font-semibold">Lançamentos futuros</h3>
+                    <button
+                      type="button"
                       disabled={mpFutureLoading}
-                      onClick={fetchFutureReleases}
+                      onClick={() => void fetchFutureReleases()}
+                      className="text-sm font-medium text-sky-600 hover:underline disabled:opacity-50"
                     >
-                      <RefreshCw className={cn("mr-1 size-4", mpFutureLoading && "animate-spin")} />
-                      {mpFutureLoading ? "Consultando..." : "Consultar"}
-                    </Button>
-                  </CardHeader>
+                      {mpFutureLoading ? "Consultando..." : "Consultar →"}
+                    </button>
+                  </div>
 
-                  {mpFuturePendingTotal > 0 && (
-                    <CardContent className="pb-3">
-                      <div className="rounded-lg border p-4">
-                        <p className="text-xs text-muted-foreground">Balanco</p>
-                        <p className="text-2xl font-bold">
-                          + {formatCurrency(mpFuturePendingTotal)}
-                        </p>
-                        <div className="mt-2 flex items-center gap-4 text-xs">
-                          <span className="text-emerald-600 dark:text-emerald-400">
-                            A receber: + {formatCurrency(mpFuturePendingTotal)}
-                          </span>
-                        </div>
-                      </div>
-                    </CardContent>
-                  )}
+                  <div className="mb-4 grid grid-cols-2 gap-6 border-b border-border/60 pb-4">
+                    <div>
+                      <p className="text-xs text-muted-foreground">A receber</p>
+                      <p className="text-lg font-semibold tabular-nums text-emerald-600 dark:text-emerald-400">
+                        + {formatCurrency(mpFuturePendingTotal)}
+                      </p>
+                    </div>
+                    <div>
+                      <p className="text-xs text-muted-foreground">A pagar</p>
+                      <p className="text-lg font-semibold tabular-nums">
+                        {formatCurrency(mpFutureAPagarTotal)}
+                      </p>
+                    </div>
+                  </div>
 
                   {mpFutureStatus && (
-                    <CardContent className="pb-2">
-                      <p className="text-sm text-amber-600 dark:text-amber-400">{mpFutureStatus}</p>
-                    </CardContent>
+                    <p className="mb-3 text-sm text-amber-600 dark:text-amber-400">{mpFutureStatus}</p>
                   )}
 
-                  <CardContent>
-                    {mpDayGroups.length === 0 && !mpFutureLoading && !mpFutureStatus ? (
-                      <p className="text-sm text-muted-foreground">
-                        Clique em &quot;Consultar&quot; para buscar as liberacoes previstas.
-                      </p>
-                    ) : (
-                      <div className="divide-y">
-                        {mpDayGroups.map((day) => {
-                          const isOpen = mpExpandedDays.has(day.date)
-                          return (
-                            <div key={day.date}>
-                              <button
-                                type="button"
-                                className="flex w-full items-center justify-between py-3 text-left hover:bg-muted/30 transition-colors px-2 rounded"
-                                onClick={() => {
-                                  setMpExpandedDays((prev) => {
-                                    const next = new Set(prev)
-                                    if (next.has(day.date)) next.delete(day.date)
-                                    else next.add(day.date)
-                                    return next
-                                  })
-                                }}
-                              >
-                                <span className="text-sm font-medium">{day.dayLabel}</span>
-                                <div className="flex items-center gap-2">
-                                  <span className="text-sm font-semibold text-emerald-600 dark:text-emerald-400">
-                                    + {formatCurrency(day.total)}
-                                  </span>
-                                  <svg
-                                    className={cn(
-                                      "size-4 text-muted-foreground transition-transform",
-                                      isOpen && "rotate-180",
-                                    )}
-                                    fill="none"
-                                    viewBox="0 0 24 24"
-                                    stroke="currentColor"
-                                    strokeWidth={2}
-                                  >
-                                    <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
-                                  </svg>
-                                </div>
-                              </button>
-
-                              {isOpen && (
-                                <div className="pb-3 pl-4 space-y-1">
-                                  {day.releases.map((r) => {
-                                    const time = r.releaseDate.slice(11, 16).replace(":", "h") || "—"
-                                    return (
-                                      <div
-                                        key={r.sourceId}
-                                        className="flex items-center justify-between py-2 border-b last:border-0"
-                                      >
-                                        <div>
-                                          <p className="text-sm">Liberacao de dinheiro</p>
-                                          <p className="text-xs text-muted-foreground">{time}</p>
-                                        </div>
-                                        <span className="text-sm font-semibold text-emerald-600 dark:text-emerald-400">
-                                          + {formatCurrency(r.amount)}
-                                        </span>
+                  {mpDayGroups.length === 0 && !mpFutureLoading && !mpFutureStatus ? (
+                    <p className="text-sm text-muted-foreground">
+                      Toque em Consultar para carregar as datas de liberacao.
+                    </p>
+                  ) : (
+                    <div className="divide-y divide-border/60">
+                      {mpDayGroups.map((day) => {
+                        const isOpen = mpExpandedDays.has(day.date)
+                        return (
+                          <div key={day.date}>
+                            <button
+                              type="button"
+                              className="flex w-full items-center justify-between py-3 text-left hover:bg-muted/40"
+                              onClick={() => {
+                                setMpExpandedDays((prev) => {
+                                  const next = new Set(prev)
+                                  if (next.has(day.date)) next.delete(day.date)
+                                  else next.add(day.date)
+                                  return next
+                                })
+                              }}
+                            >
+                              <span className="text-sm font-medium">{day.dayLabel}</span>
+                              <div className="flex items-center gap-2">
+                                <span className="text-sm font-semibold text-emerald-600 dark:text-emerald-400">
+                                  + {formatCurrency(day.total)}
+                                </span>
+                                <svg
+                                  className={cn(
+                                    "size-4 text-muted-foreground transition-transform",
+                                    isOpen && "rotate-180",
+                                  )}
+                                  fill="none"
+                                  viewBox="0 0 24 24"
+                                  stroke="currentColor"
+                                  strokeWidth={2}
+                                >
+                                  <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
+                                </svg>
+                              </div>
+                            </button>
+                            {isOpen && (
+                              <div className="space-y-0 pb-2 pl-1">
+                                {day.releases.map((r) => {
+                                  const time = r.releaseDate.slice(11, 16).replace(":", "h") || "—"
+                                  return (
+                                    <div
+                                      key={r.sourceId}
+                                      className="flex items-center justify-between border-b border-border/40 py-2.5 last:border-0"
+                                    >
+                                      <div>
+                                        <p className="text-sm">Liberação de dinheiro</p>
+                                        <p className="text-xs text-muted-foreground">{time}</p>
                                       </div>
-                                    )
-                                  })}
-                                </div>
-                              )}
-                            </div>
-                          )
-                        })}
-                      </div>
+                                      <span className="text-sm font-semibold text-emerald-600 dark:text-emerald-400">
+                                        + {formatCurrency(r.amount)}
+                                      </span>
+                                    </div>
+                                  )
+                                })}
+                              </div>
+                            )}
+                          </div>
+                        )
+                      })}
+                    </div>
+                  )}
+                </div>
+
+                {/* Extrato */}
+                <div className="rounded-xl border border-border/80 bg-card px-4 py-4 shadow-sm">
+                  <div className="mb-4 flex items-start justify-between gap-2">
+                    <h3 className="text-base font-semibold">Extrato</h3>
+                    {mpTransactions.length > 3 && (
+                      <button
+                        type="button"
+                        onClick={() => setMpExtratoVerTudo((v) => !v)}
+                        className="text-sm font-medium text-sky-600 hover:underline"
+                      >
+                        {mpExtratoVerTudo ? "Ver menos" : "Ver tudo →"}
+                      </button>
                     )}
-                  </CardContent>
-                </Card>
+                  </div>
+
+                  {mpTransactions.length === 0 && !mpLoading ? (
+                    <p className="text-sm text-muted-foreground">
+                      Nenhuma movimentacao. Use Atualizar acima.
+                    </p>
+                  ) : (
+                    <ul className="space-y-0 divide-y divide-border/60">
+                      {(mpExtratoVerTudo ? mpTransactions : mpTransactions.slice(0, 3)).map((tx) => (
+                        <li key={tx.id} className="flex gap-3 py-3 first:pt-0">
+                          <div
+                            className={cn(
+                              "flex size-10 shrink-0 items-center justify-center rounded-full",
+                              tx.type === "credit"
+                                ? "bg-emerald-100 text-emerald-700 dark:bg-emerald-950/50 dark:text-emerald-400"
+                                : "bg-muted text-muted-foreground",
+                            )}
+                          >
+                            <Banknote className="size-5" />
+                          </div>
+                          <div className="min-w-0 flex-1">
+                            <p className="truncate text-sm font-medium">
+                              {tx.description || "Movimentação"}
+                            </p>
+                            <p className="text-xs text-muted-foreground">Conta Mercado Pago</p>
+                          </div>
+                          <div className="shrink-0 text-right">
+                            <p
+                              className={cn(
+                                "text-sm font-semibold tabular-nums",
+                                tx.type === "credit"
+                                  ? "text-emerald-600 dark:text-emerald-400"
+                                  : "text-foreground",
+                              )}
+                            >
+                              {tx.type === "credit" ? "+" : "-"} {formatCurrency(Math.abs(tx.amount))}
+                            </p>
+                            <p className="text-xs text-muted-foreground">
+                              {new Date(tx.date).toLocaleDateString("pt-BR", {
+                                day: "numeric",
+                                month: "long",
+                              })}
+                            </p>
+                          </div>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </div>
               </section>
             )}
           </>

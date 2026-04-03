@@ -50,6 +50,10 @@ export function buildMlAuthorizationUrl(state: string) {
   url.searchParams.set("client_id", config.clientId)
   url.searchParams.set("redirect_uri", config.redirectUri)
   url.searchParams.set("state", state)
+  const extraScope = process.env.MERCADO_LIVRE_OAUTH_SCOPE?.trim()
+  if (extraScope) {
+    url.searchParams.set("scope", extraScope)
+  }
   return url.toString()
 }
 
