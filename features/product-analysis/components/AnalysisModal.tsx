@@ -1,6 +1,6 @@
 "use client"
 
-import { X, RefreshCw, ExternalLink, Clock, BarChart3, Users, ScrollText } from "lucide-react"
+import { X, RefreshCw, ExternalLink, Clock, BarChart3, Users } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs"
 import { useProductAnalysis } from "@/features/product-analysis/hooks/use-product-analysis"
@@ -90,10 +90,6 @@ export function AnalysisModal({ itemId, onClose }: { itemId: string; onClose: ()
                     <Users className="h-3.5 w-3.5" />
                     Concorrentes ({data.competitors.competitors.length})
                   </TabsTrigger>
-                  <TabsTrigger value="logs" className="rounded-md text-xs gap-1.5 data-[state=active]:bg-white data-[state=active]:shadow-sm px-4 py-2">
-                    <ScrollText className="h-3.5 w-3.5" />
-                    Logs ({data.logs.length})
-                  </TabsTrigger>
                 </TabsList>
 
                 <TabsContent value="catalog" className="mt-5">
@@ -120,23 +116,6 @@ export function AnalysisModal({ itemId, onClose }: { itemId: string; onClose: ()
                       Dados de catalogo carregados, mas a descoberta de concorrentes falhou parcialmente.
                     </div>
                   )}
-                </TabsContent>
-
-                <TabsContent value="logs" className="mt-5">
-                  <div className="rounded-xl border bg-gray-900 p-4 text-[11px] font-mono max-h-[400px] overflow-y-auto space-y-0.5">
-                    {data.logs.map((l, i) => (
-                      <div key={i} className="flex gap-2 leading-relaxed">
-                        <span className="text-gray-500 shrink-0 w-14 text-right">
-                          +{l.ms ?? 0}ms
-                        </span>
-                        <span className="text-cyan-400 shrink-0 w-28">[{l.step}]</span>
-                        <span className="text-gray-300">{l.detail}</span>
-                        {l.count != null && (
-                          <span className="text-emerald-400 ml-auto shrink-0">n={l.count}</span>
-                        )}
-                      </div>
-                    ))}
-                  </div>
                 </TabsContent>
               </Tabs>
             </>
