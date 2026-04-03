@@ -41,7 +41,7 @@ import {
   Wrench,
 } from "lucide-react"
 import Image from "next/image"
-import { useEffect, useMemo, useState } from "react"
+import { useCallback, useEffect, useMemo, useState } from "react"
 
 import { api } from "@/convex/_generated/api"
 import type { Id } from "@/convex/_generated/dataModel"
@@ -82,7 +82,7 @@ import { cn } from "@/lib/utils"
 import { AnalysisModal } from "@/features/product-analysis/components/AnalysisModal"
 
 type ModuleKey = "home" | "finance" | "stock" | "mercadolivre" | "branchhunter"
-type FinanceSection = "overview" | "abc" | "dre" | "expenses" | "categories" | "reports" | "history"
+type FinanceSection = "overview" | "abc" | "dre" | "expenses" | "categories" | "reports" | "history" | "cashflow"
 type StockSection = "overview" | "products" | "movements" | "history"
 type MlSection = "listings" | "orders" | "metrics"
 type MlSidebarGroup = "anuncios" | "pedidos" | "metricas"
@@ -1116,6 +1116,104 @@ export function FinancialDashboard() {
   const [dreYear, setDreYear] = useState(new Date().getFullYear())
   const [dreIncludeMovements, setDreIncludeMovements] = useState(true)
   const [dreComparePrevious, setDreComparePrevious] = useState(false)
+
+  const [mpBalance, setMpBalance] = useState<{
+    availableBalance: number
+    unavailableBalance: number
+    totalAmount: number
+    currencyId: string
+  } | null>(null)
+  const [mpTransactions, setMpTransactions] = useState<Array<{
+    id: string
+    date: string
+    description: string
+    amount: number
+    type: "credit" | "debit"
+    status: string
+  }>>([])
+  const [mpLoading, setMpLoading] = useState(false)
+  const [mpError, setMpError] = useState<string | null>(null)
+
+  type DayGroupUI = {
+    date: string
+    dayLabel: string
+    total: number
+    releases: Array<{
+      sourceId: string
+      releaseDate: string
+      amount: number
+    }>
+  }
+  const [mpDayGroups, setMpDayGroups] = useState<DayGroupUI[]>([])
+  const [mpFuturePendingTotal, setMpFuturePendingTotal] = useState(0)
+  const [mpFutureLoading, setMpFutureLoading] = useState(false)
+  const [mpFutureStatus, setMpFutureStatus] = useState<string | null>(null)
+  const [mpExpandedDays, setMpExpandedDays] = useState<Set<string>>(new Set())
+
+  const fetchMpData = useCallback(async () => {
+    setMpLoading(true)
+    setMpError(null)
+    try {
+      const [balRes, txRes] = await Promise.all([
+        fetch("/api/mp/balance"),
+        fetch("/api/mp/transactions?limit=30"),
+      ])
+
+      const balJson = await balRes.json()
+      const txJson = await txRes.json()
+
+      if (balJson.ok) {
+        setMpBalance(balJson.data)
+      } else {
+        console.error("[mp] balance error:", balJson.error)
+        setMpError(balJson.error ?? "Erro ao buscar saldo")
+      }
+
+      if (txJson.ok) {
+        setMpTransactions(txJson.data ?? [])
+      } else {
+        console.error("[mp] transactions error:", txJson.error)
+      }
+    } catch (err) {
+      console.error("[mp] fetch error:", err)
+      setMpError(err instanceof Error ? err.message : "Erro desconhecido")
+    } finally {
+      setMpLoading(false)
+    }
+  }, [])
+
+  const fetchFutureReleases = useCallback(async () => {
+    setMpFutureLoading(true)
+    setMpFutureStatus(null)
+    try {
+      const res = await fetch("/api/mp/future-releases")
+      const json = await res.json()
+
+      if (!json.ok) {
+        setMpDayGroups([])
+        setMpFuturePendingTotal(0)
+        const msg = json.details
+          ? `${json.error ?? "Erro"} — ${json.details}`
+          : (json.error ?? "Erro ao buscar lancamentos futuros")
+        setMpFutureStatus(msg)
+        return
+      }
+
+      const groups: DayGroupUI[] = Array.isArray(json.data) ? json.data : []
+      setMpDayGroups(groups)
+      setMpFuturePendingTotal(groups.reduce((s, g) => s + g.total, 0))
+      if (groups.length > 0) {
+        setMpExpandedDays(new Set([groups[0].date]))
+      }
+    } catch (err) {
+      console.error("[mp] future releases error:", err)
+      setMpDayGroups([])
+      setMpFuturePendingTotal(0)
+      setMpFutureStatus(err instanceof Error ? err.message : "Erro desconhecido")
+    } finally {
+      setMpFutureLoading(false)
+    }
+  }, [])
 
   const financeData = useQuery(
     api.finance.getDashboardData,
@@ -2564,6 +2662,19 @@ export function FinancialDashboard() {
           <>
             <p className="text-xs text-muted-foreground">Financeiro</p>
             <SidebarButton icon={LayoutDashboard} label="Visao geral" isActive={activeFinanceSection === "overview"} onClick={() => setActiveFinanceSection("overview")} />
+            <Button
+              variant={activeFinanceSection === "cashflow" ? "secondary" : "ghost"}
+              className={cn(
+                "ml-4 justify-start text-xs border-l-2 border-blue-400/30",
+                activeFinanceSection === "cashflow"
+                  ? "bg-blue-50 text-blue-700 border-blue-500 hover:bg-blue-100 dark:bg-blue-950/40 dark:text-blue-300 dark:hover:bg-blue-950/60"
+                  : "text-blue-600/80 hover:bg-blue-50/50 dark:text-blue-400/70 dark:hover:bg-blue-950/30",
+              )}
+              onClick={() => setActiveFinanceSection("cashflow")}
+            >
+              <CircleDollarSign className="size-3.5" />
+              Caixa Operacional
+            </Button>
             <SidebarButton icon={PieChart} label="Analise ABC" isActive={activeFinanceSection === "abc"} onClick={() => setActiveFinanceSection("abc")} />
             <SidebarButton icon={FileText} label="Analise DRE" isActive={activeFinanceSection === "dre"} onClick={() => setActiveFinanceSection("dre")} />
             <SidebarButton icon={TrendingDown} label="Lancamentos" isActive={activeFinanceSection === "expenses"} onClick={() => setActiveFinanceSection("expenses")} />
@@ -4150,6 +4261,229 @@ export function FinancialDashboard() {
                           ))}
                         </TableBody>
                       </Table>
+                    )}
+                  </CardContent>
+                </Card>
+              </section>
+            )}
+
+            {activeFinanceSection === "cashflow" && (
+              <section className="space-y-4">
+                <Card>
+                  <CardHeader className="flex flex-row items-center justify-between">
+                    <div>
+                      <CardTitle>Mercado Pago</CardTitle>
+                      <CardDescription>
+                        Saldo e extrato da sua conta Mercado Pago.
+                      </CardDescription>
+                    </div>
+                    <Button
+                      size="sm"
+                      disabled={mpLoading}
+                      onClick={fetchMpData}
+                    >
+                      <RefreshCw className={cn("mr-1 size-4", mpLoading && "animate-spin")} />
+                      {mpLoading ? "Carregando..." : "Atualizar"}
+                    </Button>
+                  </CardHeader>
+                  {mpError && (
+                    <CardContent>
+                      <p className="text-sm text-destructive">{mpError}</p>
+                    </CardContent>
+                  )}
+                </Card>
+
+                {/* Balance Card */}
+                <Card>
+                  <CardHeader>
+                    <CardDescription>Saldo disponivel</CardDescription>
+                    <CardTitle className="text-3xl text-primary">
+                      {mpBalance
+                        ? formatCurrency(mpBalance.availableBalance)
+                        : "—"}
+                    </CardTitle>
+                    {mpBalance && mpBalance.unavailableBalance > 0 && (
+                      <CardDescription className="text-xs">
+                        Bloqueado: {formatCurrency(mpBalance.unavailableBalance)}
+                      </CardDescription>
+                    )}
+                  </CardHeader>
+                  <CardContent className="flex gap-2">
+                    <Button variant="outline" size="sm" disabled>
+                      <Wallet className="mr-1 size-4" />
+                      Depositar
+                    </Button>
+                    <Button variant="outline" size="sm" disabled>
+                      <CreditCard className="mr-1 size-4" />
+                      Transferir
+                    </Button>
+                  </CardContent>
+                </Card>
+
+                {/* Transactions List */}
+                <Card>
+                  <CardHeader>
+                    <CardTitle>Extrato</CardTitle>
+                    <CardDescription>
+                      Ultimas {mpTransactions.length} transacoes
+                    </CardDescription>
+                  </CardHeader>
+                  <CardContent>
+                    {mpTransactions.length === 0 && !mpLoading ? (
+                      <p className="text-sm text-muted-foreground">
+                        Nenhuma transacao encontrada. Clique em &quot;Atualizar&quot; para buscar dados do Mercado Pago.
+                      </p>
+                    ) : (
+                      <div className="space-y-2">
+                        {mpTransactions.map((tx) => (
+                          <div
+                            key={tx.id}
+                            className="flex items-center justify-between rounded-lg border p-3"
+                          >
+                            <div className="flex-1 min-w-0">
+                              <p className="truncate text-sm font-medium">
+                                {tx.description || "Transacao"}
+                              </p>
+                              <p className="text-xs text-muted-foreground">
+                                {new Date(tx.date).toLocaleDateString("pt-BR", {
+                                  day: "2-digit",
+                                  month: "short",
+                                  year: "numeric",
+                                  hour: "2-digit",
+                                  minute: "2-digit",
+                                })}
+                              </p>
+                            </div>
+                            <span
+                              className={cn(
+                                "ml-4 whitespace-nowrap text-sm font-semibold",
+                                tx.type === "credit"
+                                  ? "text-emerald-600"
+                                  : "text-red-500",
+                              )}
+                            >
+                              {tx.type === "credit" ? "+" : "-"}{" "}
+                              {formatCurrency(Math.abs(tx.amount))}
+                            </span>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </CardContent>
+                </Card>
+
+                <Separator />
+
+                {/* Calendario de Lancamentos */}
+                <Card>
+                  <CardHeader className="flex flex-row items-center justify-between">
+                    <div>
+                      <CardTitle className="flex items-center gap-2">
+                        <CalendarDays className="size-5" />
+                        Calendario de lancamentos
+                      </CardTitle>
+                    </div>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      disabled={mpFutureLoading}
+                      onClick={fetchFutureReleases}
+                    >
+                      <RefreshCw className={cn("mr-1 size-4", mpFutureLoading && "animate-spin")} />
+                      {mpFutureLoading ? "Consultando..." : "Consultar"}
+                    </Button>
+                  </CardHeader>
+
+                  {mpFuturePendingTotal > 0 && (
+                    <CardContent className="pb-3">
+                      <div className="rounded-lg border p-4">
+                        <p className="text-xs text-muted-foreground">Balanco</p>
+                        <p className="text-2xl font-bold">
+                          + {formatCurrency(mpFuturePendingTotal)}
+                        </p>
+                        <div className="mt-2 flex items-center gap-4 text-xs">
+                          <span className="text-emerald-600 dark:text-emerald-400">
+                            A receber: + {formatCurrency(mpFuturePendingTotal)}
+                          </span>
+                        </div>
+                      </div>
+                    </CardContent>
+                  )}
+
+                  {mpFutureStatus && (
+                    <CardContent className="pb-2">
+                      <p className="text-sm text-amber-600 dark:text-amber-400">{mpFutureStatus}</p>
+                    </CardContent>
+                  )}
+
+                  <CardContent>
+                    {mpDayGroups.length === 0 && !mpFutureLoading && !mpFutureStatus ? (
+                      <p className="text-sm text-muted-foreground">
+                        Clique em &quot;Consultar&quot; para buscar as liberacoes previstas.
+                      </p>
+                    ) : (
+                      <div className="divide-y">
+                        {mpDayGroups.map((day) => {
+                          const isOpen = mpExpandedDays.has(day.date)
+                          return (
+                            <div key={day.date}>
+                              <button
+                                type="button"
+                                className="flex w-full items-center justify-between py-3 text-left hover:bg-muted/30 transition-colors px-2 rounded"
+                                onClick={() => {
+                                  setMpExpandedDays((prev) => {
+                                    const next = new Set(prev)
+                                    if (next.has(day.date)) next.delete(day.date)
+                                    else next.add(day.date)
+                                    return next
+                                  })
+                                }}
+                              >
+                                <span className="text-sm font-medium">{day.dayLabel}</span>
+                                <div className="flex items-center gap-2">
+                                  <span className="text-sm font-semibold text-emerald-600 dark:text-emerald-400">
+                                    + {formatCurrency(day.total)}
+                                  </span>
+                                  <svg
+                                    className={cn(
+                                      "size-4 text-muted-foreground transition-transform",
+                                      isOpen && "rotate-180",
+                                    )}
+                                    fill="none"
+                                    viewBox="0 0 24 24"
+                                    stroke="currentColor"
+                                    strokeWidth={2}
+                                  >
+                                    <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
+                                  </svg>
+                                </div>
+                              </button>
+
+                              {isOpen && (
+                                <div className="pb-3 pl-4 space-y-1">
+                                  {day.releases.map((r) => {
+                                    const time = r.releaseDate.slice(11, 16).replace(":", "h") || "—"
+                                    return (
+                                      <div
+                                        key={r.sourceId}
+                                        className="flex items-center justify-between py-2 border-b last:border-0"
+                                      >
+                                        <div>
+                                          <p className="text-sm">Liberacao de dinheiro</p>
+                                          <p className="text-xs text-muted-foreground">{time}</p>
+                                        </div>
+                                        <span className="text-sm font-semibold text-emerald-600 dark:text-emerald-400">
+                                          + {formatCurrency(r.amount)}
+                                        </span>
+                                      </div>
+                                    )
+                                  })}
+                                </div>
+                              )}
+                            </div>
+                          )
+                        })}
+                      </div>
                     )}
                   </CardContent>
                 </Card>
