@@ -1,15 +1,7 @@
 import { jsonError, jsonOk } from "@/lib/mercadolivre/http"
 import { fetchMlApi } from "@/lib/mercadolivre/storage"
 import { requireMlConnection } from "@/lib/mercadolivre/server"
-
-type MlItemsSearchResponse = {
-  results: string[]
-  paging?: {
-    total?: number
-    offset?: number
-    limit?: number
-  }
-}
+import { searchUserItemsIncludingPaused } from "@/lib/mercadolivre/user-items-search"
 
 type MlListingDetail = {
   id: string
@@ -32,9 +24,11 @@ export async function GET(request: Request) {
     const offset = Math.max(Number(url.searchParams.get("offset") ?? "0"), 0)
 
     const { connection } = await requireMlConnection()
-    const payload = await fetchMlApi<MlItemsSearchResponse>(
-      `/users/${connection.mlUserId}/items/search?limit=${limit}&offset=${offset}`,
+    const payload = await searchUserItemsIncludingPaused(
       connection.accessToken,
+      connection.mlUserId,
+      limit,
+      offset,
     )
 
     let listings: MlListingDetail[] = []

@@ -1,14 +1,10 @@
 import { jsonError, jsonOk } from "@/lib/mercadolivre/http"
 import { fetchMlApi, requestMlApi } from "@/lib/mercadolivre/storage"
 import { requireMlConnection } from "@/lib/mercadolivre/server"
+import { searchUserItemsIncludingPaused } from "@/lib/mercadolivre/user-items-search"
 
 export const dynamic = "force-dynamic"
 export const revalidate = 0
-
-type MlItemsSearchResponse = {
-  results: string[]
-  paging?: { total?: number; offset?: number; limit?: number }
-}
 
 type MlListingDetail = {
   id: string
@@ -51,11 +47,6 @@ function isNoWinnersError(error: unknown) {
   return error.message.includes("No winners found") || error.message.includes('"error": "not_found"')
 }
 
-function isVisibleCompetitionStatus(status?: string) {
-  const normalized = String(status ?? "").trim().toLowerCase()
-  return normalized !== "not_listed"
-}
-
 function getParam(url: URL, key: string) {
   return String(url.searchParams.get(key) ?? "").trim()
 }
@@ -67,9 +58,11 @@ function toOptionalNumber(value: string) {
 }
 
 async function loadSellerListings(accessToken: string, mlUserId: string, limit = 50) {
-  const payload = await fetchMlApi<MlItemsSearchResponse>(
-    `/users/${mlUserId}/items/search?limit=${Math.min(limit, 50)}&offset=0`,
+  const payload = await searchUserItemsIncludingPaused(
     accessToken,
+    mlUserId,
+    Math.min(limit, 50),
+    0,
   )
   const ids = payload.results ?? []
   if (ids.length === 0) return []
@@ -137,25 +130,16 @@ async function handleGet(url: URL) {
       }),
     )
 
-    const visibleCompetitionData = competitionData.filter((row) =>
-      isVisibleCompetitionStatus(row.competition?.status ?? "listed"),
-    )
+    const rows = competitionData.map((row) => {
+      const itemStatus = String(row.status ?? "").trim().toLowerCase()
+      const comp = row.competition
+      let competitionStatus = String(comp?.status ?? "listed").trim()
+      if (itemStatus === "paused") {
+        competitionStatus = "paused"
+      }
 
-    const summary = {
-      total: visibleCompetitionData.length,
-      winning: visibleCompetitionData.filter((row) => row.competition?.status === "winning").length,
-      sharingFirstPlace: visibleCompetitionData.filter(
-        (row) => row.competition?.status === "sharing_first_place",
-      ).length,
-      competing: visibleCompetitionData.filter((row) => row.competition?.status === "competing").length,
-      listed: visibleCompetitionData.filter(
-        (row) => !row.competition || row.competition.status === "listed",
-      ).length,
-    }
-
-    return jsonOk({
-      summary,
-      rows: visibleCompetitionData.map((row) => ({
+      const compLower = competitionStatus.toLowerCase()
+      return {
         itemId: row.id,
         title: row.title,
         thumbnail: row.thumbnail,
@@ -163,15 +147,55 @@ async function handleGet(url: URL) {
         price: row.price,
         availableQuantity: row.available_quantity,
         catalogProductId: row.catalog_product_id ?? null,
-        competitionStatus: row.competition?.status ?? "listed",
-        currentPrice: row.competition?.current_price ?? row.price,
-        priceToWin: row.competition?.price_to_win ?? null,
-        winnerPrice: row.competition?.winner?.price ?? null,
-        winnerItemId: row.competition?.winner?.item_id ?? null,
-        visitShare: row.competition?.visit_share ?? null,
-        reasons: row.competition?.reason ?? [],
-        competitorsSharingFirstPlace: row.competition?.competitors_sharing_first_place ?? null,
-      })),
+        competitionStatus,
+        currentPrice: comp?.current_price ?? row.price,
+        priceToWin: comp?.price_to_win ?? null,
+        winnerPrice: comp?.winner?.price ?? null,
+        winnerItemId: comp?.winner?.item_id ?? null,
+        visitShare: comp?.visit_share ?? null,
+        reasons: comp?.reason ?? [],
+        competitorsSharingFirstPlace: comp?.competitors_sharing_first_place ?? null,
+        _sortTier:
+          itemStatus === "paused" || compLower === "paused"
+            ? 100
+            : compLower === "winning"
+              ? 0
+              : compLower === "sharing_first_place"
+                ? 1
+                : compLower === "competing"
+                  ? 2
+                  : compLower === "listed"
+                    ? 3
+                    : compLower === "not_listed"
+                      ? 4
+                      : 5,
+      }
+    })
+
+    rows.sort((a, b) => {
+      if (a._sortTier !== b._sortTier) return a._sortTier - b._sortTier
+      return b.price - a.price
+    })
+
+    const publicRows = rows.map(({ _sortTier: _t, ...rest }) => rest)
+
+    const summary = {
+      total: publicRows.length,
+      winning: publicRows.filter((r) => r.competitionStatus.toLowerCase() === "winning").length,
+      sharingFirstPlace: publicRows.filter(
+        (r) => r.competitionStatus.toLowerCase() === "sharing_first_place",
+      ).length,
+      competing: publicRows.filter((r) => r.competitionStatus.toLowerCase() === "competing").length,
+      listed: publicRows.filter((r) => {
+        const s = r.competitionStatus.toLowerCase()
+        return s === "listed" || s === "not_listed"
+      }).length,
+      paused: publicRows.filter((r) => r.competitionStatus.toLowerCase() === "paused").length,
+    }
+
+    return jsonOk({
+      summary,
+      rows: publicRows,
     })
   }
 
