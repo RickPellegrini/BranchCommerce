@@ -46,7 +46,7 @@ import {
   Wrench,
 } from "lucide-react"
 import Image from "next/image"
-import { useCallback, useEffect, useMemo, useState } from "react"
+import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 
 import { api } from "@/convex/_generated/api"
 import type { Id } from "@/convex/_generated/dataModel"
@@ -185,6 +185,7 @@ type MlCatalogCompetitionSummary = {
   sharingFirstPlace: number
   competing: number
   listed: number
+  paused: number
 }
 
 type MlCatalogCompetitionRow = {
@@ -283,6 +284,8 @@ function catalogCompetitionBadgeClass(status: string) {
     return "border-amber-500/40 bg-amber-500/10 text-amber-700"
   if (normalized === "competing") return "border-red-500/40 bg-red-500/10 text-red-700"
   if (normalized === "listed") return "border-slate-500/40 bg-slate-500/10 text-slate-700"
+  if (normalized === "paused") return "border-warning/40 bg-warning/10 text-amber-800 dark:text-amber-200"
+  if (normalized === "not_listed") return "border-muted bg-muted/40 text-muted-foreground"
   return "border-muted bg-muted/30 text-muted-foreground"
 }
 
@@ -292,9 +295,23 @@ function catalogCompetitionLabel(status: string) {
   if (normalized === "sharing_first_place") return "Dividindo 1o"
   if (normalized === "competing") return "Perdendo"
   if (normalized === "listed") return "Listado"
+  if (normalized === "paused") return "Pausado"
+  if (normalized === "not_listed") return "Sem exposicao"
   if (normalized === "unknown") return "Indisponivel"
   if (!normalized) return "-"
   return status || "Desconhecido"
+}
+
+function catalogCompetitionPriorityTier(row: MlCatalogCompetitionRow): number {
+  const listing = String(row.status ?? "").toLowerCase()
+  const c = String(row.competitionStatus ?? "").toLowerCase()
+  if (listing === "paused" || c === "paused") return 100
+  if (c === "winning") return 0
+  if (c === "sharing_first_place") return 1
+  if (c === "competing") return 2
+  if (c === "listed") return 3
+  if (c === "not_listed") return 4
+  return 5
 }
 
 function mlShippingStep(status: string) {
@@ -1213,6 +1230,11 @@ export function FinancialDashboard() {
   const [mlOrdersShippingFilter, setMlOrdersShippingFilter] = useState("all")
   const [mlOrdersSortBy, setMlOrdersSortBy] = useState("date_desc")
   const [mlOrdersOnlyNoSku, setMlOrdersOnlyNoSku] = useState(false)
+
+  /** Evita loop infinito de fetch quando a API devolve lista vazia (length === 0 re-disparava o effect). */
+  const mlListingsSectionBootstrapped = useRef(false)
+  const mlCatalogSectionBootstrapped = useRef(false)
+  const mlOrdersSectionBootstrapped = useRef(false)
   const [mlMetrics, setMlMetrics] = useState<{
     listingsTotal: number
     ordersTotal: number
@@ -1237,7 +1259,7 @@ export function FinancialDashboard() {
   const [mlCatalogCompetitionRows, setMlCatalogCompetitionRows] = useState<MlCatalogCompetitionRow[]>([])
   const [mlCatalogSearchTerm, setMlCatalogSearchTerm] = useState("")
   const [mlCatalogStatusFilter, setMlCatalogStatusFilter] = useState("all")
-  const [mlCatalogSortBy, setMlCatalogSortBy] = useState("difference_desc")
+  const [mlCatalogSortBy, setMlCatalogSortBy] = useState("priority_desc")
   const [mlOrderCostAnalysis, setMlOrderCostAnalysis] = useState<OrderCostAnalysis | null>(null)
   const [financeOrdersTitleFilter, setFinanceOrdersTitleFilter] = useState("")
   const [financeOrdersSkuFilter, setFinanceOrdersSkuFilter] = useState("")
@@ -2053,7 +2075,6 @@ export function FinancialDashboard() {
     const statusFilter = mlCatalogStatusFilter.toLowerCase()
 
     const rows = mlCatalogCompetitionRows.filter((row) => {
-      if (row.competitionStatus.toLowerCase() === "not_listed") return false
       if (statusFilter !== "all" && row.competitionStatus.toLowerCase() !== statusFilter) return false
       if (!term) return true
       return (
@@ -2064,8 +2085,14 @@ export function FinancialDashboard() {
     })
 
     rows.sort((a, b) => {
-      const diffA = (a.price - (a.winnerPrice ?? a.price))
-      const diffB = (b.price - (b.winnerPrice ?? b.price))
+      if (mlCatalogSortBy === "priority_desc") {
+        const ta = catalogCompetitionPriorityTier(a)
+        const tb = catalogCompetitionPriorityTier(b)
+        if (ta !== tb) return ta - tb
+        return b.price - a.price
+      }
+      const diffA = a.price - (a.winnerPrice ?? a.price)
+      const diffB = b.price - (b.winnerPrice ?? b.price)
       if (mlCatalogSortBy === "difference_asc") return diffA - diffB
       if (mlCatalogSortBy === "price_desc") return b.price - a.price
       if (mlCatalogSortBy === "price_asc") return a.price - b.price
@@ -2620,6 +2647,7 @@ export function FinancialDashboard() {
         winning: 0,
         sharingFirstPlace: 0,
         competing: 0,
+        paused: 0,
         listed: 0,
       })
       setMlInfo("Conta do Mercado Livre desconectada com sucesso.")
@@ -2861,7 +2889,10 @@ export function FinancialDashboard() {
       if (!response.ok || !payload.ok) {
         throw new Error(payload.error ?? "Falha ao carregar competicao de catalogo.")
       }
-      setMlCatalogCompetitionSummary((payload.data.summary ?? null) as MlCatalogCompetitionSummary | null)
+      const rawSummary = payload.data.summary as MlCatalogCompetitionSummary | null | undefined
+      setMlCatalogCompetitionSummary(
+        rawSummary ? { ...rawSummary, paused: rawSummary.paused ?? 0 } : null,
+      )
       setMlCatalogCompetitionRows((payload.data.rows ?? []) as MlCatalogCompetitionRow[])
     } catch (error) {
       setMlError(
@@ -2925,19 +2956,39 @@ export function FinancialDashboard() {
   }
 
   useEffect(() => {
-    if (activeModule !== "mercadolivre" || !mlConnectionStatus?.connected) return
+    if (!mlConnectionStatus?.connected) {
+      mlListingsSectionBootstrapped.current = false
+      mlCatalogSectionBootstrapped.current = false
+      mlOrdersSectionBootstrapped.current = false
+    }
+    if (activeModule !== "mercadolivre" || !mlConnectionStatus?.connected) {
+      return
+    }
+
+    if (activeMlSection !== "listings") {
+      mlListingsSectionBootstrapped.current = false
+      mlCatalogSectionBootstrapped.current = false
+    }
+    if (activeMlSection !== "orders") {
+      mlOrdersSectionBootstrapped.current = false
+    }
 
     if (activeMlSection === "listings") {
-      if (mlListings.length === 0 && !mlListingsLoading) {
+      if (!mlListingsSectionBootstrapped.current && !mlListingsLoading) {
+        mlListingsSectionBootstrapped.current = true
         void loadMlListings()
       }
-      if (mlCatalogCompetitionRows.length === 0 && !mlCatalogCompetitionLoading) {
+      if (!mlCatalogSectionBootstrapped.current && !mlCatalogCompetitionLoading) {
+        mlCatalogSectionBootstrapped.current = true
         void loadMlCatalogCompetition()
       }
       return
     }
-    if (activeMlSection === "orders" && mlOrders.length === 0 && !mlOrdersLoading) {
-      void loadMlOrders()
+    if (activeMlSection === "orders") {
+      if (!mlOrdersSectionBootstrapped.current && !mlOrdersLoading) {
+        mlOrdersSectionBootstrapped.current = true
+        void loadMlOrders()
+      }
       return
     }
     if (activeMlSection === "metrics" && !mlMetrics && !mlMetricsLoading) {
@@ -2947,13 +2998,10 @@ export function FinancialDashboard() {
     activeMlSection,
     activeModule,
     mlCatalogCompetitionLoading,
-    mlCatalogCompetitionRows.length,
     mlConnectionStatus?.connected,
-    mlListings.length,
     mlListingsLoading,
     mlMetrics,
     mlMetricsLoading,
-    mlOrders.length,
     mlOrdersLoading,
   ])
 
@@ -6263,11 +6311,12 @@ export function FinancialDashboard() {
                     <CardHeader>
                       <CardTitle>Catalogos</CardTitle>
                       <CardDescription>
-                        Competicao em catalogo, buscador de produtos e recursos avancados da API.
+                        Inclui anuncios de catalogo ativos e pausados; ordem padrao prioriza ganhando e deixa pausados
+                        por ultimo. Itens sem catalog_product_id ou alem dos primeiros 50 IDs da busca ML nao entram.
                       </CardDescription>
                     </CardHeader>
                     <CardContent className="space-y-4">
-                      <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-5">
+                      <div className="grid gap-3 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6">
                         <Card className="rounded-none border-dashed">
                           <CardHeader className="pb-2">
                             <CardDescription>Total</CardDescription>
@@ -6300,9 +6349,17 @@ export function FinancialDashboard() {
                         </Card>
                         <Card className="rounded-none border-dashed">
                           <CardHeader className="pb-2">
-                            <CardDescription className="text-slate-700">Listado</CardDescription>
+                            <CardDescription className="text-slate-700">Listado / sem exposicao</CardDescription>
                             <CardTitle className="text-lg text-slate-700">
                               {mlCatalogCompetitionSummary?.listed ?? 0}
+                            </CardTitle>
+                          </CardHeader>
+                        </Card>
+                        <Card className="rounded-none border-dashed">
+                          <CardHeader className="pb-2">
+                            <CardDescription className="text-amber-800 dark:text-amber-200">Pausados</CardDescription>
+                            <CardTitle className="text-lg text-amber-800 dark:text-amber-200">
+                              {mlCatalogCompetitionSummary?.paused ?? 0}
                             </CardTitle>
                           </CardHeader>
                         </Card>
@@ -6325,6 +6382,8 @@ export function FinancialDashboard() {
                             <SelectItem value="sharing_first_place">Dividindo 1o</SelectItem>
                             <SelectItem value="competing">Perdendo</SelectItem>
                             <SelectItem value="listed">Listado</SelectItem>
+                            <SelectItem value="not_listed">Sem exposicao</SelectItem>
+                            <SelectItem value="paused">Pausado</SelectItem>
                           </SelectContent>
                         </Select>
                         <Select value={mlCatalogSortBy} onValueChange={setMlCatalogSortBy}>
@@ -6332,6 +6391,9 @@ export function FinancialDashboard() {
                             <SelectValue placeholder="Ordenar" />
                           </SelectTrigger>
                           <SelectContent>
+                            <SelectItem value="priority_desc">
+                              Prioridade (ativos/ganhando primeiro, pausados por ultimo)
+                            </SelectItem>
                             <SelectItem value="difference_desc">Diferenca de preco (maior)</SelectItem>
                             <SelectItem value="difference_asc">Diferenca de preco (menor)</SelectItem>
                             <SelectItem value="price_desc">Maior preco</SelectItem>
@@ -6349,9 +6411,15 @@ export function FinancialDashboard() {
                       {mlCatalogCompetitionLoading ? (
                         <p className="text-sm text-muted-foreground">Carregando competicao de catalogo...</p>
                       ) : filteredCatalogCompetitionRows.length === 0 ? (
-                        <p className="text-sm text-muted-foreground">
-                          Nenhum item de catalogo encontrado com os filtros atuais.
-                        </p>
+                        <div className="space-y-2 text-sm text-muted-foreground">
+                          <p>Nenhum item de catalogo na lista com os filtros atuais.</p>
+                          <p className="text-xs leading-relaxed">
+                            Isso e normal se voce alterou o anuncio no site do ML (saiu do catalogo, item em revisao ou
+                            sem buy box) ou se os anuncios estao pausados sem competicao de buy box. O card
+                            &quot;Anuncios&quot; acima usa o total geral; esta grade so mostra ofertas elegiveis a
+                            competicao. Use Recarregar apos mudancas no ML.
+                          </p>
+                        </div>
                       ) : (
                         <div className="space-y-2">
                           {filteredCatalogCompetitionRows.map((row) => {

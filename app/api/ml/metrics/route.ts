@@ -1,11 +1,7 @@
 import { jsonError, jsonOk } from "@/lib/mercadolivre/http"
 import { fetchMlApi } from "@/lib/mercadolivre/storage"
 import { requireMlConnection } from "@/lib/mercadolivre/server"
-
-type MlItemsSearchResponse = {
-  results: string[]
-  paging?: { total?: number }
-}
+import { searchUserItemsIncludingPaused } from "@/lib/mercadolivre/user-items-search"
 
 type MlOrdersResponse = {
   results: Array<{
@@ -21,10 +17,7 @@ export async function GET() {
     const { connection } = await requireMlConnection()
 
     const [listingsPayload, ordersPayload] = await Promise.all([
-      fetchMlApi<MlItemsSearchResponse>(
-        `/users/${connection.mlUserId}/items/search?limit=1&offset=0`,
-        connection.accessToken,
-      ),
+      searchUserItemsIncludingPaused(connection.accessToken, connection.mlUserId, 1, 0),
       fetchMlApi<MlOrdersResponse>(
         `/orders/search?seller=${connection.mlUserId}&sort=date_desc&limit=50&offset=0`,
         connection.accessToken,
