@@ -37,11 +37,60 @@ export const addProduct = mutation({
     sellingPrice: v.optional(v.number()),
   },
   handler: async (ctx, args) => {
-    void ctx;
-    void args;
-    throw new Error(
-      "Cadastro manual de produtos desativado. Use sincronizacao do Mercado Livre.",
-    );
+    const normalizedSku = args.sku.trim().toUpperCase();
+    const normalizedName = args.name.trim();
+    const normalizedCategory = args.category.trim();
+
+    if (!normalizedSku || !normalizedName || !normalizedCategory) {
+      throw new Error("Preencha nome, SKU e categoria do produto.");
+    }
+    if (args.quantity < 0 || args.minStock < 0 || args.unitCost < 0) {
+      throw new Error(
+        "Quantidade, estoque minimo e custo devem ser maiores ou iguais a zero.",
+      );
+    }
+
+    const existing = await ctx.db
+      .query("stockProducts")
+      .withIndex("by_user_sku", (queryBuilder) =>
+        queryBuilder.eq("userId", args.userId).eq("sku", normalizedSku),
+      )
+      .first();
+
+    if (existing) {
+      throw new Error("SKU ja existe no estoque.");
+    }
+
+    const now = Date.now();
+    const today = new Date().toISOString().slice(0, 10);
+
+    const productId = await ctx.db.insert("stockProducts", {
+      userId: args.userId,
+      name: normalizedName,
+      sku: normalizedSku,
+      category: normalizedCategory,
+      quantity: args.quantity,
+      minStock: args.minStock,
+      unitCost: args.unitCost,
+      unitCostSource: "manual",
+      sellingPrice: args.sellingPrice,
+      createdAt: now,
+      updatedAt: now,
+    });
+
+    if (args.quantity > 0) {
+      await ctx.db.insert("stockMovements", {
+        userId: args.userId,
+        productId,
+        type: "in",
+        quantity: args.quantity,
+        date: today,
+        note: "Cadastro manual",
+        createdAt: now,
+      });
+    }
+
+    return productId;
   },
 });
 
@@ -167,36 +216,6 @@ export const syncFromMercadoLivre = mutation({
     const today = new Date().toISOString().slice(0, 10);
     let created = 0;
     let updated = 0;
-    let removedManual = 0;
-
-    const existingProducts = await ctx.db
-      .query("stockProducts")
-      .withIndex("by_user", (queryBuilder) =>
-        queryBuilder.eq("userId", args.userId),
-      )
-      .collect();
-
-    const manualProducts = existingProducts.filter(
-      (product) => !product.mlItemId,
-    );
-
-    for (const manualProduct of manualProducts) {
-      const movements = await ctx.db
-        .query("stockMovements")
-        .withIndex("by_user_product", (queryBuilder) =>
-          queryBuilder
-            .eq("userId", args.userId)
-            .eq("productId", manualProduct._id),
-        )
-        .collect();
-
-      for (const movement of movements) {
-        await ctx.db.delete(movement._id);
-      }
-
-      await ctx.db.delete(manualProduct._id);
-      removedManual += 1;
-    }
 
     for (const listing of args.listings) {
       const normalizedSku = (
@@ -282,7 +301,7 @@ export const syncFromMercadoLivre = mutation({
     return {
       created,
       updated,
-      removedManual,
+      removedManual: 0,
       total: args.listings.length,
     };
   },

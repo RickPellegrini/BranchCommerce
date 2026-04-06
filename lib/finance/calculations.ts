@@ -287,6 +287,7 @@ export function calculateProductChampions(
         marginPercent,
       };
     })
+    .filter((row) => row.profit > 0)
     .sort((a, b) => b.profit - a.profit)
     .slice(0, topN);
 }

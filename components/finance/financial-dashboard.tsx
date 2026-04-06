@@ -17,6 +17,7 @@ import {
   CircleDollarSign,
   Copy,
   Home,
+  ArrowRight,
   ArrowDownLeft,
   ArrowUpRight,
   Banknote,
@@ -226,6 +227,7 @@ type OrderCostAnalysis = {
 const today = new Date().toISOString().slice(0, 10)
 const HUB_CENTRALIZE_SHIPPING_PER_ITEM = 5
 const HUB_CENTRALIZE_PACKAGING_PER_ITEM = 1.5
+const HUB_ML_AVG_FEE_RATE = 0.16
 
 function movementLabel(type: StockMovement["type"]) {
   if (type === "in") return "Entrada"
@@ -550,23 +552,20 @@ function calculateDreSnapshot({
 
   for (const order of validOrders) {
     ordersCount += 1
+    const totalQty = order.items.reduce((s, i) => s + Math.max(0, i.quantity), 0)
     revenueConfirmed += Math.max(0, order.totalAmount)
     marketplaceFees += Math.max(0, order.mlFeeAmount)
     shippingPaidBySeller += Math.max(0, order.shippingCostAmount)
     taxes += Math.max(0, order.taxesAmount)
+    packagingCost += totalQty * HUB_CENTRALIZE_PACKAGING_PER_ITEM
 
-    if (order.productAmount > 0) {
-      productCosts += order.productAmount
-      continue
-    }
-
-    const estimated = order.items.reduce((total, item) => {
+    const estimatedCost = order.items.reduce((total, item) => {
       const byItem = item.id ? productByMlItemId.get(item.id) : undefined
       const bySku = item.sku ? productBySku.get(item.sku.toLowerCase()) : undefined
       const mapped = byItem ?? bySku
       return total + (mapped?.unitCost ?? 0) * Math.max(0, item.quantity)
     }, 0)
-    productCosts += estimated
+    productCosts += estimatedCost
   }
 
   const netReceived = revenueConfirmed - marketplaceFees - shippingPaidBySeller + shippingBonus
@@ -756,12 +755,10 @@ function buildOrdersSalesEvolutionData(
     const bucket = buckets.get(key)
     if (!bucket) continue
 
-    const fallbackProductCost = order.items.reduce((sum, item) => {
+    const productCost = order.items.reduce((sum, item) => {
       const mappedProduct = productByMlItemId.get(item.id)
-      const unitCost = mappedProduct?.unitCost ?? 0
-      return sum + unitCost * item.quantity
+      return sum + (mappedProduct?.unitCost ?? 0) * Math.max(0, item.quantity)
     }, 0)
-    const productCost = order.productAmount > 0 ? order.productAmount : fallbackProductCost
     const shippingCost = Math.max(0, order.shippingCostAmount)
     const taxes = Math.max(0, order.taxesAmount)
     const mlFee = Math.max(0, order.mlFeeAmount)
@@ -792,13 +789,10 @@ function buildOrdersFinancialSummary(
 
   return filteredOrders.reduce<OrdersFinancialSummary>(
     (acc, order) => {
-      const estimatedFallbackProductCost = order.items.reduce((total, item) => {
+      const productCost = order.items.reduce((total, item) => {
         const mappedProduct = productByMlItemId.get(item.id)
-        const unitCost = mappedProduct?.unitCost ?? 0
-        return total + unitCost * item.quantity
+        return total + (mappedProduct?.unitCost ?? 0) * Math.max(0, item.quantity)
       }, 0)
-
-      const productCost = order.productAmount > 0 ? order.productAmount : estimatedFallbackProductCost
       const shippingCost = Math.max(0, order.shippingCostAmount)
       const taxes = Math.max(0, order.taxesAmount)
       const mlFee = Math.max(0, order.mlFeeAmount)
@@ -840,28 +834,28 @@ function buildOrdersCostComposition(
     fees: 0,
     shipping: 0,
     taxes: 0,
+    packaging: 0,
   }
 
   for (const order of filteredOrders) {
-    const estimatedFallbackProductCost = order.items.reduce((sum, item) => {
+    const totalQty = order.items.reduce((s, i) => s + Math.max(0, i.quantity), 0)
+    const productCost = order.items.reduce((sum, item) => {
       const mappedProduct = productByMlItemId.get(item.id)
-      const unitCost = mappedProduct?.unitCost ?? 0
-      return sum + unitCost * item.quantity
+      return sum + (mappedProduct?.unitCost ?? 0) * Math.max(0, item.quantity)
     }, 0)
 
-    totals.products += Math.max(
-      0,
-      order.productAmount > 0 ? order.productAmount : estimatedFallbackProductCost,
-    )
+    totals.products += productCost
     totals.fees += Math.max(0, order.mlFeeAmount)
     totals.shipping += Math.max(0, order.shippingCostAmount)
     totals.taxes += Math.max(0, order.taxesAmount)
+    totals.packaging += totalQty * HUB_CENTRALIZE_PACKAGING_PER_ITEM
   }
 
   return [
     { categoryName: "Produtos", total: totals.products },
     { categoryName: "Taxas ML", total: totals.fees },
     { categoryName: "Envio", total: totals.shipping },
+    { categoryName: "Embalagem", total: totals.packaging },
     { categoryName: "Impostos", total: totals.taxes },
   ].filter((item) => item.total > 0)
 }
@@ -878,16 +872,18 @@ function finalizeAbcRows(
   }>,
   metric: "revenue" | "quantity" | "profit",
 ): AbcProductRow[] {
-  const rowsBase = groupedRows
+  type RowAcc = (typeof groupedRows)[number] & { rawMetric: number; metricValue: number }
+  const rowsBase: RowAcc[] = groupedRows
     .map((row) => {
-      const metricValue =
+      const rawMetric =
         metric === "quantity" ? row.quantitySold : metric === "profit" ? row.profit : row.revenue
       return {
         ...row,
-        metricValue: Math.max(0, metricValue),
+        rawMetric,
+        metricValue: Math.max(0, rawMetric),
       }
     })
-    .sort((a, b) => b.metricValue - a.metricValue)
+    .sort((a, b) => b.rawMetric - a.rawMetric)
 
   const totalMetric = rowsBase.reduce((total, row) => total + row.metricValue, 0)
   let cumulative = 0
@@ -897,7 +893,14 @@ function finalizeAbcRows(
     const abcClass = cumulative <= 80 ? "A" : cumulative <= 95 ? "B" : "C"
     const marginPercent = row.revenue > 0 ? (row.profit / row.revenue) * 100 : 0
     return {
-      ...row,
+      productId: row.productId,
+      productName: row.productName,
+      sku: row.sku,
+      quantitySold: row.quantitySold,
+      revenue: row.revenue,
+      totalCost: row.totalCost,
+      profit: row.profit,
+      metricValue: row.metricValue,
       marginPercent,
       sharePercent,
       cumulativePercent: cumulative,
@@ -986,6 +989,12 @@ function buildAbcRowsFromOrders(
   })
 
   for (const order of validOrders) {
+    const orderItemCount = order.items.reduce((s, i) => s + Math.max(0, i.quantity), 0)
+    const orderMlFee = Math.max(0, order.mlFeeAmount)
+    const orderShipping = Math.max(0, order.shippingCostAmount)
+    const orderTaxes = Math.max(0, order.taxesAmount)
+    const orderOverhead = orderMlFee + orderShipping + orderTaxes
+
     for (const item of order.items) {
       const quantity = Math.max(0, item.quantity)
       if (quantity <= 0) continue
@@ -996,7 +1005,8 @@ function buildAbcRowsFromOrders(
 
       const unitCost = mappedProduct?.unitCost ?? 0
       const revenue = Math.max(0, item.unitPrice) * quantity
-      const totalCost = unitCost * quantity
+      const itemShare = orderItemCount > 0 ? quantity / orderItemCount : 0
+      const totalCost = unitCost * quantity + orderOverhead * itemShare
       const profit = revenue - totalCost
       const key = item.id || item.sku || item.title
 
@@ -1018,6 +1028,66 @@ function buildAbcRowsFromOrders(
   }
 
   return finalizeAbcRows(Array.from(grouped.values()), metric)
+}
+
+type HomeEvolutionRow = {
+  key: string
+  monthLabel: string
+  income: number
+  expense: number
+  result: number
+}
+
+/** Mesma janela de meses que `monthlyEvolution` (transacoes), mas agrega pedidos ML. */
+function monthlyEvolutionFromMlOrders(
+  orders: MlOrder[],
+  productByMlItemId: Map<string, StockProduct>,
+  monthsToShow = 6,
+): HomeEvolutionRow[] {
+  const now = new Date()
+  const keys: string[] = []
+  const map = new Map<string, { income: number; expense: number }>()
+  for (let index = monthsToShow - 1; index >= 0; index -= 1) {
+    const date = new Date(now.getFullYear(), now.getMonth() - index, 1)
+    const key = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}`
+    keys.push(key)
+    map.set(key, { income: 0, expense: 0 })
+  }
+
+  for (const order of orders) {
+    const status = order.status.toLowerCase()
+    if (status === "cancelled") continue
+    const key = order.dateCreated.slice(0, 7)
+    if (!map.has(key)) continue
+
+    const productCost = order.items.reduce((total, item) => {
+      const mappedProduct = productByMlItemId.get(item.id)
+      return total + (mappedProduct?.unitCost ?? 0) * Math.max(0, item.quantity)
+    }, 0)
+    const shippingCost = Math.max(0, order.shippingCostAmount)
+    const taxes = Math.max(0, order.taxesAmount)
+    const mlFee = Math.max(0, order.mlFeeAmount)
+    const orderCosts = productCost + shippingCost + taxes + mlFee
+    const revenue = Math.max(0, order.totalAmount)
+
+    const bucket = map.get(key)
+    if (!bucket) continue
+    bucket.income += revenue
+    bucket.expense += orderCosts
+  }
+
+  return keys.map((key) => {
+    const b = map.get(key) ?? { income: 0, expense: 0 }
+    const [y, m] = key.split("-").map(Number)
+    const dt = new Date(y, (m ?? 1) - 1, 1)
+    return {
+      key,
+      monthLabel: dt.toLocaleDateString("pt-BR", { month: "short", year: "2-digit" }),
+      income: b.income,
+      expense: b.expense,
+      result: b.income - b.expense,
+    }
+  })
 }
 
 function StockLevelLegend() {
@@ -1755,6 +1825,100 @@ export function FinancialDashboard() {
     salesInFilterFinal > 0 ? (operatingResultFinal / salesInFilterFinal) * 100 : 0
   const ticketMedioFinal = salesCountFinal > 0 ? salesInFilterFinal / salesCountFinal : 0
 
+  const homeDreSnapshot = useMemo(() => {
+    if (!filters.startDate || !filters.endDate) return null
+    return calculateDreSnapshot({
+      orders: mlOrders,
+      productByMlItemId: productMapByMlItemId,
+      productBySku: productMapBySku,
+      transactions,
+      range: { start: filters.startDate, end: filters.endDate },
+      includeMovements: true,
+    })
+  }, [
+    filters.endDate,
+    filters.startDate,
+    mlOrders,
+    productMapByMlItemId,
+    productMapBySku,
+    transactions,
+  ])
+  const homeNetProfit = homeDreSnapshot?.netProfit ?? operatingResultFinal
+  const homePeriodLabel = useMemo(() => {
+    if (filters.startDate && filters.endDate) {
+      return `${formatDate(filters.startDate)} – ${formatDate(filters.endDate)}`
+    }
+    return "Periodo atual"
+  }, [filters.endDate, filters.startDate])
+
+  const homeCurrentMonthOrders = useMemo(() => {
+    const d = new Date()
+    const { start, end } = monthDateRange(d.getFullYear(), d.getMonth() + 1)
+    return buildOrdersFinancialSummary(mlOrders, productMapByMlItemId, {
+      startDate: start,
+      endDate: end,
+    })
+  }, [mlOrders, productMapByMlItemId])
+
+  /** Evita repetir o mesmo bloco de pedidos ML quando o filtro ja e o mes civil corrente. */
+  const homeFilterMatchesCurrentMonth = useMemo(() => {
+    if (!filters.startDate || !filters.endDate) return false
+    const d = new Date()
+    const { start, end } = monthDateRange(d.getFullYear(), d.getMonth() + 1)
+    return filters.startDate === start && filters.endDate === end
+  }, [filters.endDate, filters.startDate])
+
+  const homeOrdersEvolution = useMemo(
+    () => monthlyEvolutionFromMlOrders(mlOrders, productMapByMlItemId, 6),
+    [mlOrders, productMapByMlItemId],
+  )
+
+  const homeEvolutionPreview = useMemo((): HomeEvolutionRow[] => {
+    const fromOrders = homeOrdersEvolution.slice(-4)
+    if (hasOrdersFinancialData && fromOrders.some((p) => p.income > 0 || p.expense > 0)) {
+      return fromOrders
+    }
+    return evolutionReport.slice(-4).map((p, i) => ({
+      key: `int-${p.monthLabel}-${i}`,
+      monthLabel: p.monthLabel,
+      income: p.income,
+      expense: p.expense,
+      result: p.result,
+    }))
+  }, [evolutionReport, hasOrdersFinancialData, homeOrdersEvolution])
+
+  const homeProductChampions = useMemo(() => {
+    if (hasOrdersFinancialData) {
+      const rows = buildAbcRowsFromOrders(
+        mlOrders,
+        productMapByMlItemId,
+        productMapBySku,
+        "profit",
+        { startDate: filters.startDate, endDate: filters.endDate },
+      )
+      return rows
+        .filter((r) => r.profit > 0)
+        .slice(0, 5)
+        .map((r) => ({
+          productId: r.productId,
+          productName: r.productName,
+          unitsSold: r.quantitySold,
+          revenue: r.revenue,
+          profit: r.profit,
+          marginPercent: r.marginPercent,
+        }))
+    }
+    return productChampions
+  }, [
+    filters.endDate,
+    filters.startDate,
+    hasOrdersFinancialData,
+    mlOrders,
+    productChampions,
+    productMapByMlItemId,
+    productMapBySku,
+  ])
+
   const comparePeriodOverview = useMemo(() => {
     if (financeOverviewCompare === "none" || !filters.startDate || !filters.endDate) return null
     const monthsBack = financeOverviewCompare === "prev_month" ? -1 : -12
@@ -1845,7 +2009,12 @@ export function FinancialDashboard() {
         return true
       })
       .map((order) => {
-        const productCost = Math.max(0, order.productAmount)
+        const productCost = order.items.reduce((total, item) => {
+          const byItem = item.id ? productMapByMlItemId.get(item.id) : undefined
+          const bySku = item.sku ? productMapBySku.get(item.sku.toLowerCase()) : undefined
+          const mapped = byItem ?? bySku
+          return total + (mapped?.unitCost ?? 0) * Math.max(0, item.quantity)
+        }, 0)
         const shipping = Math.max(0, order.shippingCostAmount)
         const mlFee = Math.max(0, order.mlFeeAmount)
         const taxes = Math.max(0, order.taxesAmount)
@@ -1870,6 +2039,8 @@ export function FinancialDashboard() {
     financeOrdersStatusFilter,
     financeOrdersTitleFilter,
     mlOrders,
+    productMapByMlItemId,
+    productMapBySku,
   ])
 
   const mlListingById = useMemo(
@@ -1919,7 +2090,8 @@ export function FinancialDashboard() {
       const product = productMapByMlItemId.get(row.itemId)
       const unitCost = product?.unitCost ?? 0
       const diff = row.price - (row.winnerPrice ?? row.price)
-      const estimatedProfitPerSale = row.price - unitCost
+      const estimatedFees = row.price * HUB_ML_AVG_FEE_RATE
+      const estimatedProfitPerSale = row.price - unitCost - estimatedFees - HUB_CENTRALIZE_SHIPPING_PER_ITEM - HUB_CENTRALIZE_PACKAGING_PER_ITEM
       return [
         row.itemId,
         row.title.replace(/"/g, '""'),
@@ -2264,12 +2436,12 @@ export function FinancialDashboard() {
   const saveProduct = async () => {
     if (
       !userId ||
-      !productForm.name ||
-      !productForm.sku ||
-      !productForm.category ||
-      !productForm.quantity ||
-      !productForm.minStock ||
-      !productForm.unitCost
+      !productForm.name.trim() ||
+      !productForm.sku.trim() ||
+      !productForm.category.trim() ||
+      productForm.quantity === "" ||
+      productForm.minStock === "" ||
+      productForm.unitCost === ""
     ) {
       return
     }
@@ -2336,12 +2508,12 @@ export function FinancialDashboard() {
     if (
       !userId ||
       !editingProductId ||
-      !productEditForm.name ||
-      !productEditForm.sku ||
-      !productEditForm.category ||
-      !productEditForm.quantity ||
-      !productEditForm.minStock ||
-      !productEditForm.unitCost
+      !productEditForm.name.trim() ||
+      !productEditForm.sku.trim() ||
+      !productEditForm.category.trim() ||
+      productEditForm.quantity === "" ||
+      productEditForm.minStock === "" ||
+      productEditForm.unitCost === ""
     ) {
       return
     }
@@ -2660,7 +2832,7 @@ export function FinancialDashboard() {
       setMlListingsCount(payload.data.total ?? listings.length)
       setMlListings(listings)
       setMlInfo(
-        `Sincronizacao concluida: ${syncResult.updated} atualizados, ${syncResult.created} criados, ${syncResult.removedManual} manuais removidos.`,
+        `Sincronizacao concluida: ${syncResult.updated} atualizados, ${syncResult.created} criados.`,
       )
       setMlLastSyncAt(Date.now())
       setMlLastSyncDurationMs(Date.now() - startedAt)
@@ -2703,8 +2875,7 @@ export function FinancialDashboard() {
   const openOrderCostAnalysis = (order: MlOrder, unitCost: number, quantity: number) => {
     const revenueTotal = order.totalAmount
     const receivedAmount = order.totalPaidAmount
-    const productCostFromApi = Math.max(0, order.productAmount)
-    const productCost = productCostFromApi > 0 ? productCostFromApi : Math.max(0, unitCost * quantity)
+    const productCost = Math.max(0, unitCost * quantity)
     const shippingCost = Math.max(0, order.shippingCostAmount)
     const centralizeShipping = Math.max(0, quantity * HUB_CENTRALIZE_SHIPPING_PER_ITEM)
     const centralizePackaging = Math.max(0, quantity * HUB_CENTRALIZE_PACKAGING_PER_ITEM)
@@ -2728,6 +2899,7 @@ export function FinancialDashboard() {
       shippingCost -
       centralizeShipping -
       centralizePackaging -
+      mlFee -
       taxes
     const contributionMargin = revenueTotal > 0 ? (netProfit / revenueTotal) * 100 : 0
     const roi = productCost > 0 ? (netProfit / productCost) * 100 : 0
@@ -2748,7 +2920,7 @@ export function FinancialDashboard() {
       totalCosts,
       contributionMargin,
       roi,
-      source: productCostFromApi > 0 ? "ml_api" : "fallback",
+      source: unitCost > 0 ? "fallback" : "fallback",
     })
   }
 
@@ -2941,98 +3113,465 @@ export function FinancialDashboard() {
 
       <section className="flex-1 space-y-4">
         {activeModule === "home" && (
-          <section className="space-y-4">
-            <Card>
-              <CardHeader>
-                <CardTitle>Home do marketplace</CardTitle>
-                <CardDescription>Panorama de vendas, despesas da empresa e estoque.</CardDescription>
-              </CardHeader>
-            </Card>
-            <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
-              <SummaryCard title="Vendas (filtro)" value={salesInFilterFinal} />
-              <SummaryCard title="Despesas (filtro)" value={expensesInFilterFinal} negative />
-              <SummaryCard
-                title="Resultado operacional"
-                value={operatingResultFinal}
-                positive={operatingResultFinal >= 0}
-                negative={operatingResultFinal < 0}
-              />
-              <SummaryCard title="Valor em estoque" value={stockSummary.stockValue} />
+          <div className="mx-auto max-w-6xl space-y-8 pb-8">
+            <div className="relative overflow-hidden rounded-2xl border border-border/60 bg-linear-to-br from-sky-500/10 via-card to-violet-500/5 px-5 py-6 shadow-sm sm:px-8 sm:py-8 dark:from-sky-950/40 dark:via-card dark:to-violet-950/20">
+              <div className="relative flex flex-col gap-6 lg:flex-row lg:items-end lg:justify-between">
+                <div className="space-y-2">
+                  <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
+                    Painel principal
+                  </p>
+                  <h1 className="text-2xl font-semibold tracking-tight sm:text-3xl">
+                    Ola, {financeAccountLabel}
+                  </h1>
+                  <p className="max-w-xl text-sm text-muted-foreground">
+                    Visao unificada do periodo{" "}
+                    <span className="font-medium text-foreground">{homePeriodLabel}</span>. Ajuste datas em{" "}
+                    <span className="font-medium text-foreground">Finanças → Visao geral</span>.
+                  </p>
+                  <div className="flex flex-wrap gap-2 pt-1">
+                    <span
+                      className={cn(
+                        "inline-flex items-center gap-1.5 rounded-full border px-2.5 py-0.5 text-xs font-medium",
+                        mlConnectionStatus?.connected
+                          ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-800 dark:text-emerald-300"
+                          : "border-amber-500/30 bg-amber-500/10 text-amber-900 dark:text-amber-200",
+                      )}
+                    >
+                      <Store className="size-3.5 shrink-0" />
+                      {mlConnectionStatus?.connected
+                        ? `ML conectado${mlConnectionStatus.mlNickname ? ` · ${mlConnectionStatus.mlNickname}` : ""}`
+                        : "Mercado Livre nao conectado"}
+                    </span>
+                    {hasOrdersFinancialData && (
+                      <span className="inline-flex items-center gap-1.5 rounded-full border border-sky-500/25 bg-sky-500/10 px-2.5 py-0.5 text-xs font-medium text-sky-900 dark:text-sky-200">
+                        <ShoppingBag className="size-3.5 shrink-0" />
+                        KPIs com base em pedidos ML
+                      </span>
+                    )}
+                  </div>
+                </div>
+                <div className="flex flex-wrap gap-2 lg:justify-end">
+                  <Button
+                    size="sm"
+                    className="gap-1.5 rounded-full"
+                    onClick={() => {
+                      setActiveModule("finance")
+                      setActiveFinanceSection("overview")
+                    }}
+                  >
+                    Finanças
+                    <ArrowRight className="size-3.5" />
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="gap-1.5 rounded-full"
+                    onClick={() => setActiveModule("stock")}
+                  >
+                    Estoque
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="gap-1.5 rounded-full"
+                    onClick={() => setActiveModule("mercadolivre")}
+                  >
+                    Mercado Livre
+                  </Button>
+                </div>
+              </div>
             </div>
-            <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
-              <SummaryCard
-                title="Margem operacional"
-                value={operatingMarginFinal}
-                format="percent"
-                positive={operatingMarginFinal >= 0}
-                negative={operatingMarginFinal < 0}
-              />
-              <SummaryCard title="Custo operacional" value={costBreakdown.operationalCost} negative />
-              <SummaryCard title="Custos fixos" value={costBreakdown.fixedCost} negative />
-              <SummaryCard title="Ferramentas fixas" value={costBreakdown.toolsFixedCost} negative />
-            </div>
-            <div className="grid gap-4 xl:grid-cols-2">
-              <Card>
-                <CardHeader>
-                  <CardTitle>Financeiro</CardTitle>
-                </CardHeader>
-                <CardContent className="space-y-2 text-sm">
-                  <LineItem label="Saldo geral" value={summary.balance} />
-                  <LineItem label="Resultado do mes" value={monthlyReport.balance} />
-                  <LineItem label="Lancamentos" value={transactions.length} format="number" />
+
+            <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+              <Card className="border-border/70 shadow-sm transition-shadow hover:shadow-md">
+                <CardContent className="pt-6">
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="rounded-lg bg-emerald-500/10 p-2 text-emerald-700 dark:text-emerald-400">
+                      <CircleDollarSign className="size-5" />
+                    </div>
+                    <span className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
+                      Receita
+                    </span>
+                  </div>
+                  <p className="mt-4 text-2xl font-bold tabular-nums tracking-tight sm:text-3xl">
+                    {formatCurrency(salesInFilterFinal)}
+                  </p>
+                  <p className="mt-1 text-xs text-muted-foreground">
+                    {salesCountFinal} pedidos · ticket {formatCurrency(ticketMedioFinal)}
+                  </p>
                 </CardContent>
               </Card>
-              <Card>
-                <CardHeader>
-                  <CardTitle>Estoque</CardTitle>
-                </CardHeader>
-                <CardContent className="space-y-2 text-sm">
-                  <LineItem label="Produtos cadastrados" value={stockSummary.totalProducts} format="number" />
-                  <LineItem label="Unidades em estoque" value={stockSummary.totalUnits} format="number" />
-                  <LineItem label="Abaixo do minimo" value={stockSummary.lowStockCount} format="number" />
+              <Card className="border-border/70 shadow-sm transition-shadow hover:shadow-md">
+                <CardContent className="pt-6">
+                  <div className="flex items-start justify-between gap-2">
+                    <div
+                      className={cn(
+                        "rounded-lg p-2",
+                        homeNetProfit >= 0
+                          ? "bg-primary/10 text-primary"
+                          : "bg-destructive/10 text-destructive",
+                      )}
+                    >
+                      <TrendingUp className="size-5" />
+                    </div>
+                    <span className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
+                      Lucro liquido
+                    </span>
+                  </div>
+                  <p
+                    className={cn(
+                      "mt-4 text-2xl font-bold tabular-nums tracking-tight sm:text-3xl",
+                      homeNetProfit >= 0 ? "text-emerald-700 dark:text-emerald-400" : "text-destructive",
+                    )}
+                  >
+                    {formatCurrency(homeNetProfit)}
+                  </p>
+                  <p className="mt-1 text-xs text-muted-foreground">
+                    DRE no periodo (pedidos + despesas cadastradas)
+                  </p>
+                </CardContent>
+              </Card>
+              <Card className="border-border/70 shadow-sm transition-shadow hover:shadow-md">
+                <CardContent className="pt-6">
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="rounded-lg bg-orange-500/10 p-2 text-orange-700 dark:text-orange-400">
+                      <Percent className="size-5" />
+                    </div>
+                    <span className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
+                      Margem
+                    </span>
+                  </div>
+                  <p
+                    className={cn(
+                      "mt-4 text-2xl font-bold tabular-nums tracking-tight sm:text-3xl",
+                      operatingMarginFinal >= 0 ? "text-foreground" : "text-destructive",
+                    )}
+                  >
+                    {operatingMarginFinal.toFixed(1)}%
+                  </p>
+                  <p className="mt-1 text-xs text-muted-foreground">
+                    Sobre receita · custos totais {formatCurrency(expensesInFilterFinal)}
+                  </p>
+                </CardContent>
+              </Card>
+              <Card className="border-border/70 shadow-sm transition-shadow hover:shadow-md">
+                <CardContent className="pt-6">
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="rounded-lg bg-violet-500/10 p-2 text-violet-700 dark:text-violet-300">
+                      <Boxes className="size-5" />
+                    </div>
+                    <span className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
+                      Estoque
+                    </span>
+                  </div>
+                  <p className="mt-4 text-2xl font-bold tabular-nums tracking-tight sm:text-3xl">
+                    {formatCurrency(stockSummary.stockValue)}
+                  </p>
+                  <p className="mt-1 text-xs text-muted-foreground">
+                    {stockSummary.totalProducts} produtos · {stockSummary.totalUnits} unidades
+                  </p>
                 </CardContent>
               </Card>
             </div>
-            <Card>
-              <CardHeader>
-                <CardTitle className="inline-flex items-center gap-2">
-                  <Trophy className="size-4 text-amber-500" />
-                  Produtos campeoes (lucro)
-                </CardTitle>
-                <CardDescription>Ranking por lucro estimado com base nas vendas registradas no periodo.</CardDescription>
+
+            <div className="grid gap-4 lg:grid-cols-3">
+              <Card className="border-border/70 shadow-sm lg:col-span-2">
+                <CardHeader className="pb-3">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <div>
+                      <CardTitle className="text-base">Resumo financeiro</CardTitle>
+                      <CardDescription>
+                        {hasOrdersFinancialData
+                          ? homeFilterMatchesCurrentMonth
+                            ? "Filtro = mes atual: pedidos ML a esquerda; lancamentos manuais a direita (sem duplicar ML)."
+                            : "Pedidos ML no periodo do filtro (esq.) e resumo do mes civil atual (dir., para comparar)."
+                          : "Lancamentos manuais no periodo do filtro e mes corrente."}
+                      </CardDescription>
+                    </div>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="text-sky-600 hover:text-sky-700"
+                      onClick={() => {
+                        setActiveModule("finance")
+                        setActiveFinanceSection("overview")
+                      }}
+                    >
+                      Ver detalhes
+                      <ArrowRight className="ml-1 size-3.5" />
+                    </Button>
+                  </div>
+                </CardHeader>
+                <CardContent className="grid gap-6 sm:grid-cols-2">
+                  {hasOrdersFinancialData ? (
+                    <>
+                      <div className="space-y-3 rounded-xl border border-border/60 bg-muted/30 p-4">
+                        <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                          Pedidos ML (periodo do filtro)
+                        </p>
+                        <LineItem label="Receita bruta" value={salesInFilterFinal} />
+                        <LineItem label="Custos dos pedidos" value={expensesInFilterFinal} />
+                        <div className="border-t border-border/60 pt-2">
+                          <LineItem label="Lucro (pedidos)" value={operatingResultFinal} strong />
+                        </div>
+                        <p className="text-[11px] text-muted-foreground">
+                          {salesCountFinal} pedido(s) no filtro · alinhado aos cards do topo
+                        </p>
+                        {(summary.income > 0 || summary.expense > 0) && (
+                          <div className="border-t border-border/60 pt-3">
+                            <p className="mb-2 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
+                              + Lancamentos manuais (mesmo periodo)
+                            </p>
+                            <LineItem label="Entradas" value={summary.income} />
+                            <LineItem label="Saidas" value={summary.expense} />
+                            <LineItem label="Saldo manual" value={summary.balance} />
+                          </div>
+                        )}
+                      </div>
+                      <div className="space-y-3 rounded-xl border border-border/60 bg-muted/30 p-4">
+                        <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                          {homeFilterMatchesCurrentMonth
+                            ? "Lancamentos manuais (mes atual)"
+                            : "Mes civil atual · pedidos ML + manual"}
+                        </p>
+                        {!homeFilterMatchesCurrentMonth && (
+                          <>
+                            <LineItem label="Receita (pedidos ML)" value={homeCurrentMonthOrders.grossRevenue} />
+                            <LineItem label="Custos (pedidos ML)" value={homeCurrentMonthOrders.totalCosts} />
+                            <div className="border-t border-border/60 pt-2">
+                              <LineItem label="Lucro (pedidos ML)" value={homeCurrentMonthOrders.netProfit} strong />
+                            </div>
+                            <p className="text-[11px] text-muted-foreground">
+                              {homeCurrentMonthOrders.ordersCount} pedido(s) neste mes na lista carregada
+                            </p>
+                          </>
+                        )}
+                        <div
+                          className={cn(
+                            "space-y-2",
+                            !homeFilterMatchesCurrentMonth && "border-t border-border/60 pt-3",
+                          )}
+                        >
+                          {!homeFilterMatchesCurrentMonth && (
+                            <p className="mb-1 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
+                              Lancamentos manuais (mes calendario)
+                            </p>
+                          )}
+                          <LineItem label="Entradas" value={monthlyReport.income} />
+                          <LineItem label="Saidas" value={monthlyReport.expense} />
+                          <LineItem label="Resultado" value={monthlyReport.balance} />
+                        </div>
+                        <p className="text-[11px] text-muted-foreground">
+                          {transactions.length} lancamento(s) cadastrado(s) no total
+                        </p>
+                      </div>
+                    </>
+                  ) : (
+                    <>
+                      <div className="space-y-3 rounded-xl border border-border/60 bg-muted/30 p-4">
+                        <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                          Lancamentos (filtro)
+                        </p>
+                        <LineItem label="Entradas" value={summary.income} />
+                        <LineItem label="Saidas" value={summary.expense} />
+                        <div className="border-t border-border/60 pt-2">
+                          <LineItem label="Saldo no periodo" value={summary.balance} strong />
+                        </div>
+                      </div>
+                      <div className="space-y-3 rounded-xl border border-border/60 bg-muted/30 p-4">
+                        <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                          Mes atual (calendario)
+                        </p>
+                        <LineItem label="Entradas" value={monthlyReport.income} />
+                        <LineItem label="Saidas" value={monthlyReport.expense} />
+                        <div className="border-t border-border/60 pt-2">
+                          <LineItem label="Resultado do mes" value={monthlyReport.balance} strong />
+                        </div>
+                        <p className="text-[11px] text-muted-foreground">
+                          {transactions.length} lancamentos no total
+                        </p>
+                      </div>
+                    </>
+                  )}
+                </CardContent>
+              </Card>
+
+              <div className="flex flex-col gap-4">
+                {stockSummary.lowStockCount > 0 && (
+                  <Card className="border-amber-500/40 bg-amber-500/6 shadow-sm dark:bg-amber-950/20">
+                    <CardContent className="flex items-start gap-3 pt-5">
+                      <AlertCircle className="mt-0.5 size-5 shrink-0 text-amber-600" />
+                      <div>
+                        <p className="font-medium text-amber-950 dark:text-amber-100">
+                          {stockSummary.lowStockCount} produto(s) abaixo do minimo
+                        </p>
+                        <Button
+                          variant="link"
+                          className="h-auto p-0 text-amber-800 dark:text-amber-200"
+                          onClick={() => {
+                            setActiveModule("stock")
+                            setActiveStockSection("overview")
+                          }}
+                        >
+                          Revisar estoque
+                        </Button>
+                      </div>
+                    </CardContent>
+                  </Card>
+                )}
+                <Card className="border-border/70 shadow-sm">
+                  <CardHeader className="pb-2">
+                    <CardTitle className="text-base">Mercado Livre</CardTitle>
+                    <CardDescription>Anuncios e pedidos (totais da API)</CardDescription>
+                  </CardHeader>
+                  <CardContent className="grid grid-cols-2 gap-3">
+                    <div className="rounded-lg border border-border/50 bg-muted/20 p-3">
+                      <p className="text-xs text-muted-foreground">Anuncios</p>
+                      <p className="text-xl font-semibold tabular-nums">{mlListingsCount ?? "—"}</p>
+                    </div>
+                    <div className="rounded-lg border border-border/50 bg-muted/20 p-3">
+                      <p className="text-xs text-muted-foreground">Pedidos</p>
+                      <p className="text-xl font-semibold tabular-nums">{mlOrdersCount ?? "—"}</p>
+                    </div>
+                  </CardContent>
+                </Card>
+                <Card className="border-border/70 shadow-sm">
+                  <CardHeader className="pb-2">
+                    <CardTitle className="text-base">Custos no periodo</CardTitle>
+                    <CardDescription className="text-xs">
+                      {hasOrdersFinancialData
+                        ? "Composicao dos pedidos ML no filtro (produto, taxas, frete, etc.)."
+                        : "Despesas por tipo nos lancamentos manuais."}
+                    </CardDescription>
+                  </CardHeader>
+                  <CardContent className="space-y-2 text-sm">
+                    {hasOrdersFinancialData && costComposition.length > 0 ? (
+                      costComposition.map((row) => (
+                        <LineItem key={row.categoryName} label={row.categoryName} value={row.total} />
+                      ))
+                    ) : (
+                      <>
+                        <LineItem label="Operacional" value={costBreakdown.operationalCost} />
+                        <LineItem label="Fixos" value={costBreakdown.fixedCost} />
+                        <LineItem label="Ferramentas (fixo)" value={costBreakdown.toolsFixedCost} />
+                      </>
+                    )}
+                  </CardContent>
+                </Card>
+              </div>
+            </div>
+
+            {homeEvolutionPreview.length > 0 && (
+              <Card className="border-border/70 shadow-sm">
+                <CardHeader className="pb-2">
+                  <CardTitle className="text-base">Receita vs despesas (ultimos meses)</CardTitle>
+                  <CardDescription>
+                    {hasOrdersFinancialData && homeOrdersEvolution.some((p) => p.income > 0 || p.expense > 0)
+                      ? "Agregado por mes a partir dos pedidos Mercado Livre carregados."
+                      : "Baseado nos lancamentos financeiros manuais."}
+                  </CardDescription>
+                </CardHeader>
+                <CardContent>
+                  <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+                    {homeEvolutionPreview.map((point) => {
+                      const max = Math.max(point.income, point.expense, 1)
+                      return (
+                        <div
+                          key={point.key}
+                          className="rounded-xl border border-border/50 bg-muted/20 p-3"
+                        >
+                          <p className="text-xs font-medium text-muted-foreground">{point.monthLabel}</p>
+                          <p className="mt-1 text-sm font-semibold text-emerald-700 dark:text-emerald-400">
+                            + {formatCurrency(point.income)}
+                          </p>
+                          <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-muted">
+                            <div
+                              className="h-full rounded-full bg-emerald-500/80"
+                              style={{ width: `${Math.min(100, (point.income / max) * 100)}%` }}
+                            />
+                          </div>
+                          <p className="mt-2 text-xs text-muted-foreground">
+                            Desp. {formatCurrency(point.expense)}
+                          </p>
+                          <div className="mt-1 h-1.5 overflow-hidden rounded-full bg-muted">
+                            <div
+                              className="h-full rounded-full bg-orange-500/70"
+                              style={{ width: `${Math.min(100, (point.expense / max) * 100)}%` }}
+                            />
+                          </div>
+                        </div>
+                      )
+                    })}
+                  </div>
+                </CardContent>
+              </Card>
+            )}
+
+            <Card className="border-border/70 shadow-sm">
+              <CardHeader className="flex flex-row flex-wrap items-center justify-between gap-2 pb-2">
+                <div>
+                  <CardTitle className="inline-flex items-center gap-2 text-base">
+                    <Trophy className="size-4 text-amber-500" />
+                    Campeoes de lucro
+                  </CardTitle>
+                  <CardDescription>
+                    {hasOrdersFinancialData
+                      ? "Lucro por item nos pedidos ML do periodo (taxas e frete rateados)."
+                      : "Vendas registradas como saida no estoque no periodo filtrado."}
+                  </CardDescription>
+                </div>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="rounded-full"
+                  onClick={() => {
+                    setActiveModule("finance")
+                    setActiveFinanceSection("abc")
+                  }}
+                >
+                  ABC completo
+                </Button>
               </CardHeader>
               <CardContent>
-                {productChampions.length === 0 ? (
+                {homeProductChampions.length === 0 ? (
                   <p className="text-sm text-muted-foreground">
-                    Ainda nao ha vendas suficientes para classificar produtos campeoes.
+                    {hasOrdersFinancialData
+                      ? "Sem itens nos pedidos do periodo ou custos de produto zerados no estoque."
+                      : "Sem vendas no periodo ou cadastre custos nos produtos para ver margem."}
                   </p>
                 ) : (
-                  <Table>
-                    <TableHeader>
-                      <TableRow>
-                        <TableHead>Produto</TableHead>
-                        <TableHead className="text-right">Unidades</TableHead>
-                        <TableHead className="text-right">Receita</TableHead>
-                        <TableHead className="text-right">Lucro</TableHead>
-                        <TableHead className="text-right">Margem</TableHead>
-                      </TableRow>
-                    </TableHeader>
-                    <TableBody>
-                      {productChampions.map((item) => (
-                        <TableRow key={item.productId}>
-                          <TableCell className="max-w-[260px] truncate font-medium">{item.productName}</TableCell>
-                          <TableCell className="text-right">{item.unitsSold}</TableCell>
-                          <TableCell className="text-right">{formatCurrency(item.revenue)}</TableCell>
-                          <TableCell className="text-right">{formatCurrency(item.profit)}</TableCell>
-                          <TableCell className="text-right">{item.marginPercent.toFixed(1)}%</TableCell>
-                        </TableRow>
-                      ))}
-                    </TableBody>
-                  </Table>
+                  <ul className="divide-y divide-border/60">
+                    {homeProductChampions.map((item, index) => (
+                      <li
+                        key={item.productId}
+                        className="flex flex-wrap items-center justify-between gap-3 py-3 first:pt-0"
+                      >
+                        <div className="flex min-w-0 flex-1 items-center gap-3">
+                          <span className="flex size-8 shrink-0 items-center justify-center rounded-full bg-amber-500/15 text-xs font-bold text-amber-800 dark:text-amber-200">
+                            {index + 1}
+                          </span>
+                          <div className="min-w-0">
+                            <p className="truncate font-medium">{item.productName}</p>
+                            <p className="text-xs text-muted-foreground">
+                              {item.unitsSold} un. · margem {item.marginPercent.toFixed(1)}%
+                            </p>
+                          </div>
+                        </div>
+                        <div className="text-right tabular-nums">
+                          <p className={cn("font-semibold", valueToneClass(item.profit))}>
+                            {formatCurrency(item.profit)}
+                          </p>
+                          <p className="text-xs text-muted-foreground">
+                            rec. {formatCurrency(item.revenue)}
+                          </p>
+                        </div>
+                      </li>
+                    ))}
+                  </ul>
                 )}
               </CardContent>
             </Card>
-          </section>
+          </div>
         )}
 
         {activeModule === "finance" && (
@@ -5179,48 +5718,253 @@ export function FinancialDashboard() {
             )}
 
             {activeStockSection === "products" && (
-              <section className="grid gap-4 xl:grid-cols-2">
-                <Card>
-                  <CardHeader>
-                    <CardTitle>Cadastro manual desativado</CardTitle>
+              <section className="mx-auto max-w-5xl space-y-6">
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <div>
+                    <h2 className="text-lg font-semibold tracking-tight">Produtos</h2>
+                    <p className="text-sm text-muted-foreground">
+                      Cadastre itens manualmente ou edite custo e dados; a sync do Mercado Livre atualiza
+                      anuncios vinculados sem apagar produtos manuais.
+                    </p>
+                  </div>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => {
+                      setActiveModule("mercadolivre")
+                    }}
+                  >
+                    Ir para Mercado Livre
+                  </Button>
+                </div>
+
+                {productFeedback && (
+                  <p
+                    className={cn(
+                      "text-sm",
+                      productFeedback.type === "success" ? "text-emerald-700 dark:text-emerald-400" : "text-destructive",
+                    )}
+                  >
+                    {productFeedback.message}
+                  </p>
+                )}
+
+                <Card className="border-border/80 shadow-sm">
+                  <CardHeader className="pb-4">
+                    <CardTitle className="text-base">Novo produto</CardTitle>
                     <CardDescription>
-                      Por enquanto o estoque sera mantido apenas pelas sincronizacoes do Mercado Livre.
+                      Produtos sem ML ficam so aqui; com ML, prefira sync e depois ajuste custo abaixo.
                     </CardDescription>
                   </CardHeader>
-                  <CardContent className="grid gap-3">
-                    <Button
-                      variant="outline"
-                      onClick={() => {
-                        setActiveModule("mercadolivre")
-                      }}
-                    >
-                      Ir para aba Mercado Livre
-                    </Button>
-                    {productFeedback && (
-                      <p
-                        className={cn(
-                          "text-sm",
-                          productFeedback.type === "success" ? "text-primary" : "text-destructive",
-                        )}
-                      >
-                        {productFeedback.message}
-                      </p>
-                    )}
+                  <CardContent className="grid gap-4 sm:grid-cols-2">
+                    <div className="space-y-1.5">
+                      <p className="text-xs font-medium text-muted-foreground">Nome</p>
+                      <Input
+                        placeholder="Ex.: Liquidificador Philco 1200W"
+                        value={productForm.name}
+                        onChange={(event) =>
+                          setProductForm((prev) => ({ ...prev, name: event.target.value }))
+                        }
+                      />
+                    </div>
+                    <div className="space-y-1.5">
+                      <p className="text-xs font-medium text-muted-foreground">SKU</p>
+                      <Input
+                        placeholder="Codigo unico"
+                        value={productForm.sku}
+                        onChange={(event) =>
+                          setProductForm((prev) => ({ ...prev, sku: event.target.value }))
+                        }
+                      />
+                    </div>
+                    <div className="space-y-1.5 sm:col-span-2">
+                      <p className="text-xs font-medium text-muted-foreground">Categoria</p>
+                      <Input
+                        placeholder="Ex.: Eletroportateis"
+                        value={productForm.category}
+                        onChange={(event) =>
+                          setProductForm((prev) => ({ ...prev, category: event.target.value }))
+                        }
+                      />
+                    </div>
+                    <div className="space-y-1.5">
+                      <p className="text-xs font-medium text-muted-foreground">Quantidade em estoque</p>
+                      <Input
+                        type="number"
+                        min={0}
+                        placeholder="0"
+                        value={productForm.quantity}
+                        onChange={(event) =>
+                          setProductForm((prev) => ({ ...prev, quantity: event.target.value }))
+                        }
+                      />
+                    </div>
+                    <div className="space-y-1.5">
+                      <p className="text-xs font-medium text-muted-foreground">Estoque minimo</p>
+                      <Input
+                        type="number"
+                        min={0}
+                        placeholder="0"
+                        value={productForm.minStock}
+                        onChange={(event) =>
+                          setProductForm((prev) => ({ ...prev, minStock: event.target.value }))
+                        }
+                      />
+                    </div>
+                    <div className="space-y-1.5">
+                      <p className="text-xs font-medium text-muted-foreground">Custo unitario (R$)</p>
+                      <Input
+                        type="number"
+                        min={0}
+                        step="0.01"
+                        placeholder="0,00"
+                        value={productForm.unitCost}
+                        onChange={(event) =>
+                          setProductForm((prev) => ({ ...prev, unitCost: event.target.value }))
+                        }
+                      />
+                    </div>
+                    <div className="space-y-1.5">
+                      <p className="text-xs font-medium text-muted-foreground">Preco de venda (opcional)</p>
+                      <Input
+                        type="number"
+                        min={0}
+                        step="0.01"
+                        placeholder="—"
+                        value={productForm.sellingPrice}
+                        onChange={(event) =>
+                          setProductForm((prev) => ({ ...prev, sellingPrice: event.target.value }))
+                        }
+                      />
+                    </div>
+                    <div className="flex flex-wrap gap-2 sm:col-span-2">
+                      <Button onClick={() => void saveProduct()} disabled={!userId}>
+                        Adicionar produto
+                      </Button>
+                    </div>
                   </CardContent>
                 </Card>
-                <Card>
-                  <CardHeader><CardTitle>Produtos cadastrados</CardTitle></CardHeader>
-                  <CardContent>
+
+                {editingProductId && (
+                  <Card className="border-primary/30 bg-primary/3 shadow-sm">
+                    <CardHeader className="pb-2">
+                      <CardTitle className="text-base">Editar produto</CardTitle>
+                      <CardDescription>
+                        Altere o custo unitario para refletir no financeiro, DRE e pedidos.
+                      </CardDescription>
+                    </CardHeader>
+                    <CardContent className="grid gap-4 sm:grid-cols-2">
+                      <div className="space-y-1.5">
+                        <p className="text-xs font-medium text-muted-foreground">Nome</p>
+                        <Input
+                          value={productEditForm.name}
+                          onChange={(event) =>
+                            setProductEditForm((prev) => ({ ...prev, name: event.target.value }))
+                          }
+                        />
+                      </div>
+                      <div className="space-y-1.5">
+                        <p className="text-xs font-medium text-muted-foreground">SKU</p>
+                        <Input
+                          value={productEditForm.sku}
+                          onChange={(event) =>
+                            setProductEditForm((prev) => ({ ...prev, sku: event.target.value }))
+                          }
+                        />
+                      </div>
+                      <div className="space-y-1.5 sm:col-span-2">
+                        <p className="text-xs font-medium text-muted-foreground">Categoria</p>
+                        <Input
+                          value={productEditForm.category}
+                          onChange={(event) =>
+                            setProductEditForm((prev) => ({ ...prev, category: event.target.value }))
+                          }
+                        />
+                      </div>
+                      <div className="space-y-1.5">
+                        <p className="text-xs font-medium text-muted-foreground">Quantidade</p>
+                        <Input
+                          type="number"
+                          min={0}
+                          value={productEditForm.quantity}
+                          onChange={(event) =>
+                            setProductEditForm((prev) => ({ ...prev, quantity: event.target.value }))
+                          }
+                        />
+                      </div>
+                      <div className="space-y-1.5">
+                        <p className="text-xs font-medium text-muted-foreground">Estoque minimo</p>
+                        <Input
+                          type="number"
+                          min={0}
+                          value={productEditForm.minStock}
+                          onChange={(event) =>
+                            setProductEditForm((prev) => ({ ...prev, minStock: event.target.value }))
+                          }
+                        />
+                      </div>
+                      <div className="space-y-1.5">
+                        <p className="text-xs font-medium text-muted-foreground">Custo unitario (R$)</p>
+                        <Input
+                          type="number"
+                          min={0}
+                          step="0.01"
+                          value={productEditForm.unitCost}
+                          onChange={(event) =>
+                            setProductEditForm((prev) => ({ ...prev, unitCost: event.target.value }))
+                          }
+                        />
+                      </div>
+                      <div className="space-y-1.5">
+                        <p className="text-xs font-medium text-muted-foreground">Preco de venda (opcional)</p>
+                        <Input
+                          type="number"
+                          min={0}
+                          step="0.01"
+                          value={productEditForm.sellingPrice}
+                          onChange={(event) =>
+                            setProductEditForm((prev) => ({ ...prev, sellingPrice: event.target.value }))
+                          }
+                        />
+                      </div>
+                      <div className="flex flex-wrap gap-2 sm:col-span-2">
+                        <Button onClick={() => void saveProductEdit()}>Salvar alteracoes</Button>
+                        <Button variant="outline" onClick={() => setEditingProductId(null)}>
+                          Cancelar
+                        </Button>
+                      </div>
+                    </CardContent>
+                  </Card>
+                )}
+
+                <Card className="border-border/80 shadow-sm">
+                  <CardHeader className="pb-2">
+                    <CardTitle className="text-base">Catalogo</CardTitle>
+                    <CardDescription>
+                      {products.length === 0
+                        ? "Nenhum produto ainda. Adicione acima ou sincronize no Mercado Livre."
+                        : `${products.length} produto(s).`}
+                    </CardDescription>
+                  </CardHeader>
+                  <CardContent className="overflow-x-auto">
                     <Table>
                       <TableHeader>
-                        <TableRow><TableHead>Produto</TableHead><TableHead>SKU</TableHead><TableHead>Categoria</TableHead><TableHead>Qtd</TableHead></TableRow>
+                        <TableRow>
+                          <TableHead className="min-w-[200px]">Produto</TableHead>
+                          <TableHead>SKU</TableHead>
+                          <TableHead className="hidden sm:table-cell">Categoria</TableHead>
+                          <TableHead className="text-right">Custo un.</TableHead>
+                          <TableHead className="hidden md:table-cell text-right">Preco</TableHead>
+                          <TableHead>Qtd</TableHead>
+                          <TableHead className="text-right">Acoes</TableHead>
+                        </TableRow>
                       </TableHeader>
                       <TableBody>
                         {products.map((product) => (
-                          <TableRow key={product.id}>
+                          <TableRow key={product.id} className="align-middle">
                             <TableCell>
                               <div className="flex items-center gap-2">
-                                <div className="h-8 w-8 overflow-hidden rounded border bg-muted">
+                                <div className="h-9 w-9 shrink-0 overflow-hidden rounded-md border bg-muted">
                                   {product.imageUrl ? (
                                     <img
                                       src={product.imageUrl}
@@ -5228,15 +5972,51 @@ export function FinancialDashboard() {
                                       className="h-full w-full object-cover"
                                       loading="lazy"
                                     />
-                                  ) : null}
+                                  ) : (
+                                    <div className="flex h-full w-full items-center justify-center text-[10px] text-muted-foreground">
+                                      —
+                                    </div>
+                                  )}
                                 </div>
-                                <span>{product.name}</span>
+                                <div className="min-w-0">
+                                  <p className="line-clamp-2 font-medium leading-snug">{product.name}</p>
+                                  {product.mlItemId && (
+                                    <p className="text-xs text-muted-foreground">ML {product.mlItemId}</p>
+                                  )}
+                                </div>
                               </div>
                             </TableCell>
-                            <TableCell>{product.sku}</TableCell>
-                            <TableCell>{product.category}</TableCell>
+                            <TableCell className="font-mono text-xs">{product.sku}</TableCell>
+                            <TableCell className="hidden sm:table-cell text-muted-foreground">
+                              {product.category}
+                            </TableCell>
+                            <TableCell className="text-right tabular-nums font-medium">
+                              {formatCurrency(product.unitCost)}
+                            </TableCell>
+                            <TableCell className="hidden md:table-cell text-right tabular-nums text-muted-foreground">
+                              {product.sellingPrice != null ? formatCurrency(product.sellingPrice) : "—"}
+                            </TableCell>
                             <TableCell>
                               <StockQuantityIndicator quantity={product.quantity} />
+                            </TableCell>
+                            <TableCell className="text-right">
+                              <div className="flex justify-end gap-1">
+                                <Button
+                                  size="sm"
+                                  variant="outline"
+                                  onClick={() => startEditProduct(product)}
+                                >
+                                  Editar
+                                </Button>
+                                <Button
+                                  size="sm"
+                                  variant="ghost"
+                                  className="text-destructive hover:text-destructive"
+                                  onClick={() => void removeProduct(product)}
+                                >
+                                  Excluir
+                                </Button>
+                              </div>
                             </TableCell>
                           </TableRow>
                         ))}
@@ -5579,7 +6359,8 @@ export function FinancialDashboard() {
                             const product = productMapByMlItemId.get(row.itemId)
                             const unitCost = product?.unitCost ?? 0
                             const difference = row.price - (row.winnerPrice ?? row.price)
-                            const estimatedProfitPerSale = row.price - unitCost
+                            const estimatedFees = row.price * HUB_ML_AVG_FEE_RATE
+                            const estimatedProfitPerSale = row.price - unitCost - estimatedFees - HUB_CENTRALIZE_SHIPPING_PER_ITEM - HUB_CENTRALIZE_PACKAGING_PER_ITEM
                             return (
                               <Card key={row.itemId} className="rounded-none border">
                                 <CardContent className="pt-4">
