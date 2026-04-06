@@ -1,6 +1,6 @@
-import { v } from "convex/values"
+import { v } from "convex/values";
 
-import { mutation, query } from "./_generated/server"
+import { mutation, query } from "./_generated/server";
 
 export const getDashboardData = query({
   args: {
@@ -9,17 +9,21 @@ export const getDashboardData = query({
   handler: async (ctx, args) => {
     const products = await ctx.db
       .query("stockProducts")
-      .withIndex("by_user", (queryBuilder) => queryBuilder.eq("userId", args.userId))
-      .collect()
+      .withIndex("by_user", (queryBuilder) =>
+        queryBuilder.eq("userId", args.userId),
+      )
+      .collect();
 
     const movements = await ctx.db
       .query("stockMovements")
-      .withIndex("by_user", (queryBuilder) => queryBuilder.eq("userId", args.userId))
-      .collect()
+      .withIndex("by_user", (queryBuilder) =>
+        queryBuilder.eq("userId", args.userId),
+      )
+      .collect();
 
-    return { products, movements }
+    return { products, movements };
   },
-})
+});
 
 export const addProduct = mutation({
   args: {
@@ -33,11 +37,13 @@ export const addProduct = mutation({
     sellingPrice: v.optional(v.number()),
   },
   handler: async (ctx, args) => {
-    void ctx
-    void args
-    throw new Error("Cadastro manual de produtos desativado. Use sincronizacao do Mercado Livre.")
+    void ctx;
+    void args;
+    throw new Error(
+      "Cadastro manual de produtos desativado. Use sincronizacao do Mercado Livre.",
+    );
   },
-})
+});
 
 export const updateProduct = mutation({
   args: {
@@ -52,20 +58,22 @@ export const updateProduct = mutation({
     sellingPrice: v.optional(v.number()),
   },
   handler: async (ctx, args) => {
-    const product = await ctx.db.get(args.productId)
+    const product = await ctx.db.get(args.productId);
     if (!product || product.userId !== args.userId) {
-      throw new Error("Produto nao encontrado.")
+      throw new Error("Produto nao encontrado.");
     }
 
-    const normalizedSku = args.sku.trim().toUpperCase()
-    const normalizedName = args.name.trim()
-    const normalizedCategory = args.category.trim()
+    const normalizedSku = args.sku.trim().toUpperCase();
+    const normalizedName = args.name.trim();
+    const normalizedCategory = args.category.trim();
 
     if (!normalizedSku || !normalizedName || !normalizedCategory) {
-      throw new Error("Preencha nome, SKU e categoria do produto.")
+      throw new Error("Preencha nome, SKU e categoria do produto.");
     }
     if (args.quantity < 0 || args.minStock < 0 || args.unitCost < 0) {
-      throw new Error("Quantidade, estoque minimo e custo devem ser maiores ou iguais a zero.")
+      throw new Error(
+        "Quantidade, estoque minimo e custo devem ser maiores ou iguais a zero.",
+      );
     }
 
     const existing = await ctx.db
@@ -73,10 +81,10 @@ export const updateProduct = mutation({
       .withIndex("by_user_sku", (queryBuilder) =>
         queryBuilder.eq("userId", args.userId).eq("sku", normalizedSku),
       )
-      .first()
+      .first();
 
     if (existing && existing._id !== args.productId) {
-      throw new Error("SKU ja existe no estoque.")
+      throw new Error("SKU ja existe no estoque.");
     }
 
     await ctx.db.patch(args.productId, {
@@ -89,9 +97,9 @@ export const updateProduct = mutation({
       unitCostSource: "manual",
       sellingPrice: args.sellingPrice,
       updatedAt: Date.now(),
-    })
+    });
   },
-})
+});
 
 export const upsertCostFromBranchHunter = mutation({
   args: {
@@ -99,44 +107,46 @@ export const upsertCostFromBranchHunter = mutation({
     unitCost: v.number(),
   },
   handler: async (ctx, args) => {
-    const normalizedItemId = args.mlItemId.trim()
+    const normalizedItemId = args.mlItemId.trim();
     if (!normalizedItemId) {
-      throw new Error("mlItemId invalido.")
+      throw new Error("mlItemId invalido.");
     }
     if (!Number.isFinite(args.unitCost) || args.unitCost < 0) {
-      throw new Error("unitCost invalido.")
+      throw new Error("unitCost invalido.");
     }
 
     const products = await ctx.db
       .query("stockProducts")
-      .withIndex("by_ml_item", (queryBuilder) => queryBuilder.eq("mlItemId", normalizedItemId))
-      .collect()
+      .withIndex("by_ml_item", (queryBuilder) =>
+        queryBuilder.eq("mlItemId", normalizedItemId),
+      )
+      .collect();
 
-    let updated = 0
-    let skippedManual = 0
-    const now = Date.now()
+    let updated = 0;
+    let skippedManual = 0;
+    const now = Date.now();
 
     for (const product of products) {
       if (product.unitCostSource === "manual") {
-        skippedManual += 1
-        continue
+        skippedManual += 1;
+        continue;
       }
 
       await ctx.db.patch(product._id, {
         unitCost: args.unitCost,
         unitCostSource: "extension",
         updatedAt: now,
-      })
-      updated += 1
+      });
+      updated += 1;
     }
 
     return {
       totalMatched: products.length,
       updated,
       skippedManual,
-    }
+    };
   },
-})
+});
 
 export const syncFromMercadoLivre = mutation({
   args: {
@@ -153,45 +163,53 @@ export const syncFromMercadoLivre = mutation({
     ),
   },
   handler: async (ctx, args) => {
-    const now = Date.now()
-    const today = new Date().toISOString().slice(0, 10)
-    let created = 0
-    let updated = 0
-    let removedManual = 0
+    const now = Date.now();
+    const today = new Date().toISOString().slice(0, 10);
+    let created = 0;
+    let updated = 0;
+    let removedManual = 0;
 
     const existingProducts = await ctx.db
       .query("stockProducts")
-      .withIndex("by_user", (queryBuilder) => queryBuilder.eq("userId", args.userId))
-      .collect()
+      .withIndex("by_user", (queryBuilder) =>
+        queryBuilder.eq("userId", args.userId),
+      )
+      .collect();
 
-    const manualProducts = existingProducts.filter((product) => !product.mlItemId)
+    const manualProducts = existingProducts.filter(
+      (product) => !product.mlItemId,
+    );
 
     for (const manualProduct of manualProducts) {
       const movements = await ctx.db
         .query("stockMovements")
         .withIndex("by_user_product", (queryBuilder) =>
-          queryBuilder.eq("userId", args.userId).eq("productId", manualProduct._id),
+          queryBuilder
+            .eq("userId", args.userId)
+            .eq("productId", manualProduct._id),
         )
-        .collect()
+        .collect();
 
       for (const movement of movements) {
-        await ctx.db.delete(movement._id)
+        await ctx.db.delete(movement._id);
       }
 
-      await ctx.db.delete(manualProduct._id)
-      removedManual += 1
+      await ctx.db.delete(manualProduct._id);
+      removedManual += 1;
     }
 
     for (const listing of args.listings) {
-      const normalizedSku = (listing.sku?.trim().toUpperCase() || listing.id).slice(0, 64)
-      const nextQuantity = Math.max(0, Math.floor(listing.availableQuantity))
+      const normalizedSku = (
+        listing.sku?.trim().toUpperCase() || listing.id
+      ).slice(0, 64);
+      const nextQuantity = Math.max(0, Math.floor(listing.availableQuantity));
 
       const byMlItem = await ctx.db
         .query("stockProducts")
         .withIndex("by_user_ml_item", (queryBuilder) =>
           queryBuilder.eq("userId", args.userId).eq("mlItemId", listing.id),
         )
-        .first()
+        .first();
 
       const bySku = byMlItem
         ? null
@@ -200,9 +218,9 @@ export const syncFromMercadoLivre = mutation({
             .withIndex("by_user_sku", (queryBuilder) =>
               queryBuilder.eq("userId", args.userId).eq("sku", normalizedSku),
             )
-            .first()
+            .first();
 
-      const existing = byMlItem ?? bySku
+      const existing = byMlItem ?? bySku;
 
       if (existing) {
         await ctx.db.patch(existing._id, {
@@ -213,7 +231,7 @@ export const syncFromMercadoLivre = mutation({
           quantity: nextQuantity,
           sellingPrice: listing.price,
           updatedAt: now,
-        })
+        });
 
         if (existing.quantity !== nextQuantity) {
           await ctx.db.insert("stockMovements", {
@@ -224,11 +242,11 @@ export const syncFromMercadoLivre = mutation({
             date: today,
             note: `Sincronizacao ML: ${existing.quantity} -> ${nextQuantity}`,
             createdAt: now,
-          })
+          });
         }
 
-        updated += 1
-        continue
+        updated += 1;
+        continue;
       }
 
       const productId = await ctx.db.insert("stockProducts", {
@@ -244,7 +262,7 @@ export const syncFromMercadoLivre = mutation({
         sellingPrice: listing.price,
         createdAt: now,
         updatedAt: now,
-      })
+      });
 
       if (nextQuantity > 0) {
         await ctx.db.insert("stockMovements", {
@@ -255,10 +273,10 @@ export const syncFromMercadoLivre = mutation({
           date: today,
           note: "Importado do Mercado Livre",
           createdAt: now,
-        })
+        });
       }
 
-      created += 1
+      created += 1;
     }
 
     return {
@@ -266,9 +284,9 @@ export const syncFromMercadoLivre = mutation({
       updated,
       removedManual,
       total: args.listings.length,
-    }
+    };
   },
-})
+});
 
 export const deleteProduct = mutation({
   args: {
@@ -276,9 +294,9 @@ export const deleteProduct = mutation({
     productId: v.id("stockProducts"),
   },
   handler: async (ctx, args) => {
-    const product = await ctx.db.get(args.productId)
+    const product = await ctx.db.get(args.productId);
     if (!product || product.userId !== args.userId) {
-      throw new Error("Produto nao encontrado.")
+      throw new Error("Produto nao encontrado.");
     }
 
     const movements = await ctx.db
@@ -286,15 +304,15 @@ export const deleteProduct = mutation({
       .withIndex("by_user_product", (queryBuilder) =>
         queryBuilder.eq("userId", args.userId).eq("productId", args.productId),
       )
-      .collect()
+      .collect();
 
     for (const movement of movements) {
-      await ctx.db.delete(movement._id)
+      await ctx.db.delete(movement._id);
     }
 
-    await ctx.db.delete(args.productId)
+    await ctx.db.delete(args.productId);
   },
-})
+});
 
 export const addMovement = mutation({
   args: {
@@ -312,29 +330,31 @@ export const addMovement = mutation({
     note: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
-    const product = await ctx.db.get(args.productId)
+    const product = await ctx.db.get(args.productId);
     if (!product || product.userId !== args.userId) {
-      throw new Error("Produto nao encontrado.")
+      throw new Error("Produto nao encontrado.");
     }
 
-    let nextQuantity = product.quantity
+    let nextQuantity = product.quantity;
 
     if (args.type === "in") {
-      nextQuantity += args.quantity
+      nextQuantity += args.quantity;
     } else if (args.type === "out" || args.type === "sale") {
-      nextQuantity -= args.quantity
+      nextQuantity -= args.quantity;
     } else {
-      nextQuantity = args.quantity
+      nextQuantity = args.quantity;
     }
 
     if (nextQuantity < 0) {
-      throw new Error("Movimentacao invalida: estoque nao pode ficar negativo.")
+      throw new Error(
+        "Movimentacao invalida: estoque nao pode ficar negativo.",
+      );
     }
 
     await ctx.db.patch(args.productId, {
       quantity: nextQuantity,
       updatedAt: Date.now(),
-    })
+    });
 
     const movementId = await ctx.db.insert("stockMovements", {
       userId: args.userId,
@@ -345,19 +365,21 @@ export const addMovement = mutation({
       unitPrice: args.unitPrice,
       note: args.note,
       createdAt: Date.now(),
-    })
+    });
 
     if (args.type === "sale") {
       const categories = await ctx.db
         .query("categories")
-        .withIndex("by_user", (queryBuilder) => queryBuilder.eq("userId", args.userId))
-        .collect()
+        .withIndex("by_user", (queryBuilder) =>
+          queryBuilder.eq("userId", args.userId),
+        )
+        .collect();
 
       let salesCategoryId = categories.find(
         (category) =>
           category.kind === "income" &&
           category.name.toLowerCase() === "vendas de produtos",
-      )?._id
+      )?._id;
 
       if (!salesCategoryId) {
         salesCategoryId = await ctx.db.insert("categories", {
@@ -366,10 +388,11 @@ export const addMovement = mutation({
           kind: "income",
           createdAt: Date.now(),
           updatedAt: Date.now(),
-        })
+        });
       }
 
-      const totalSale = (args.unitPrice ?? product.sellingPrice ?? 0) * args.quantity
+      const totalSale =
+        (args.unitPrice ?? product.sellingPrice ?? 0) * args.quantity;
       if (salesCategoryId && totalSale > 0) {
         await ctx.db.insert("transactions", {
           userId: args.userId,
@@ -380,10 +403,10 @@ export const addMovement = mutation({
           categoryId: salesCategoryId,
           origin: "Venda online",
           createdAt: Date.now(),
-        })
+        });
       }
     }
 
-    return movementId
+    return movementId;
   },
-})
+});

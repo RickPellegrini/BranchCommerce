@@ -9,7 +9,7 @@ export async function GET(request: Request) {
     const url = new URL(request.url)
     const limit = Math.min(Number(url.searchParams.get("limit") ?? 30), 100)
 
-    const transactions = await getTransactions(connection.accessToken, limit)
+    const transactions = await getTransactions(connection.accessToken, connection.mlUserId, limit)
 
     return jsonOk(transactions)
   } catch (error) {

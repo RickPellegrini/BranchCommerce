@@ -21,7 +21,7 @@ type MpPaymentSearch = {
   transaction_amount: number
 }
 
-type MpPaymentDetail = {
+export type MpPaymentDetail = {
   id: number
   transaction_amount: number
   net_received_amount: number
@@ -91,6 +91,18 @@ async function fetchPaymentsBatch(
     }
   }
   return result
+}
+
+/** GET /v1/payments/:id em lote — o search nao traz net_received_amount confiavel. */
+export async function fetchMpPaymentDetailsForIds(
+  ids: number[],
+  accessToken: string,
+): Promise<Map<number, MpPaymentDetail>> {
+  return fetchPaymentsBatch(ids, accessToken)
+}
+
+export function paymentNetReceivedFromDetail(p: MpPaymentDetail): number {
+  return getNetAmount(p)
 }
 
 export async function getFutureReleases(accessToken: string): Promise<DayGroup[]> {

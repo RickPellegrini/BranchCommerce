@@ -1,5 +1,6 @@
 import { getMercadoLivreConfig } from "@/lib/mercadolivre/config"
 
+import { fetchMpPaymentDetailsForIds, paymentNetReceivedFromDetail } from "./future-releases"
 import { mpFetch } from "./http"
 
 type MpBalanceResponse = {
@@ -132,24 +133,123 @@ export async function getBalance(
   )
 }
 
+type MpPaymentSearchRow = {
+  id: number
+  date_created: string
+  description: string
+  transaction_amount: number
+  net_received_amount: number
+  transaction_details?: { net_received_amount?: number }
+  fee_details: Array<{ type: string; amount: number; fee_payer?: string }>
+  status: string
+  status_detail: string
+  operation_type: string
+  payment_type_id: string
+  payer?: { id?: string | number }
+  collector?: { id?: string | number }
+  payer_id?: number
+  collector_id?: number
+}
+
 type MpSearchResponse = {
   paging: { total: number; offset: number; limit: number }
-  results: Array<{
-    id: number
-    date_created: string
-    description: string
-    transaction_amount: number
-    net_received_amount: number
-    fee_details: Array<{ type: string; amount: number }>
-    status: string
-    status_detail: string
-    operation_type: string
-    payment_type_id: string
-  }>
+  results: MpPaymentSearchRow[]
+}
+
+function mpPartyIds(p: MpPaymentSearchRow): { payerId: string | null; collectorId: string | null } {
+  const payerId =
+    p.payer?.id != null ? String(p.payer.id) : p.payer_id != null ? String(p.payer_id) : null
+  const collectorId =
+    p.collector?.id != null
+      ? String(p.collector.id)
+      : p.collector_id != null
+        ? String(p.collector_id)
+        : null
+  return { payerId, collectorId }
+}
+
+/**
+ * Credito = dinheiro entra na sua conta (voce e o collector do pagamento).
+ * Debito = dinheiro sai (voce e o payer e nao e o collector), ex.: Pix enviado, ou cobranca nao aprovada.
+ * Antes: qualquer `approved` virava credito — Pix enviado tambem e approved, gerando o bug.
+ */
+function classifyMpTransactionType(p: MpPaymentSearchRow, accountUserId: string): "credit" | "debit" {
+  const me = String(accountUserId).trim()
+  const { payerId, collectorId } = mpPartyIds(p)
+  const imCollector = collectorId !== null && collectorId === me
+  const imPayer = payerId !== null && payerId === me
+
+  if (imPayer && !imCollector) {
+    return "debit"
+  }
+  if (imCollector) {
+    return p.status === "approved" ? "credit" : "debit"
+  }
+
+  const op = (p.operation_type ?? "").toLowerCase()
+  if (imPayer && collectorId === null && (op === "money_transfer" || op === "account_fund")) {
+    return "debit"
+  }
+
+  if (!imPayer && !imCollector) {
+    if (
+      op === "regular_payment" ||
+      op === "pos_payment" ||
+      op === "ticket" ||
+      op === "digital_currency" ||
+      op === "atm"
+    ) {
+      return p.status === "approved" ? "credit" : "debit"
+    }
+    if (op === "money_transfer" || op === "payout") {
+      return "debit"
+    }
+  }
+
+  if (p.status !== "approved") {
+    return "debit"
+  }
+  console.warn(
+    "[mp-transactions] Fallback credito (sem payer/collector claro):",
+    p.id,
+    op,
+    "payer=",
+    payerId,
+    "collector=",
+    collectorId,
+  )
+  return "credit"
+}
+
+/**
+ * Saldo do MP reflete valor liquido nas vendas (apos taxas). O extrato usava
+ * `transaction_amount` (bruto), inflando o "saldo estimado" vs app oficial.
+ */
+function amountForBalanceLine(
+  p: MpPaymentSearchRow,
+  type: "credit" | "debit",
+): number {
+  if (type === "debit") {
+    return p.transaction_amount
+  }
+  const fromDetails = p.transaction_details?.net_received_amount
+  if (typeof fromDetails === "number" && fromDetails > 0) return fromDetails
+  if (typeof p.net_received_amount === "number" && p.net_received_amount > 0) {
+    return p.net_received_amount
+  }
+  const fd = p.fee_details
+  if (fd && fd.length > 0) {
+    const fees = fd
+      .filter((f) => f.fee_payer === undefined || f.fee_payer === "collector")
+      .reduce((s, f) => s + f.amount, 0)
+    return Math.max(0, p.transaction_amount - fees)
+  }
+  return p.transaction_amount
 }
 
 export async function getTransactions(
   accessToken: string,
+  accountUserId: string,
   limit = 30,
 ): Promise<MpTransaction[]> {
   const raw = await mpFetch<MpSearchResponse>(
@@ -157,12 +257,34 @@ export async function getTransactions(
     accessToken,
   )
 
-  return raw.results.map((p) => ({
-    id: String(p.id),
-    date: p.date_created,
-    description: p.description ?? `${p.operation_type} - ${p.payment_type_id}`,
-    amount: p.transaction_amount,
-    type: p.status === "approved" ? ("credit" as const) : ("debit" as const),
-    status: p.status,
+  const classified = raw.results.map((p) => ({
+    p,
+    type: classifyMpTransactionType(p, accountUserId),
   }))
+
+  const creditIds = [
+    ...new Set(classified.filter((r) => r.type === "credit").map((r) => r.p.id)),
+  ]
+  const detailsById =
+    creditIds.length > 0
+      ? await fetchMpPaymentDetailsForIds(creditIds, accessToken)
+      : new Map()
+
+  return classified.map(({ p, type }) => {
+    let amount: number
+    if (type === "debit") {
+      amount = p.transaction_amount
+    } else {
+      const detail = detailsById.get(p.id)
+      amount = detail ? paymentNetReceivedFromDetail(detail) : amountForBalanceLine(p, type)
+    }
+    return {
+      id: String(p.id),
+      date: p.date_created,
+      description: p.description ?? `${p.operation_type} - ${p.payment_type_id}`,
+      amount,
+      type,
+      status: p.status,
+    }
+  })
 }
