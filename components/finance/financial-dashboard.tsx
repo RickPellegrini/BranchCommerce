@@ -86,11 +86,9 @@ import { cn } from "@/lib/utils"
 import { AnalysisModal } from "@/features/product-analysis/components/AnalysisModal"
 
 /**
- * Unicos valores fixos na secao Mercado Pago (Caixa). O restante vem das APIs.
- * 74,71: so entra no saldo estimado enquanto o extrato nao mostrar debitos.
- * 250: garantia — exibida em box separada, nao somada ao saldo estimado.
+ * Valor fixo só quando a API de saldo está indisponível: referência de garantia.
+ * Saldo estimado não usa complemento manual — alinha com líquido do MP (taxas).
  */
-const MP_SALDO_ESTIMADO_BASE_MANUAL_BRL = 74.71
 const MP_SALDO_ESTIMADO_GARANTIA_MANUAL_BRL = 250
 
 type ModuleKey = "home" | "finance" | "stock" | "mercadolivre" | "branchhunter"
@@ -1240,8 +1238,8 @@ export function FinancialDashboard() {
     setMpError(null)
     try {
       const [balRes, txRes] = await Promise.all([
-        fetch("/api/mp/balance"),
-        fetch("/api/mp/transactions?limit=30"),
+        fetch("/api/mp/balance", { cache: "no-store" }),
+        fetch("/api/mp/transactions?limit=30", { cache: "no-store" }),
       ])
 
       const balJson = await balRes.json()
@@ -1290,7 +1288,7 @@ export function FinancialDashboard() {
     setMpFutureLoading(true)
     setMpFutureStatus(null)
     try {
-      const res = await fetch("/api/mp/future-releases")
+      const res = await fetch("/api/mp/future-releases", { cache: "no-store" })
       const json = await res.json()
 
       if (!json.ok) {
@@ -1362,21 +1360,10 @@ export function FinancialDashboard() {
     return s
   }, [mpDayGroups])
 
-  const mpExtratoTemSaida = useMemo(
-    () => mpTransactions.some((t) => t.type === "debit"),
-    [mpTransactions],
-  )
-
-  /** 74,71 so com extrato sem debitos; compras/uso do saldo aparecem no extrato e esse complemento deixa de somar. */
-  const mpSaldoBaseManualEfetivo = mpExtratoTemSaida ? 0 : MP_SALDO_ESTIMADO_BASE_MANUAL_BRL
-
   const mpSaldoEstimadoSemApi = useMemo(
     () =>
-      mpExtratoLiquidoSemDuplicarFuturo +
-      mpFuturePendingAteHoje -
-      mpFutureAPagarTotal +
-      mpSaldoBaseManualEfetivo,
-    [mpExtratoLiquidoSemDuplicarFuturo, mpFuturePendingAteHoje, mpSaldoBaseManualEfetivo],
+      mpExtratoLiquidoSemDuplicarFuturo + mpFuturePendingAteHoje - mpFutureAPagarTotal,
+    [mpExtratoLiquidoSemDuplicarFuturo, mpFuturePendingAteHoje],
   )
 
   const financeData = useQuery(
@@ -4775,28 +4762,12 @@ export function FinancialDashboard() {
                               {formatCurrency(mpSaldoEstimadoSemApi)}
                             </p>
                             <p className="mt-3 text-xs leading-relaxed text-muted-foreground">
-                              A API nao libera o saldo para esta conta; estimativa ate{" "}
-                              <span className="font-medium text-foreground">hoje</span> com extrato e
-                              lancamentos futuros (API). Dinheiro em garantia esta no box acima, separado
-                              deste saldo.{" "}
-                              {mpExtratoTemSaida ? (
-                                <>
-                                  Com saidas no extrato, os{" "}
-                                  <span className="font-medium text-foreground">
-                                    {formatCurrency(MP_SALDO_ESTIMADO_BASE_MANUAL_BRL)}
-                                  </span>{" "}
-                                  de complemento manual nao entram — so o que vem das APIs entra aqui.
-                                </>
-                              ) : (
-                                <>
-                                  Sem debito no extrato ainda, somam-se os{" "}
-                                  <span className="font-medium text-foreground">
-                                    {formatCurrency(MP_SALDO_ESTIMADO_BASE_MANUAL_BRL)}
-                                  </span>{" "}
-                                  nao expostos pela API (unico fixo neste valor).
-                                </>
-                              )}{" "}
-                              Confira no app do Mercado Pago.
+                              A API nao libera o saldo oficial para esta conta. A estimativa usa os ultimos
+                              lancamentos (valor <span className="font-medium text-foreground">liquido</span>{" "}
+                              nas vendas, como no MP) mais liberacoes previstas para{" "}
+                              <span className="font-medium text-foreground">hoje</span>. Nao inclui
+                              movimentos fora dessa janela nem saldo anterior — o numero do app Mercado Pago
+                              e a referencia. Garantia no box acima, separada deste saldo.
                             </p>
                           </div>
                         ) : mpSaldoOculto && mpBalance ? (
