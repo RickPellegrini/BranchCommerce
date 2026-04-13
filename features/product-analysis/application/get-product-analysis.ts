@@ -1,51 +1,335 @@
-import type { FullAnalysis } from "@/features/product-analysis/domain/types"
+import type {
+  FullAnalysis,
+  MlItemFull,
+  MlProduct,
+  CatalogCompetitor,
+  CompetitorEntry,
+} from "@/features/product-analysis/domain/types"
 import { createAnalysisLogger } from "@/features/product-analysis/infra/logger"
-import { getItem, getPriceToWin, getVisitsBatch } from "@/features/product-analysis/infra/ml-api"
+import {
+  getItem,
+  getProduct,
+  getProductItems,
+  getSellersBatch,
+  getCompetitorVisits,
+  getPriceToWin,
+  getVisitsBatch,
+  MlUpstreamError,
+} from "@/features/product-analysis/infra/ml-api"
 import { dateRange } from "@/features/product-analysis/utils/dates"
 import { buildCatalogSection } from "@/features/product-analysis/application/build-catalog-section"
-import { discoverCompetitors } from "@/features/product-analysis/application/discover-competitors"
 import { aggregateCompetitors } from "@/features/product-analysis/application/aggregate-competitors"
 
-export async function getProductAnalysis(token: string, itemId: string): Promise<FullAnalysis> {
-  const logger = createAnalysisLogger()
-  logger.log("start", `Analysing item ${itemId}`)
+// ─── Types ──────────────────────────────────────────────────────────
 
+type ResolveResult =
+  | {
+      type: "catalog_product"
+      catalogProductId: string
+      listings: CatalogCompetitor[]
+      product: MlProduct
+    }
+  | {
+      type: "item"
+      item: MlItemFull
+    }
+
+// ─── Synthesize MlItemFull from product + first listing ─────────────
+// Used when /items/{id} is blocked (third-party items).
+// Combines /products/{id} metadata with /products/{id}/items first listing.
+
+function synthesizeItem(
+  product: MlProduct,
+  firstListing: CatalogCompetitor,
+): MlItemFull {
+  const firstPic = product.pictures?.[0]
+  const thumbnailUrl = firstPic
+    ? firstPic.url.replace("-F.jpg", "-I.jpg")
+    : ""
+
+  return {
+    id: firstListing.item_id,
+    title: product.name,
+    site_id: firstListing.site_id ?? "MLB",
+    category_id: firstListing.category_id ?? "",
+    domain_id: product.domain_id,
+    price: firstListing.price,
+    original_price: firstListing.original_price ?? null,
+    currency_id: firstListing.currency_id ?? "BRL",
+    available_quantity: 0,
+    sold_quantity: 0,
+    listing_type_id: firstListing.listing_type_id ?? "gold_special",
+    condition: firstListing.condition ?? "new",
+    permalink: `https://www.mercadolivre.com.br/p/${product.id}`,
+    thumbnail: thumbnailUrl,
+    pictures: (product.pictures ?? []).map((p) => ({
+      id: p.id,
+      url: p.url,
+      secure_url: p.url.replace("http://", "https://"),
+    })),
+    attributes: (product.attributes ?? []).map((a) => ({
+      id: a.id,
+      name: a.name,
+      value_id: a.value_id ?? null,
+      value_name: a.value_name ?? null,
+      values: a.values,
+    })),
+    tags: firstListing.tags ?? [],
+    catalog_product_id: product.id,
+    seller_id: firstListing.seller_id,
+    official_store_id: firstListing.official_store_id ?? null,
+    status: "active",
+    date_created: product.date_created ?? undefined,
+    shipping: {
+      logistic_type: firstListing.shipping?.logistic_type,
+      free_shipping: firstListing.shipping?.free_shipping,
+      mode: firstListing.shipping?.mode,
+      tags: firstListing.shipping?.tags,
+    },
+    seller_address: {
+      city: firstListing.seller_address?.city,
+      state: firstListing.seller_address?.state,
+    },
+    catalog_listing: true,
+  }
+}
+
+// ─── Step 1: Catalog-first resolution ───────────────────────────────
+
+async function resolveId(
+  rawId: string,
+  token: string,
+  logger: ReturnType<typeof createAnalysisLogger>,
+): Promise<ResolveResult> {
+  // Strategy A — catalog-first: /products/{rawId}/items + /products/{rawId}
+  logger.log("resolve:A", `GET /products/${rawId}/items (with token)`)
+  try {
+    const [itemsRes, product] = await Promise.all([
+      getProductItems(rawId, token),
+      getProduct(rawId, token),
+    ])
+    const listings = itemsRes.results ?? []
+
+    if (listings.length > 0) {
+      logger.log(
+        "resolve:A",
+        `✓ CATALOG_RESOLVED — "${product.name}", ${listings.length} listings`,
+      )
+      return {
+        type: "catalog_product",
+        catalogProductId: rawId,
+        listings,
+        product,
+      }
+    }
+    logger.log("resolve:A", `✗ 0 listings — not a valid catalog`)
+  } catch (err: unknown) {
+    if (err instanceof MlUpstreamError) {
+      logger.log("resolve:A", `✗ ML ${err.mlStatus} — not a catalog_product_id`)
+    } else {
+      logger.log("resolve:A", `✗ ${String(err)}`)
+    }
+  }
+
+  // Strategy B — item fallback: /items/{rawId} (works for user's own items)
+  logger.log("resolve:B", `GET /items/${rawId} (with token)`)
+  try {
+    const item = await getItem(rawId, token)
+    logger.log(
+      "resolve:B",
+      `✓ ITEM_RESOLVED — "${item.title}" (catalog=${item.catalog_product_id ?? "none"})`,
+    )
+    return { type: "item", item }
+  } catch (err: unknown) {
+    if (err instanceof MlUpstreamError) {
+      logger.log("resolve:B", `✗ ML ${err.mlStatus}: ${err.bodyText.slice(0, 200)}`)
+    } else {
+      logger.log("resolve:B", `✗ ${String(err)}`)
+    }
+  }
+
+  throw new Error("UNRESOLVABLE_ID: ID nao encontrado nem como catalogo nem como item.")
+}
+
+// ─── Competitor mapping ─────────────────────────────────────────────
+
+function catalogListingToCompetitor(c: CatalogCompetitor): CompetitorEntry {
+  const city = c.seller_address?.city?.name
+  const state = c.seller_address?.state?.name
+  return {
+    itemId: c.item_id,
+    sellerId: c.seller_id,
+    price: c.price,
+    originalPrice: c.original_price ?? null,
+    condition: c.condition ?? null,
+    listingType: c.listing_type_id ?? null,
+    officialStore: c.official_store_id != null && c.official_store_id > 0,
+    freeShipping: !!c.shipping?.free_shipping,
+    shippingMode: c.shipping?.mode ?? null,
+    logisticType: c.shipping?.logistic_type ?? null,
+    tier: c.tier ?? null,
+    warranty: c.warranty ?? null,
+    location: [city, state].filter(Boolean).join(", ") || null,
+    tags: c.tags ?? [],
+    title: null,
+    sellerNickname: null,
+    sellerPowerStatus: null,
+    sellerRepLevel: null,
+    sellerTotalTransactions: null,
+    sellerPermalink: null,
+    thumbnail: null,
+    permalink: null,
+    visits30d: null,
+    visitsShare: null,
+  }
+}
+
+// ─── Main orchestration ─────────────────────────────────────────────
+
+export async function getProductAnalysis(
+  token: string,
+  receivedId: string,
+): Promise<FullAnalysis> {
+  const logger = createAnalysisLogger()
+  logger.log("start", `receivedId=${receivedId}`)
   const t0 = Date.now()
 
-  // Step 1: Load base item (own listing only)
-  const item = await getItem(token, itemId)
-  logger.log("item", `Loaded ${item.id}: "${item.title}"`)
+  const resolved = await resolveId(receivedId, token, logger)
 
-  // Step 2: Catalog enrichment (parallel)
+  let item: MlItemFull
+  let catalogProductId: string | null
+  let allListings: CatalogCompetitor[] = []
+
+  if (resolved.type === "catalog_product") {
+    allListings = resolved.listings
+    catalogProductId = resolved.catalogProductId
+    item = synthesizeItem(resolved.product, resolved.listings[0])
+    logger.log(
+      "resolve",
+      `resolvedType=catalog_product, catalogProductId=${catalogProductId}, ` +
+        `representativeItem=${item.id}, totalListings=${allListings.length}`,
+    )
+  } else {
+    item = resolved.item
+    catalogProductId = item.catalog_product_id ?? null
+    logger.log("resolve", `resolvedType=item, itemId=${item.id}`)
+
+    // If the item belongs to a catalog, fetch competitors
+    if (catalogProductId) {
+      logger.log("discover", `Item has catalog_product_id=${catalogProductId}, fetching listings`)
+      try {
+        const res = await getProductItems(catalogProductId, token)
+        allListings = res.results ?? []
+        logger.log("discover", `✓ ${allListings.length} listings`)
+      } catch (err: unknown) {
+        const detail =
+          err instanceof MlUpstreamError ? `ML ${err.mlStatus}` : String(err)
+        logger.log("discover", `✗ ${detail} — continuing without competitors`)
+      }
+    }
+  }
+
+  // Build competitors from catalog listings
+  const competitors = allListings
+    .filter((c) => c.item_id !== item.id)
+    .map(catalogListingToCompetitor)
+
+  logger.log(
+    "competitors",
+    `total=${allListings.length}, afterExcludingSelf=${competitors.length}`,
+  )
+
+  // Enrich competitors: sellers + visits (in parallel)
+  const uniqueSellerIds = [...new Set(competitors.map((c) => c.sellerId))]
+  const competitorItemIds = competitors.map((c) => c.itemId)
+  logger.log(
+    "enrich_competitors",
+    `Fetching ${uniqueSellerIds.length} sellers + ${competitorItemIds.length} visits`,
+  )
+  const enrichCompT0 = Date.now()
+
+  const [sellersResult, visitsResult] = await Promise.allSettled([
+    getSellersBatch(token, uniqueSellerIds),
+    getCompetitorVisits(token, competitorItemIds),
+  ])
+
+  const sellersMap =
+    sellersResult.status === "fulfilled" ? sellersResult.value : new Map<number, import("@/features/product-analysis/domain/types").MlSeller>()
+  const visitsMap =
+    visitsResult.status === "fulfilled" ? visitsResult.value : new Map<string, number>()
+
+  const totalVisits = Array.from(visitsMap.values()).reduce((a, b) => a + b, 0)
+
+  for (const comp of competitors) {
+    const seller = sellersMap.get(comp.sellerId)
+    if (seller) {
+      comp.sellerNickname = seller.nickname
+      comp.sellerPowerStatus = seller.seller_reputation?.power_seller_status ?? null
+      comp.sellerRepLevel = seller.seller_reputation?.level_id ?? null
+      comp.sellerTotalTransactions = seller.seller_reputation?.transactions?.total ?? null
+      comp.sellerPermalink = seller.permalink ?? null
+      if (!comp.location && seller.address) {
+        const city = seller.address.city
+        const state = seller.address.state?.replace("BR-", "")
+        comp.location = [city, state].filter(Boolean).join(", ") || null
+      }
+    }
+    const v = visitsMap.get(comp.itemId)
+    if (v != null) {
+      comp.visits30d = v
+      comp.visitsShare = totalVisits > 0 ? (v / totalVisits) * 100 : 0
+    }
+  }
+
+  logger.log(
+    "enrich_competitors",
+    `✓ ${sellersMap.size} sellers, ${visitsMap.size} visits (total=${totalVisits}) in ${Date.now() - enrichCompT0}ms`,
+  )
+
+  const summary = aggregateCompetitors(competitors, item.price)
+  logger.log(
+    "compute",
+    `min=${summary.minPrice}, max=${summary.maxPrice}, avg=${summary.avgPrice}, ` +
+      `median=${summary.medianPrice}, freeShipping=${summary.freeShippingCount}, ` +
+      `fulfillment=${summary.fulfillmentCount}, officialStore=${summary.officialStoreCount}`,
+  )
+
+  // Private enrichment: price_to_win + visits (may fail for third-party items)
   const range7 = dateRange(7)
   const range30 = dateRange(30)
 
-  const catalogT0 = Date.now()
+  logger.log("enrich", "price_to_win + visits (private, may 403 for third-party)")
+  const enrichT0 = Date.now()
   const [ptw, visits7, visits30] = await Promise.all([
     getPriceToWin(token, item.id),
-    getVisitsBatch(token, [item.id], range7.from, range7.to).then((m) => m.get(item.id) ?? null),
-    getVisitsBatch(token, [item.id], range30.from, range30.to).then((m) => m.get(item.id) ?? null),
+    getVisitsBatch(token, [item.id], range7.from, range7.to).then(
+      (m) => m.get(item.id) ?? null,
+    ),
+    getVisitsBatch(token, [item.id], range30.from, range30.to).then(
+      (m) => m.get(item.id) ?? null,
+    ),
   ])
-  const catalogMs = Date.now() - catalogT0
-  logger.log("catalog", `PriceToWin status=${ptw?.status ?? "N/A"}, visits7d=${visits7}, visits30d=${visits30}`, catalogMs)
+  const catalogMs = Date.now() - enrichT0
+  logger.log(
+    "enrich",
+    `✓ ptw=${ptw?.status ?? "N/A"}, visits7d=${visits7}, visits30d=${visits30}`,
+    catalogMs,
+  )
 
   const catalog = buildCatalogSection(item, visits7, visits30, ptw)
+  const totalMs = Date.now() - t0
 
-  // Step 3: Discover competitors (direct mapping, no enrichment)
-  const compT0 = Date.now()
-  const { competitors, strategy, rawCount } = await discoverCompetitors(token, item, logger)
-  logger.log("discover_done", `Strategy: ${strategy}, raw: ${rawCount}, final: ${competitors.length}`, competitors.length)
-
-  // Step 4: Aggregate
-  const summary = aggregateCompetitors(competitors, item.price)
-  const competitorsMs = Date.now() - compT0
-  logger.log("done", `Total competitors: ${competitors.length}, total time: ${Date.now() - t0}ms`)
+  logger.log(
+    "done",
+    `resolvedType=${resolved.type}, strategy=catalog_product_items, ` +
+      `competitors=${competitors.length}, totalTime=${totalMs}ms`,
+  )
 
   return {
     catalog,
     competitors: {
-      strategy,
-      totalCandidatesRaw: rawCount,
+      strategy: "catalog_product_items",
+      totalCandidatesRaw: allListings.length,
       totalAfterFilters: competitors.length,
       competitors,
       summary,
@@ -53,9 +337,9 @@ export async function getProductAnalysis(token: string, itemId: string): Promise
     logs: logger.entries,
     fetchedAt: new Date().toISOString(),
     timings: {
-      totalMs: Date.now() - t0,
+      totalMs,
       catalogMs,
-      competitorsMs,
+      competitorsMs: Date.now() - enrichT0,
     },
   }
 }

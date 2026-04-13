@@ -44,6 +44,13 @@ import {
   TrendingDown,
   Wallet,
   Wrench,
+  ChevronRight,
+  HelpCircle,
+  MessageSquare,
+  Megaphone,
+  Settings,
+  Users,
+  Star,
 } from "lucide-react"
 import Image from "next/image"
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
@@ -85,6 +92,7 @@ import type {
 } from "@/lib/finance/types"
 import { cn } from "@/lib/utils"
 import { AnalysisModal } from "@/features/product-analysis/components/AnalysisModal"
+import { HunterAnalysisPage } from "@/features/product-analysis/components/HunterAnalysisPage"
 
 /**
  * Valor fixo só quando a API de saldo está indisponível: referência de garantia.
@@ -97,6 +105,7 @@ type FinanceSection = "overview" | "abc" | "dre" | "expenses" | "categories" | "
 type StockSection = "overview" | "products" | "movements" | "history"
 type MlSection = "listings" | "orders" | "metrics"
 type MlSidebarGroup = "anuncios" | "pedidos" | "metricas"
+type HunterSection = "padrao" | "analise-anuncio" | "quirografados" | "concorrentes" | "metricas-analise"
 
 type StockProduct = {
   id: string
@@ -1136,6 +1145,7 @@ export function FinancialDashboard() {
   const [activeStockSection, setActiveStockSection] = useState<StockSection>("overview")
   const [activeMlSection, setActiveMlSection] = useState<MlSection>("listings")
   const [activeMlSidebarGroup, setActiveMlSidebarGroup] = useState<MlSidebarGroup>("anuncios")
+  const [activeHunterSection, setActiveHunterSection] = useState<HunterSection>("analise-anuncio")
   const [period, setPeriod] = useState<FinancialPeriod>("month")
   const [filters, setFilters] = useState<TransactionFilters>(() => ({
     kind: "all",
@@ -3154,6 +3164,17 @@ export function FinancialDashboard() {
               label="Metricas"
               isActive={activeMlSidebarGroup === "metricas"}
               onClick={() => setActiveMlSidebarGroup("metricas")}
+            />
+          </>
+        )}
+        {activeModule === "branchhunter" && (
+          <>
+            <p className="text-xs text-muted-foreground">Analise e metricas</p>
+            <SidebarButton
+              icon={Search}
+              label="Analise de Anuncio"
+              isActive={activeHunterSection === "analise-anuncio"}
+              onClick={() => setActiveHunterSection("analise-anuncio")}
             />
           </>
         )}
@@ -7061,7 +7082,7 @@ export function FinancialDashboard() {
           </section>
         )}
 
-        {activeModule === "branchhunter" && (
+        {activeModule === "branchhunter" && activeHunterSection === "padrao" && (
           <Card className="border-emerald-600/40">
             <CardHeader>
               <CardTitle className="text-emerald-700">Branch Hunter</CardTitle>
@@ -7085,6 +7106,11 @@ export function FinancialDashboard() {
             </CardContent>
           </Card>
         )}
+
+        {activeModule === "branchhunter" && activeHunterSection === "analise-anuncio" && (
+          <HunterAnalysisPage />
+        )}
+
 
         {activeModule === "mercadolivre" && analysisItemId && (
           <AnalysisModal

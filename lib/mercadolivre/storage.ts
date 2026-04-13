@@ -4,6 +4,17 @@ import { api } from "@/convex/_generated/api"
 import { getMercadoLivreConfig } from "@/lib/mercadolivre/config"
 import { refreshMlAccessToken } from "@/lib/mercadolivre/oauth"
 import type { MlTokenResponse } from "@/lib/mercadolivre/types"
+import { encryptToken, decryptToken, isEncrypted } from "@/lib/crypto/token-cipher"
+
+function safeDecrypt(value: string): string {
+  if (!value) return value
+  return isEncrypted(value) ? decryptToken(value) : value
+}
+
+function safeEncrypt(value: string): string {
+  if (!value) return value
+  return isEncrypted(value) ? value : encryptToken(value)
+}
 
 type MlConnection = Awaited<
   ReturnType<typeof getMlConnectionByAppUser>
@@ -41,7 +52,11 @@ export async function upsertMlConnection(params: {
   expiresAt: number
 }) {
   const client = getConvexClient()
-  await client.mutation(api.mercadolivre.upsertConnection, params)
+  await client.mutation(api.mercadolivre.upsertConnection, {
+    ...params,
+    accessToken: safeEncrypt(params.accessToken),
+    refreshToken: safeEncrypt(params.refreshToken),
+  })
 }
 
 export async function updateMlTokens(params: {
@@ -54,13 +69,27 @@ export async function updateMlTokens(params: {
   expiresAt: number
 }) {
   const client = getConvexClient()
-  await client.mutation(api.mercadolivre.updateTokens, params)
+  await client.mutation(api.mercadolivre.updateTokens, {
+    ...params,
+    accessToken: safeEncrypt(params.accessToken),
+    refreshToken: safeEncrypt(params.refreshToken),
+  })
 }
 
 export async function disconnectMlConnection(appUserId: string) {
   const client = getConvexClient()
   // Convex codegen may be out-of-date until next `npx convex dev`.
   return client.mutation((api as any).mercadolivre.disconnectConnection, { appUserId })
+}
+
+function decryptConnection<T extends { accessToken: string; refreshToken: string }>(
+  conn: T,
+): T {
+  return {
+    ...conn,
+    accessToken: safeDecrypt(conn.accessToken),
+    refreshToken: safeDecrypt(conn.refreshToken),
+  }
 }
 
 async function refreshConnection(connection: Exclude<MlConnection, null>) {
@@ -88,14 +117,16 @@ async function refreshConnection(connection: Exclude<MlConnection, null>) {
   }
 }
 
+const REFRESH_THRESHOLD_MS = 600_000
+
 export async function getValidMlConnection(appUserId: string) {
-  const connection = await getMlConnectionByAppUser(appUserId)
-  if (!connection) {
+  const raw = await getMlConnectionByAppUser(appUserId)
+  if (!raw) {
     throw new Error("Conta do Mercado Livre nao conectada.")
   }
 
-  const refreshThresholdMs = 60_000
-  if (connection.expiresAt <= Date.now() + refreshThresholdMs) {
+  const connection = decryptConnection(raw)
+  if (connection.expiresAt <= Date.now() + REFRESH_THRESHOLD_MS) {
     return refreshConnection(connection)
   }
 
@@ -103,13 +134,13 @@ export async function getValidMlConnection(appUserId: string) {
 }
 
 export async function getValidMlConnectionByMlUserId(mlUserId: string) {
-  const connection = await getMlConnectionByMlUserId(mlUserId)
-  if (!connection) {
+  const raw = await getMlConnectionByMlUserId(mlUserId)
+  if (!raw) {
     throw new Error("Conta do Mercado Livre nao conectada.")
   }
 
-  const refreshThresholdMs = 60_000
-  if (connection.expiresAt <= Date.now() + refreshThresholdMs) {
+  const connection = decryptConnection(raw)
+  if (connection.expiresAt <= Date.now() + REFRESH_THRESHOLD_MS) {
     return refreshConnection(connection)
   }
 
@@ -117,13 +148,13 @@ export async function getValidMlConnectionByMlUserId(mlUserId: string) {
 }
 
 export async function getAnyValidMlConnection() {
-  const connection = await getAnyMlConnection()
-  if (!connection) {
+  const raw = await getAnyMlConnection()
+  if (!raw) {
     throw new Error("Conta do Mercado Livre nao conectada.")
   }
 
-  const refreshThresholdMs = 60_000
-  if (connection.expiresAt <= Date.now() + refreshThresholdMs) {
+  const connection = decryptConnection(raw)
+  if (connection.expiresAt <= Date.now() + REFRESH_THRESHOLD_MS) {
     return refreshConnection(connection)
   }
 
@@ -134,7 +165,7 @@ export async function fetchMlApi<T>(path: string, accessToken: string): Promise<
   return requestMlApi<T>(path, accessToken, { method: "GET" })
 }
 
-export async function requestMlApi<T>(
+async function doMlRequest<T>(
   path: string,
   accessToken: string,
   init?: {
@@ -155,10 +186,31 @@ export async function requestMlApi<T>(
 
   if (!response.ok) {
     const errorPayload = await response.text()
-    throw new Error(`Erro Mercado Livre (${response.status}): ${errorPayload}`)
+    throw new MlApiError(response.status, errorPayload)
   }
 
   return (await response.json()) as T
+}
+
+export class MlApiError extends Error {
+  constructor(
+    public readonly status: number,
+    public readonly body: string,
+  ) {
+    super(`Erro Mercado Livre (${status}): ${body}`)
+    this.name = "MlApiError"
+  }
+}
+
+export async function requestMlApi<T>(
+  path: string,
+  accessToken: string,
+  init?: {
+    method?: "GET" | "PUT" | "POST"
+    body?: unknown
+  },
+): Promise<T> {
+  return doMlRequest<T>(path, accessToken, init)
 }
 
 export function parseTokenToConnection(params: {

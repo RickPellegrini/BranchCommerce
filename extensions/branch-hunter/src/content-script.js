@@ -374,7 +374,12 @@
             </span>
             <p class="section-title">Dados dinamicos Mercado Livre</p>
           </div>
-          <div class="dynamic-row"><span class="row-label"><svg class="row-icon" viewBox="0 0 24 24" fill="none"><path d="M12 3v18M3 12h18" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>Preco anuncio</span><div><strong id="bh-dyn-sale-price">--</strong> <small id="bh-src-sale-price">(indisponivel)</small></div></div>
+          <div>
+            <div class="dynamic-row"><span class="row-label"><svg class="row-icon" viewBox="0 0 24 24" fill="none"><path d="M12 3v18M3 12h18" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>Preco anuncio</span><div style="display:flex;align-items:center;gap:6px;"><strong id="bh-dyn-sale-price">--</strong> <small id="bh-src-sale-price">(indisponivel)</small><label class="switch-inline switch-blue" style="margin-left:4px;"><input id="bh-sale-price-manual-toggle" type="checkbox"> Manual</label></div></div>
+            <div id="bh-sale-price-manual-wrap" style="display:none;margin-top:6px;">
+              <label>Preco do anuncio (R$)<input id="bh-sale-price-manual-input" type="number" step="0.01" min="0" value="0"></label>
+            </div>
+          </div>
           <div class="dynamic-row"><span class="row-label"><svg class="row-icon" viewBox="0 0 24 24" fill="none"><path d="M4 7h16M4 12h10M4 17h7" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>Tipo anuncio</span><div><strong id="bh-dyn-listing-type">--</strong> <small id="bh-src-listing-type">(indisponivel)</small></div></div>
           <div class="dynamic-row"><span class="row-label"><svg class="row-icon" viewBox="0 0 24 24" fill="none"><path d="M3 10h18M7 6h10M7 14h10M7 18h6" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>Taxa ML</span><div><strong id="bh-dyn-fee">--</strong> <small id="bh-src-fee">(indisponivel)</small></div></div>
           <div class="dynamic-row"><span class="row-label"><svg class="row-icon" viewBox="0 0 24 24" fill="none"><path d="M4 5h16v14H4zM8 9h8" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>Categoria</span><div><strong id="bh-dyn-category">--</strong></div></div>
@@ -475,6 +480,9 @@
     return {
       dynSalePrice: $("bh-dyn-sale-price"),
       srcSalePrice: $("bh-src-sale-price"),
+      salePriceManualToggle: $("bh-sale-price-manual-toggle"),
+      salePriceManualWrap: $("bh-sale-price-manual-wrap"),
+      salePriceManualInput: $("bh-sale-price-manual-input"),
       dynListingType: $("bh-dyn-listing-type"),
       srcListingType: $("bh-src-listing-type"),
       dynFee: $("bh-dyn-fee"),
@@ -505,9 +513,20 @@
     };
   }
 
-  function readManualMarketplaceValues() {
+  function applySalePriceUiState(elements) {
+    const manual = Boolean(elements.salePriceManualToggle.checked);
+    elements.salePriceManualWrap.style.display = manual ? "block" : "none";
+    elements.salePriceManualInput.disabled = !manual;
+  }
+
+  function readManualMarketplaceValues(elements) {
+    const forceManualSalePrice = elements && Boolean(elements.salePriceManualToggle.checked);
+    const manualSalePrice = forceManualSalePrice
+      ? toNumber(elements.salePriceManualInput.value, 0)
+      : null;
     return {
-      salePrice: null,
+      salePrice: manualSalePrice,
+      forceManualSalePrice,
       listingType: null,
       saleFeePercent: state.manualSaleFeePercentFallback,
     };
@@ -611,7 +630,7 @@
   async function buildCalculationContext(elements, options = {}) {
     const shouldRefreshMarketplace =
       options.refreshMarketplace === true || !state.marketplaceDataCache;
-    const manualMarketplace = readManualMarketplaceValues();
+    const manualMarketplace = readManualMarketplaceValues(elements);
     const operation = readOperationValues(elements);
     let marketplace = state.marketplaceDataCache;
 
@@ -621,6 +640,17 @@
         manualFallback: manualMarketplace,
       });
       state.marketplaceDataCache = marketplace;
+    }
+
+    if (manualMarketplace.forceManualSalePrice) {
+      marketplace = {
+        ...marketplace,
+        salePrice: manualMarketplace.salePrice,
+        source: {
+          ...(marketplace?.source || {}),
+          salePrice: "manual",
+        },
+      };
     }
 
     return { marketplace, operation, manualMarketplace };
@@ -681,6 +711,9 @@
     elements.freeShippingToggle.checked = values.freeShippingEnabled ?? true;
     elements.shippingFallback.value = String(values.shippingFallback ?? 12);
     elements.shippingManualToggle.checked = Boolean(values.forceManualShipping);
+    elements.salePriceManualToggle.checked = Boolean(values.forceManualSalePrice);
+    elements.salePriceManualInput.value = String(values.manualSalePrice ?? 0);
+    applySalePriceUiState(elements);
     applyShippingUiState(elements);
   }
 
@@ -706,6 +739,8 @@
     setOperationInputs(elements, {
       ...settings.defaults,
       ...(saved?.operation || {}),
+      forceManualSalePrice: saved?.manualMarketplace?.forceManualSalePrice ?? false,
+      manualSalePrice: saved?.manualMarketplace?.salePrice ?? 0,
     });
 
     await refreshAndCompute(elements, false, { refreshMarketplace: true });
@@ -723,6 +758,7 @@
       elements.productCost,
       elements.taxPercent,
       elements.shippingFallback,
+      elements.salePriceManualInput,
     ];
 
     for (const input of inputFields) {
@@ -736,6 +772,13 @@
     });
     elements.freeShippingToggle.addEventListener("change", () => {
       applyShippingUiState(elements);
+      void recalcAndPersist();
+    });
+    elements.salePriceManualToggle.addEventListener("change", () => {
+      applySalePriceUiState(elements);
+      if (elements.salePriceManualToggle.checked && state.marketplaceDataCache?.salePrice) {
+        elements.salePriceManualInput.value = String(state.marketplaceDataCache.salePrice);
+      }
       void recalcAndPersist();
     });
 

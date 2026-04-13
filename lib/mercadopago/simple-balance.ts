@@ -60,17 +60,18 @@ async function tryBalance(
   }
 }
 
-/** Tenta descobrir o user_id correto no ecossistema MP (pode coincidir com ML, mas garantimos). */
 async function resolveMpUserId(accessToken: string, mlUserId: string): Promise<string> {
-  const enc = encodeURIComponent(accessToken)
-  const candidates = [
-    `https://api.mercadopago.com/users/me?access_token=${enc}`,
-    `https://api.mercadopago.com/v1/users/me?access_token=${enc}`,
+  const urls = [
+    "https://api.mercadopago.com/users/me",
+    "https://api.mercadopago.com/v1/users/me",
   ]
-  for (const url of candidates) {
+  for (const url of urls) {
     try {
       const res = await fetch(url, {
-        headers: { Accept: "application/json" },
+        headers: {
+          Accept: "application/json",
+          Authorization: `Bearer ${accessToken}`,
+        },
         cache: "no-store",
       })
       if (!res.ok) continue
@@ -93,7 +94,6 @@ export async function getBalance(
   const mpBase = "https://api.mercadopago.com"
   const mlBase = getMercadoLivreConfig().apiUrl.replace(/\/$/, "")
   const userId = await resolveMpUserId(accessToken, mlUserId)
-  const enc = encodeURIComponent(accessToken)
 
   const paths = [
     `/users/${userId}/mercadopago_account/balance`,
@@ -104,11 +104,6 @@ export async function getBalance(
 
   for (const base of [mpBase, mlBase]) {
     for (const path of paths) {
-      attempts.push({
-        label: `${base} query${path}`,
-        url: `${base}${path}?access_token=${enc}`,
-        headers: { Accept: "application/json" },
-      })
       attempts.push({
         label: `${base} bearer${path}`,
         url: `${base}${path}`,

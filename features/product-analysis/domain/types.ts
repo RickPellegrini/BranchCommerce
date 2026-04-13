@@ -100,6 +100,49 @@ export type CatalogProductItemsResponse = {
   results: CatalogCompetitor[]
 }
 
+export type MlSellerReputation = {
+  level_id?: string | null
+  power_seller_status?: string | null
+  transactions?: { total?: number; period?: string }
+}
+
+export type MlSeller = {
+  id: number
+  nickname: string
+  user_type?: string
+  permalink?: string
+  address?: { city?: string; state?: string }
+  seller_reputation?: MlSellerReputation
+  status?: { site_status?: string }
+}
+
+export type MlSellerBatchEntry = {
+  code: number
+  body: MlSeller
+}
+
+export type MlProduct = {
+  id: string
+  catalog_product_id?: string
+  name: string
+  family_name?: string
+  domain_id?: string
+  permalink?: string
+  status?: string
+  pictures?: Array<{
+    id: string
+    url: string
+    suggested_for_picker?: string | null
+    max_width?: number
+    max_height?: number
+  }>
+  attributes?: MlAttribute[]
+  main_features?: Array<{ text?: string }>
+  date_created?: string
+  last_updated?: string
+  tags?: string[]
+}
+
 export type MlSearchResultItem = {
   id: string
   title: string
@@ -206,11 +249,16 @@ export type CompetitorEntry = {
   warranty: string | null
   location: string | null
   tags: string[]
-  // Only available from search fallback
   title: string | null
   sellerNickname: string | null
+  sellerPowerStatus: string | null
+  sellerRepLevel: string | null
+  sellerTotalTransactions: number | null
+  sellerPermalink: string | null
   thumbnail: string | null
   permalink: string | null
+  visits30d: number | null
+  visitsShare: number | null
 }
 
 export type CompetitorSummary = {
@@ -227,7 +275,7 @@ export type CompetitorSummary = {
   top5: CompetitorEntry[]
 }
 
-export type DiscoveryStrategy = "catalog_product_items" | "public_search"
+export type DiscoveryStrategy = "catalog_product_items"
 
 export type CompetitorSection = {
   strategy: DiscoveryStrategy
