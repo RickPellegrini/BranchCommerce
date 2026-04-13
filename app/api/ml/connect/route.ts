@@ -3,26 +3,31 @@ import { randomUUID } from "crypto"
 import { NextResponse } from "next/server"
 
 import { requireAuthenticatedAppUserId } from "@/lib/auth/server"
-import { buildMlAuthorizationUrl } from "@/lib/mercadolivre/oauth"
+import { buildMlAuthorizationUrl, generatePkce } from "@/lib/mercadolivre/oauth"
 
 const STATE_COOKIE = "ml_oauth_state"
+const PKCE_COOKIE = "ml_oauth_pkce_verifier"
 
 export async function GET(request: Request) {
   try {
     await requireAuthenticatedAppUserId()
 
     const state = randomUUID()
-    const authorizationUrl = buildMlAuthorizationUrl(state)
+    const pkce = generatePkce()
+    const authorizationUrl = buildMlAuthorizationUrl(state, pkce.challenge)
     const isHttps = new URL(request.url).protocol === "https:"
 
-    const response = NextResponse.redirect(authorizationUrl)
-    response.cookies.set(STATE_COOKIE, state, {
+    const cookieOpts = {
       httpOnly: true,
       secure: isHttps,
-      sameSite: "lax",
+      sameSite: "lax" as const,
       path: "/",
       maxAge: 60 * 10,
-    })
+    }
+
+    const response = NextResponse.redirect(authorizationUrl)
+    response.cookies.set(STATE_COOKIE, state, cookieOpts)
+    response.cookies.set(PKCE_COOKIE, pkce.verifier, cookieOpts)
     return response
   } catch (error) {
     if (error instanceof Error && error.message.includes("nao autenticado")) {

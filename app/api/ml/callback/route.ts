@@ -6,6 +6,7 @@ import { exchangeCodeForTokens } from "@/lib/mercadolivre/oauth"
 import { parseTokenToConnection, upsertMlConnection } from "@/lib/mercadolivre/storage"
 
 const STATE_COOKIE = "ml_oauth_state"
+const PKCE_COOKIE = "ml_oauth_pkce_verifier"
 
 export async function GET(request: Request) {
   const url = new URL(request.url)
@@ -29,12 +30,14 @@ export async function GET(request: Request) {
       return NextResponse.redirect(new URL("/dashboard?ml_error=state_invalido", request.url))
     }
 
-    const token = await exchangeCodeForTokens(code)
+    const codeVerifier = cookieStore.get(PKCE_COOKIE)?.value
+    const token = await exchangeCodeForTokens(code, codeVerifier)
     const connection = parseTokenToConnection({ appUserId, token })
     await upsertMlConnection(connection)
 
     const response = NextResponse.redirect(new URL("/dashboard?ml_connected=1", request.url))
     response.cookies.delete(STATE_COOKIE)
+    response.cookies.delete(PKCE_COOKIE)
     return response
   } catch (error) {
     if (error instanceof Error && error.message.includes("nao autenticado")) {

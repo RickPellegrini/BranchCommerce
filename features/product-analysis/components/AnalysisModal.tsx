@@ -13,7 +13,6 @@ import { CompetitorTable } from "./CompetitorTable"
 
 const strategyLabels: Record<string, string> = {
   catalog_product_items: "Catalogo (oficial)",
-  public_search: "Busca publica",
 }
 
 export function AnalysisModal({ itemId, onClose }: { itemId: string; onClose: () => void }) {

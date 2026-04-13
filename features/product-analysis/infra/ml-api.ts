@@ -1,12 +1,155 @@
-import { fetchMlApi } from "@/lib/mercadolivre/storage"
 import { getMercadoLivreConfig } from "@/lib/mercadolivre/config"
 import type {
   MlItemFull,
-  MlSearchResult,
+  MlProduct,
+  MlSeller,
+  MlSellerBatchEntry,
   MlPriceToWinResult,
   MlVisitsEntry,
   CatalogProductItemsResponse,
 } from "@/features/product-analysis/domain/types"
+
+// ─── Upstream error ────────────────────────────────────────────────
+
+export class MlUpstreamError extends Error {
+  constructor(
+    public readonly mlStatus: number,
+    public readonly endpoint: string,
+    public readonly bodyText: string,
+    public readonly authMode: "public" | "private",
+  ) {
+    super(`ML ${mlStatus} on ${endpoint}`)
+    this.name = "MlUpstreamError"
+  }
+
+  toJSON() {
+    return {
+      name: this.name,
+      mlStatus: this.mlStatus,
+      endpoint: this.endpoint,
+      authMode: this.authMode,
+      body: this.tryParseBody(),
+    }
+  }
+
+  private tryParseBody(): unknown {
+    try { return JSON.parse(this.bodyText) } catch { return this.bodyText }
+  }
+}
+
+// ─── Shared fetch helper ────────────────────────────────────────────
+//
+// Per ML docs: "Em toda chamada que voce realizar a API do Mercado Livre,
+// envie o access token em todas elas para todos recursos tanto publico como privados."
+
+const ML_BASE = () => getMercadoLivreConfig().apiUrl
+
+function maskToken(token: string): string {
+  if (token.length <= 12) return "***"
+  return `${token.slice(0, 6)}…${token.slice(-4)}`
+}
+
+async function fetchMl<T = unknown>(
+  path: string,
+  label: string,
+  token: string | null,
+): Promise<T> {
+  const url = `${ML_BASE()}${path}`
+  const mode = token ? "auth" : "noauth"
+  const prefix = token ? maskToken(token) : "none"
+  console.log(`[ml-${mode}] ▶ ${label} | ${url}${token ? ` | token=${prefix}` : ""}`)
+  const t0 = Date.now()
+
+  const headers: Record<string, string> = { Accept: "application/json" }
+  if (token) {
+    headers["Authorization"] = `Bearer ${token}`
+  }
+
+  const res = await fetch(url, { method: "GET", headers, cache: "no-store" })
+
+  const bodyText = await res.text()
+  const ms = Date.now() - t0
+  const preview = bodyText.length > 300 ? bodyText.slice(0, 300) + "…" : bodyText
+  console.log(`[ml-${mode}] ${res.ok ? "✓" : "✗"} ${label} | ${res.status} | ${ms}ms | ${preview}`)
+
+  if (!res.ok) {
+    throw new MlUpstreamError(res.status, url, bodyText, token ? "private" : "public")
+  }
+
+  return JSON.parse(bodyText) as T
+}
+
+export async function fetchMlPrivate<T = unknown>(path: string, token: string, label: string): Promise<T> {
+  return fetchMl<T>(path, label, token)
+}
+
+// ─── Endpoints that require token ────────────────────────────────────
+// ML now requires a token on ALL calls (PolicyAgent 403 without it).
+// /items/{id} with token returns 403 for third-party items (access_denied),
+// so for third-party analysis we rely on /products/{id} + /products/{id}/items.
+
+export async function getItem(itemId: string, token: string): Promise<MlItemFull> {
+  return fetchMl<MlItemFull>(`/items/${itemId}`, `GET /items/${itemId}`, token)
+}
+
+export async function getProduct(productId: string, token: string): Promise<MlProduct> {
+  return fetchMl<MlProduct>(`/products/${productId}`, `GET /products/${productId}`, token)
+}
+
+export async function getProductItems(productId: string, token: string): Promise<CatalogProductItemsResponse> {
+  return fetchMl<CatalogProductItemsResponse>(
+    `/products/${productId}/items`,
+    `GET /products/${productId}/items`,
+    token,
+  )
+}
+
+/** Batch-fetch seller info: nicknames, reputation, power_seller_status. */
+export async function getSellersBatch(
+  token: string,
+  sellerIds: number[],
+): Promise<Map<number, MlSeller>> {
+  const map = new Map<number, MlSeller>()
+  if (sellerIds.length === 0) return map
+
+  const settled = await Promise.allSettled(
+    chunk(sellerIds, 20).map((batch) => {
+      const ids = batch.join(",")
+      return fetchMl<MlSellerBatchEntry[]>(
+        `/users?ids=${ids}`,
+        `GET /users?ids= (batch=${batch.length})`,
+        token,
+      )
+    }),
+  )
+  for (const r of settled) {
+    if (r.status !== "fulfilled") continue
+    for (const entry of r.value) {
+      if (entry.code === 200 && entry.body?.id) {
+        map.set(entry.body.id, entry.body)
+      }
+    }
+  }
+  return map
+}
+
+// ─── PRIVATE endpoints (require seller token) ──────────────────────
+
+/** GET /items/{id}/price_to_win — seller-specific, requires auth. */
+export async function getPriceToWin(token: string, itemId: string): Promise<MlPriceToWinResult | null> {
+  try {
+    return await fetchMlPrivate<MlPriceToWinResult>(
+      `/items/${itemId}/price_to_win?version=v2`,
+      token,
+      `GET /items/${itemId}/price_to_win`,
+    )
+  } catch (err) {
+    if (err instanceof MlUpstreamError) {
+      console.log(`[ml-private] ⚠ price_to_win skipped (${err.mlStatus})`)
+    }
+    return null
+  }
+}
 
 function chunk<T>(arr: T[], size: number): T[][] {
   const out: T[][] = []
@@ -14,55 +157,45 @@ function chunk<T>(arr: T[], size: number): T[][] {
   return out
 }
 
-/** Fetch the base item (own listing only). */
-export async function getItem(token: string, itemId: string): Promise<MlItemFull> {
-  return fetchMlApi<MlItemFull>(`/items/${itemId}`, token)
+type VisitsTimeWindowResponse = {
+  item_id: string
+  total_visits: number
 }
 
 /**
- * GET /products/{product_id}/items — official catalog competition endpoint.
- * Returns all competing listings with price, seller_id, shipping, etc.
- * Requires authenticated token.
+ * Fetch 30-day visits for a list of item IDs (works for third-party items).
+ * Uses /items/{id}/visits/time_window which allows individual item queries.
+ * Runs in parallel batches of `concurrency`.
  */
-export async function getProductItems(
+export async function getCompetitorVisits(
   token: string,
-  productId: string,
-): Promise<CatalogProductItemsResponse> {
-  return fetchMlApi<CatalogProductItemsResponse>(`/products/${productId}/items`, token)
-}
+  itemIds: string[],
+  days: number = 30,
+): Promise<Map<string, number>> {
+  const map = new Map<string, number>()
+  if (itemIds.length === 0) return map
 
-/**
- * Public search (unauthenticated) — fallback for items without catalog_product_id.
- * Does NOT send Authorization header because the seller token causes 403.
- */
-export async function searchPublic(
-  siteId: string,
-  params: Record<string, string>,
-): Promise<MlSearchResult> {
-  const qs = new URLSearchParams(params)
-  const url = `${getMercadoLivreConfig().apiUrl}/sites/${siteId}/search?${qs.toString()}`
-  const res = await fetch(url, {
-    method: "GET",
-    headers: { Accept: "application/json" },
-    cache: "no-store",
-  })
-  if (!res.ok) {
-    const text = await res.text()
-    throw new Error(`Erro Mercado Livre (${res.status}): ${text}`)
+  const concurrency = 15
+  for (const batch of chunk(itemIds, concurrency)) {
+    const settled = await Promise.allSettled(
+      batch.map((id) =>
+        fetchMl<VisitsTimeWindowResponse>(
+          `/items/${id}/visits/time_window?last=${days}&unit=day`,
+          `GET visits ${id}`,
+          token,
+        ).then((r) => ({ id, visits: r.total_visits })),
+      ),
+    )
+    for (const r of settled) {
+      if (r.status === "fulfilled") {
+        map.set(r.value.id, r.value.visits)
+      }
+    }
   }
-  return (await res.json()) as MlSearchResult
+  return map
 }
 
-/** Price-to-win for own item. */
-export async function getPriceToWin(token: string, itemId: string): Promise<MlPriceToWinResult | null> {
-  try {
-    return await fetchMlApi<MlPriceToWinResult>(`/items/${itemId}/price_to_win?version=v2`, token)
-  } catch {
-    return null
-  }
-}
-
-/** Visits for own items (batched). */
+/** GET /items/visits — seller-specific, requires auth. */
 export async function getVisitsBatch(
   token: string,
   ids: string[],
@@ -73,12 +206,10 @@ export async function getVisitsBatch(
   if (ids.length === 0) return map
 
   const settled = await Promise.allSettled(
-    chunk(ids, 50).map((c) =>
-      fetchMlApi<MlVisitsEntry[]>(
-        `/items/visits?ids=${c.join(",")}&date_from=${dateFrom}&date_to=${dateTo}`,
-        token,
-      ),
-    ),
+    chunk(ids, 50).map((c) => {
+      const path = `/items/visits?ids=${c.join(",")}&date_from=${dateFrom}&date_to=${dateTo}`
+      return fetchMlPrivate<MlVisitsEntry[]>(path, token, `GET /items/visits (batch=${c.length})`)
+    }),
   )
   for (const r of settled) {
     if (r.status !== "fulfilled") continue

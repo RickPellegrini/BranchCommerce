@@ -6,18 +6,33 @@ import {
   requestMlApi,
 } from "@/lib/mercadolivre/storage"
 
-function corsHeaders() {
+const ALLOWED_ORIGINS = [
+  "chrome-extension://",
+  "https://branchcommercehub.com",
+  "http://localhost:3000",
+]
+
+function getAllowedOrigin(request?: NextRequest): string {
+  const origin = request?.headers.get("origin") ?? ""
+  if (ALLOWED_ORIGINS.some((allowed) => origin.startsWith(allowed))) {
+    return origin
+  }
+  return ALLOWED_ORIGINS[0]
+}
+
+function corsHeaders(request?: NextRequest) {
   return {
-    "Access-Control-Allow-Origin": "*",
+    "Access-Control-Allow-Origin": getAllowedOrigin(request),
     "Access-Control-Allow-Methods": "GET, OPTIONS",
     "Access-Control-Allow-Headers": "Content-Type, x-branch-hunter-key",
+    Vary: "Origin",
   }
 }
 
-export async function OPTIONS() {
+export async function OPTIONS(request: NextRequest) {
   return new Response(null, {
     status: 204,
-    headers: corsHeaders(),
+    headers: corsHeaders(request),
   })
 }
 
@@ -46,9 +61,9 @@ type MlItemPayload = {
   catalog_product_id?: string
 }
 
-type MlCatalogSearchPayload = {
+type MlProductItemsPayload = {
   results?: Array<{
-    id?: string
+    item_id?: string
   }>
 }
 
@@ -70,7 +85,7 @@ export async function GET(request: NextRequest) {
     if (!syncKey) {
       return Response.json(
         { ok: false, error: "BRANCH_HUNTER_SYNC_KEY nao configurado." },
-        { status: 500, headers: corsHeaders() },
+        { status: 500, headers: corsHeaders(request) },
       )
     }
 
@@ -89,7 +104,7 @@ export async function GET(request: NextRequest) {
             ? "Envie x-branch-hunter-key no header ou ?key=... na query (somente em dev)."
             : "Envie x-branch-hunter-key no header.",
         },
-        { status: 401, headers: corsHeaders() },
+        { status: 401, headers: corsHeaders(request) },
       )
     }
     const mlUserId = String(searchParams.get("mlUserId") ?? "").trim()
@@ -102,7 +117,7 @@ export async function GET(request: NextRequest) {
     if (!itemId) {
       return Response.json(
         { ok: false, error: "itemId obrigatorio." },
-        { status: 400, headers: corsHeaders() },
+        { status: 400, headers: corsHeaders(request) },
       )
     }
 
@@ -188,93 +203,84 @@ export async function GET(request: NextRequest) {
       }
     }
 
-    // Catalog page fallback:
-    // if item-level attempts returned empty, treat current id as potential catalog_product_id
-    // and resolve candidate item ids through official search endpoint.
     if (reviewsById.size === 0) {
       const catalogLikeId = resolvedCatalogProductId || itemId
-      const siteId = catalogLikeId.slice(0, 3).toUpperCase()
-      if (siteId.length === 3) {
-        try {
-          const catalogSearch = await requestMlApi<MlCatalogSearchPayload>(
-            `/sites/${siteId}/search?catalog_product_id=${encodeURIComponent(catalogLikeId)}&limit=5`,
-            connection.accessToken,
-            { method: "GET" },
-          )
-          if (debugMode) {
-            debugAttempts.push({
-              step: "catalog_search",
-              siteId,
-              catalogLikeId,
-              ok: true,
-              candidateCount: Array.isArray(catalogSearch.results) ? catalogSearch.results.length : 0,
-            })
-          }
-          const candidateItems = (catalogSearch.results ?? [])
-            .map((row) => String(row.id ?? "").trim())
-            .filter(Boolean)
+      try {
+        const productItems = await requestMlApi<MlProductItemsPayload>(
+          `/products/${encodeURIComponent(catalogLikeId)}/items`,
+          connection.accessToken,
+          { method: "GET" },
+        )
+        if (debugMode) {
+          debugAttempts.push({
+            step: "product_items_fallback",
+            catalogLikeId,
+            ok: true,
+            candidateCount: Array.isArray(productItems.results) ? productItems.results.length : 0,
+          })
+        }
+        const candidateItems = (productItems.results ?? [])
+          .map((row) => String(row.item_id ?? "").trim())
+          .filter(Boolean)
+          .slice(0, 5)
 
-          for (const candidateItemId of candidateItems) {
-            const query = new URLSearchParams({
-              limit: String(limit),
-              offset: String(offset),
-              catalog_product_id: catalogLikeId,
-            })
-            try {
-              const payload = await requestMlApi<MlReviewsPayload>(
-                `/reviews/item/${encodeURIComponent(candidateItemId)}?${query.toString()}`,
-                connection.accessToken,
-                { method: "GET" },
-              )
-              if (debugMode) {
-                debugAttempts.push({
-                  step: "reviews_by_catalog_candidate_item",
-                  candidateItemId,
-                  catalogLikeId,
-                  ok: true,
-                  total: Number(payload.paging?.total ?? 0),
-                  reviewsCount: Array.isArray(payload.reviews) ? payload.reviews.length : 0,
-                  ratingAverage: payload.rating_average ?? null,
-                })
+        for (const candidateItemId of candidateItems) {
+          const query = new URLSearchParams({
+            limit: String(limit),
+            offset: String(offset),
+            catalog_product_id: catalogLikeId,
+          })
+          try {
+            const payload = await requestMlApi<MlReviewsPayload>(
+              `/reviews/item/${encodeURIComponent(candidateItemId)}?${query.toString()}`,
+              connection.accessToken,
+              { method: "GET" },
+            )
+            if (debugMode) {
+              debugAttempts.push({
+                step: "reviews_by_catalog_candidate_item",
+                candidateItemId,
+                catalogLikeId,
+                ok: true,
+                total: Number(payload.paging?.total ?? 0),
+                reviewsCount: Array.isArray(payload.reviews) ? payload.reviews.length : 0,
+                ratingAverage: payload.rating_average ?? null,
+              })
+            }
+            if (typeof payload.rating_average === "number" && ratingAverage === undefined) {
+              ratingAverage = payload.rating_average
+            }
+            if (payload.rating_levels && !ratingLevels) {
+              ratingLevels = payload.rating_levels
+            }
+            const currentTotal = Number(payload.paging?.total ?? 0)
+            if (Number.isFinite(currentTotal)) {
+              pagingTotal = Math.max(pagingTotal, currentTotal)
+            }
+            for (const review of payload.reviews ?? []) {
+              const key = review.id ?? `${review.date_created ?? "no-date"}:${review.title ?? ""}`
+              if (!reviewsById.has(key)) {
+                reviewsById.set(key, review)
               }
-              if (typeof payload.rating_average === "number" && ratingAverage === undefined) {
-                ratingAverage = payload.rating_average
-              }
-              if (payload.rating_levels && !ratingLevels) {
-                ratingLevels = payload.rating_levels
-              }
-              const currentTotal = Number(payload.paging?.total ?? 0)
-              if (Number.isFinite(currentTotal)) {
-                pagingTotal = Math.max(pagingTotal, currentTotal)
-              }
-              for (const review of payload.reviews ?? []) {
-                const key = review.id ?? `${review.date_created ?? "no-date"}:${review.title ?? ""}`
-                if (!reviewsById.has(key)) {
-                  reviewsById.set(key, review)
-                }
-              }
-            } catch {
-              if (debugMode) {
-                debugAttempts.push({
-                  step: "reviews_by_catalog_candidate_item",
-                  candidateItemId,
-                  catalogLikeId,
-                  ok: false,
-                })
-              }
-              // Try next candidate item.
+            }
+          } catch {
+            if (debugMode) {
+              debugAttempts.push({
+                step: "reviews_by_catalog_candidate_item",
+                candidateItemId,
+                catalogLikeId,
+                ok: false,
+              })
             }
           }
-        } catch {
-          if (debugMode) {
-            debugAttempts.push({
-              step: "catalog_search",
-              siteId,
-              catalogLikeId,
-              ok: false,
-            })
-          }
-          // Keep response stable even if catalog search fails.
+        }
+      } catch {
+        if (debugMode) {
+          debugAttempts.push({
+            step: "product_items_fallback",
+            catalogLikeId,
+            ok: false,
+          })
         }
       }
     }
@@ -314,7 +320,7 @@ export async function GET(request: NextRequest) {
             }
           : {}),
       },
-      { status: 200, headers: corsHeaders() },
+      { status: 200, headers: corsHeaders(request) },
     )
   } catch (error) {
     return Response.json(
@@ -322,7 +328,7 @@ export async function GET(request: NextRequest) {
         ok: false,
         error: error instanceof Error ? error.message : "Erro ao buscar reviews do Mercado Livre.",
       },
-      { status: 500, headers: corsHeaders() },
+      { status: 500, headers: corsHeaders(request) },
     )
   }
 }

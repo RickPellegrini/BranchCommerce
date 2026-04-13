@@ -2,65 +2,101 @@
 
 import type { CompetitorEntry } from "@/features/product-analysis/domain/types"
 import { formatBrl } from "@/features/product-analysis/utils/money"
-import { Truck, Store, Package, MapPin, Shield, Zap, ArrowDown, ArrowUp, Minus } from "lucide-react"
+import { ExternalLink, Crown, Zap, Truck, Package } from "lucide-react"
 
-function ShippingBadge({ entry }: { entry: CompetitorEntry }) {
+// ─── Reputation level bar (5 dots like the reference) ───────────────
+
+const LEVEL_MAP: Record<string, { level: number; color: string }> = {
+  "5_green": { level: 5, color: "bg-emerald-500" },
+  "5_light_green": { level: 5, color: "bg-lime-500" },
+  "4_light_green": { level: 4, color: "bg-lime-500" },
+  "4_green": { level: 4, color: "bg-emerald-500" },
+  "3_yellow": { level: 3, color: "bg-yellow-500" },
+  "3_green": { level: 3, color: "bg-emerald-500" },
+  "2_orange": { level: 2, color: "bg-orange-500" },
+  "2_yellow": { level: 2, color: "bg-yellow-500" },
+  "1_red": { level: 1, color: "bg-red-500" },
+}
+
+function ReputationBar({ levelId }: { levelId: string | null }) {
+  if (!levelId) return null
+  const info = LEVEL_MAP[levelId] ?? { level: 0, color: "bg-gray-300" }
+  return (
+    <div className="flex items-center gap-[2px]" title={`Reputacao ${info.level}/5`}>
+      {[1, 2, 3, 4, 5].map((n) => (
+        <div
+          key={n}
+          className={`h-[6px] w-[10px] rounded-sm ${n <= info.level ? info.color : "bg-gray-200"}`}
+        />
+      ))}
+    </div>
+  )
+}
+
+// ─── Power seller badge ─────────────────────────────────────────────
+
+const POWER_CONFIG: Record<string, { label: string; bg: string; text: string }> = {
+  platinum: { label: "Platinum", bg: "bg-emerald-500", text: "text-white" },
+  gold: { label: "Ouro", bg: "bg-amber-400", text: "text-white" },
+  silver: { label: "Prata", bg: "bg-gray-400", text: "text-white" },
+}
+
+function PowerBadge({ status }: { status: string | null }) {
+  if (!status) return null
+  const c = POWER_CONFIG[status]
+  if (!c) return null
+  return (
+    <span className={`inline-flex items-center rounded-full px-1.5 py-px text-[9px] font-bold ${c.bg} ${c.text}`}>
+      {c.label}
+    </span>
+  )
+}
+
+// ─── Logistics badge ────────────────────────────────────────────────
+
+function LogisticBadge({ entry }: { entry: CompetitorEntry }) {
   if (entry.logisticType === "fulfillment") {
     return (
-      <span className="inline-flex items-center gap-1 rounded-full bg-purple-50 px-2 py-0.5 text-[10px] font-semibold text-purple-700">
-        <Zap className="h-3 w-3" /> Full
+      <span className="inline-flex items-center gap-0.5 rounded-full bg-orange-500 px-1.5 py-px text-[9px] font-bold text-white">
+        <Zap className="h-2.5 w-2.5" /> Full
       </span>
     )
   }
   if (entry.logisticType === "xd_drop_off" || entry.logisticType === "cross_docking") {
     return (
-      <span className="inline-flex items-center gap-1 rounded-full bg-blue-50 px-2 py-0.5 text-[10px] font-semibold text-blue-700">
-        <Truck className="h-3 w-3" /> {entry.logisticType === "xd_drop_off" ? "Coleta" : "ME2"}
+      <span className="inline-flex items-center gap-0.5 rounded-full bg-blue-500 px-1.5 py-px text-[9px] font-bold text-white">
+        <Truck className="h-2.5 w-2.5" /> Flex
       </span>
     )
   }
   if (entry.freeShipping) {
     return (
-      <span className="inline-flex items-center gap-1 rounded-full bg-emerald-50 px-2 py-0.5 text-[10px] font-semibold text-emerald-700">
-        <Truck className="h-3 w-3" /> Gratis
+      <span className="inline-flex items-center gap-0.5 rounded-full bg-emerald-100 px-1.5 py-px text-[9px] font-bold text-emerald-700">
+        <Truck className="h-2.5 w-2.5" /> Gratis
       </span>
     )
   }
-  return <span className="text-xs text-muted-foreground">-</span>
+  return null
 }
 
-function PriceDelta({ diff }: { diff: number }) {
-  if (Math.abs(diff) < 0.01) {
-    return (
-      <span className="inline-flex items-center gap-0.5 text-[10px] text-muted-foreground">
-        <Minus className="h-3 w-3" /> Igual
-      </span>
-    )
-  }
-  if (diff < 0) {
-    return (
-      <span className="inline-flex items-center gap-0.5 text-[10px] font-medium text-rose-600">
-        <ArrowDown className="h-3 w-3" /> {formatBrl(Math.abs(diff))}
-      </span>
-    )
-  }
-  return (
-    <span className="inline-flex items-center gap-0.5 text-[10px] font-medium text-emerald-600">
-      <ArrowUp className="h-3 w-3" /> {formatBrl(diff)}
-    </span>
-  )
-}
+// ─── Listing type ───────────────────────────────────────────────────
 
 function ListingTypeBadge({ type }: { type: string | null }) {
   if (!type) return <span className="text-xs text-muted-foreground">-</span>
-  const label = type === "gold_pro" ? "Premium" : type === "gold_special" ? "Clássico" : type
-  const color = type === "gold_pro" ? "bg-amber-50 text-amber-700" : "bg-gray-100 text-gray-600"
-  return (
-    <span className={`inline-block rounded-full px-2 py-0.5 text-[10px] font-medium ${color}`}>
-      {label}
-    </span>
-  )
+  if (type === "gold_pro") return <span className="text-xs font-medium">Premium</span>
+  if (type === "gold_special") return <span className="text-xs text-muted-foreground">Classico</span>
+  return <span className="text-xs text-muted-foreground">{type}</span>
 }
+
+// ─── Helpers ────────────────────────────────────────────────────────
+
+function formatTransactions(total: number): string {
+  if (total >= 1_000_000) return `${(total / 1_000_000).toFixed(1)}M`
+  if (total >= 1_000) return `${(total / 1_000).toFixed(1)}k`
+  return String(total)
+}
+
+// ─── Main table ─────────────────────────────────────────────────────
 
 export function CompetitorTable({
   competitors,
@@ -73,93 +109,150 @@ export function CompetitorTable({
 
   return (
     <div className="rounded-xl border bg-white shadow-sm overflow-hidden">
-      <table className="w-full text-sm">
-        <thead>
-          <tr className="border-b bg-gray-50/80">
-            <th className="p-3 text-left text-[11px] font-semibold uppercase tracking-wider text-muted-foreground w-8">#</th>
-            <th className="p-3 text-left text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">Item ID</th>
-            <th className="p-3 text-right text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">Preco</th>
-            <th className="p-3 text-center text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">Condicao</th>
-            <th className="p-3 text-center text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">Frete</th>
-            <th className="p-3 text-center text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">Tipo</th>
-            <th className="p-3 text-center text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">Info</th>
-            <th className="p-3 text-left text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">Local</th>
-          </tr>
-        </thead>
-        <tbody className="divide-y">
-          {competitors.map((c, i) => {
-            const diff = c.price - myPrice
-            const isMyItem = c.sellerId === 0
-            return (
-              <tr
-                key={c.itemId}
-                className={`transition-colors hover:bg-blue-50/40 ${isMyItem ? "bg-blue-50/30" : ""}`}
-              >
-                <td className="p-3 text-xs font-medium text-muted-foreground">{i + 1}</td>
-                <td className="p-3">
-                  <div className="min-w-0">
-                    <p className="font-mono text-xs font-medium text-foreground">{c.itemId}</p>
-                    {c.sellerNickname ? (
-                      <p className="text-[11px] text-muted-foreground truncate max-w-[160px]">{c.sellerNickname}</p>
+      <div className="overflow-x-auto">
+        <table className="w-full text-sm">
+          <thead>
+            <tr className="border-b bg-gray-50/80">
+              <th className="px-4 py-3 text-left text-[11px] font-semibold uppercase tracking-wider text-muted-foreground min-w-[220px]">
+                Vendedor
+              </th>
+              <th className="px-4 py-3 text-right text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
+                Preco
+              </th>
+              <th className="px-4 py-3 text-right text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
+                Visitas 30d
+              </th>
+              <th className="px-4 py-3 text-center text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
+                Tipo
+              </th>
+              <th className="px-4 py-3 text-right text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
+                Transacoes
+              </th>
+            </tr>
+          </thead>
+          <tbody className="divide-y">
+            {competitors.map((c) => {
+              const priceDiff = c.price - myPrice
+              const pricePct = myPrice > 0 ? (priceDiff / myPrice) * 100 : 0
+
+              return (
+                <tr
+                  key={c.itemId}
+                  className="transition-colors hover:bg-gray-50/60"
+                >
+                  {/* ── Vendedor ── */}
+                  <td className="px-4 py-3">
+                    <div className="space-y-1">
+                      {/* Name + link + badges */}
+                      <div className="flex items-center gap-1.5 flex-wrap">
+                        {c.sellerNickname ? (
+                          <a
+                            href={c.sellerPermalink ?? "#"}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="font-bold text-xs text-foreground hover:text-blue-600 hover:underline transition-colors"
+                          >
+                            {c.sellerNickname}
+                          </a>
+                        ) : (
+                          <span className="font-mono text-xs text-muted-foreground">
+                            {c.itemId}
+                          </span>
+                        )}
+                        {c.sellerPermalink && (
+                          <a
+                            href={c.sellerPermalink}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="text-muted-foreground hover:text-blue-600"
+                          >
+                            <ExternalLink className="h-3 w-3" />
+                          </a>
+                        )}
+                        <PowerBadge status={c.sellerPowerStatus} />
+                      </div>
+                      {/* Reputation bar + location */}
+                      <div className="flex items-center gap-2">
+                        <ReputationBar levelId={c.sellerRepLevel} />
+                        {c.location && (
+                          <span className="text-[10px] text-muted-foreground truncate max-w-[150px]">
+                            {c.location}
+                          </span>
+                        )}
+                      </div>
+                      {/* Logistic badges */}
+                      <div className="flex items-center gap-1">
+                        <LogisticBadge entry={c} />
+                        {c.officialStore && (
+                          <span className="inline-flex items-center rounded-full bg-blue-100 px-1.5 py-px text-[9px] font-bold text-blue-700">
+                            Oficial
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                  </td>
+
+                  {/* ── Preco ── */}
+                  <td className="px-4 py-3 text-right">
+                    <p className="font-bold text-sm">{formatBrl(c.price)}</p>
+                    {c.originalPrice && c.originalPrice > c.price && (
+                      <p className="text-[10px] text-muted-foreground line-through">
+                        {formatBrl(c.originalPrice)}
+                      </p>
+                    )}
+                    {Math.abs(priceDiff) >= 0.01 && (
+                      <p className={`text-[10px] font-medium ${priceDiff < 0 ? "text-emerald-600" : priceDiff > 0 ? "text-rose-600" : "text-muted-foreground"}`}>
+                        {priceDiff > 0 ? "+" : ""}
+                        {pricePct.toFixed(1)}%
+                      </p>
+                    )}
+                  </td>
+
+                  {/* ── Visitas 30d ── */}
+                  <td className="px-4 py-3 text-right">
+                    {c.visits30d != null ? (
+                      <div>
+                        <p className="font-semibold text-xs tabular-nums">
+                          {c.visits30d.toLocaleString("pt-BR")}
+                        </p>
+                        {c.visitsShare != null && (
+                          <p className={`text-[10px] font-medium ${
+                            c.visitsShare >= 20
+                              ? "text-emerald-600"
+                              : c.visitsShare >= 5
+                                ? "text-blue-600"
+                                : "text-muted-foreground"
+                          }`}>
+                            {c.visitsShare.toFixed(1)}% do total
+                          </p>
+                        )}
+                      </div>
                     ) : (
-                      <p className="text-[11px] text-muted-foreground">Seller {c.sellerId}</p>
-                    )}
-                  </div>
-                </td>
-                <td className="p-3 text-right">
-                  <p className="font-semibold text-foreground">{formatBrl(c.price)}</p>
-                  <PriceDelta diff={diff} />
-                </td>
-                <td className="p-3 text-center">
-                  <span className={`inline-block rounded-full px-2 py-0.5 text-[10px] font-medium ${
-                    c.condition === "new" ? "bg-emerald-50 text-emerald-700" : "bg-gray-100 text-gray-600"
-                  }`}>
-                    {c.condition === "new" ? "Novo" : c.condition ?? "-"}
-                  </span>
-                </td>
-                <td className="p-3 text-center">
-                  <ShippingBadge entry={c} />
-                </td>
-                <td className="p-3 text-center">
-                  <ListingTypeBadge type={c.listingType} />
-                </td>
-                <td className="p-3 text-center">
-                  <div className="flex items-center justify-center gap-1.5">
-                    {c.officialStore && (
-                      <span title="Loja Oficial" className="flex h-5 w-5 items-center justify-center rounded-full bg-blue-100">
-                        <Store className="h-3 w-3 text-blue-600" />
-                      </span>
-                    )}
-                    {c.logisticType === "fulfillment" && (
-                      <span title="Fulfillment" className="flex h-5 w-5 items-center justify-center rounded-full bg-purple-100">
-                        <Package className="h-3 w-3 text-purple-600" />
-                      </span>
-                    )}
-                    {c.warranty && (
-                      <span title={c.warranty} className="flex h-5 w-5 items-center justify-center rounded-full bg-gray-100">
-                        <Shield className="h-3 w-3 text-gray-500" />
-                      </span>
-                    )}
-                    {!c.officialStore && c.logisticType !== "fulfillment" && !c.warranty && (
                       <span className="text-xs text-muted-foreground">-</span>
                     )}
-                  </div>
-                </td>
-                <td className="p-3 text-left">
-                  {c.location ? (
-                    <span className="inline-flex items-center gap-1 text-[11px] text-muted-foreground">
-                      <MapPin className="h-3 w-3 shrink-0" />
-                      <span className="truncate max-w-[130px]">{c.location}</span>
-                    </span>
-                  ) : (
-                    <span className="text-xs text-muted-foreground">-</span>
-                  )}
-                </td>
-              </tr>
-            )
-          })}
-        </tbody>
-      </table>
+                  </td>
+
+                  {/* ── Tipo ── */}
+                  <td className="px-4 py-3 text-center">
+                    <ListingTypeBadge type={c.listingType} />
+                  </td>
+
+                  {/* ── Transacoes do seller ── */}
+                  <td className="px-4 py-3 text-right">
+                    {c.sellerTotalTransactions != null ? (
+                      <span className="font-semibold text-xs tabular-nums">
+                        {formatTransactions(c.sellerTotalTransactions)}
+                      </span>
+                    ) : (
+                      <span className="text-xs text-muted-foreground">-</span>
+                    )}
+                  </td>
+                </tr>
+              )
+            })}
+          </tbody>
+        </table>
+      </div>
     </div>
   )
 }
