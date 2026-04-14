@@ -33,7 +33,7 @@ async function scrapeItemPage(itemId: string): Promise<ScrapedItemData> {
 
   try {
     const controller = new AbortController()
-    const timeout = setTimeout(() => controller.abort(), 8000)
+    const timeout = setTimeout(() => controller.abort(), 10000)
     const res = await fetch(url, {
       headers: HEADERS,
       redirect: "follow",
@@ -41,15 +41,24 @@ async function scrapeItemPage(itemId: string): Promise<ScrapedItemData> {
     })
     clearTimeout(timeout)
 
-    if (!res.ok) return result
+    if (!res.ok) {
+      console.warn(`[ml-scraper] ${itemId}: HTTP ${res.status}`)
+      return result
+    }
     const html = await res.text()
+
+    if (html.length < 5000) {
+      console.warn(`[ml-scraper] ${itemId}: response too small (${html.length} chars), likely blocked`)
+      return result
+    }
 
     Object.assign(result, extractStock(html))
     result.soldLabel = extractSoldLabel(html)
     result.soldQuantity = extractSoldQuantity(html)
     result.startTime = extractStartTime(html)
-  } catch {
-    // network/timeout — return nulls
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err)
+    console.warn(`[ml-scraper] ${itemId}: ${msg}`)
   }
 
   return result
@@ -192,13 +201,18 @@ export async function scrapeBuyBoxWinner(
     })
     clearTimeout(timeout)
 
-    if (!res.ok) return null
+    if (!res.ok) {
+      console.warn(`[ml-scraper] buybox ${catalogProductId}: HTTP ${res.status}`)
+      return null
+    }
     const html = await res.text()
 
-    // The melidata event_data.item_id is the displayed buy box winner
     const m = html.match(/event_data"\s*:\s*\{\s*"item_id"\s*:\s*"(MLB\d+)"/)
+    console.log(`[ml-scraper] buybox ${catalogProductId}: winner=${m ? m[1] : "not found"} (${html.length} chars)`)
     return m ? m[1] : null
-  } catch {
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err)
+    console.warn(`[ml-scraper] buybox ${catalogProductId}: ${msg}`)
     return null
   }
 }
@@ -218,6 +232,7 @@ export async function scrapeCompetitorStock(
   const results = new Map<string, ScrapedItemData>()
   if (itemIds.length === 0) return results
 
+  const t0 = Date.now()
   for (const batch of chunk(itemIds, concurrency)) {
     const settled = await Promise.allSettled(
       batch.map((id) => scrapeItemPage(id)),
@@ -228,6 +243,11 @@ export async function scrapeCompetitorStock(
       }
     }
   }
+
+  const hits = Array.from(results.values()).filter((r) => r.availableQuantity != null).length
+  console.log(
+    `[ml-scraper] stock batch: ${hits}/${itemIds.length} items scraped in ${Date.now() - t0}ms`,
+  )
 
   return results
 }
