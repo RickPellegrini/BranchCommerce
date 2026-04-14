@@ -18,6 +18,8 @@ import {
   Tag,
   Filter,
   Package,
+  MapPin,
+  X,
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -55,7 +57,7 @@ function StatCard({
   sub?: string
 }) {
   return (
-    <div className="flex items-center gap-3 rounded-xl border bg-white p-4 shadow-sm">
+    <div className="flex items-center gap-3 rounded-xl border bg-card p-4 shadow-sm">
       <div className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-xl ${iconBg}`}>
         {icon}
       </div>
@@ -182,7 +184,7 @@ export function HunterAnalysisPage() {
             className="flex-1"
           />
           <Button
-            className="shrink-0 gap-2 bg-orange-500 text-white hover:bg-orange-600"
+            className="shrink-0 gap-2 bg-orange-500 text-white hover:bg-orange-600 dark:bg-orange-600 dark:hover:bg-orange-500"
             onClick={handleAnalyze}
             disabled={phase === "loading"}
           >
@@ -282,7 +284,7 @@ function FilterPill({
       className={`inline-flex items-center gap-1 rounded-full border px-3 py-1 text-[11px] font-medium transition-colors ${
         active
           ? "bg-foreground text-background border-foreground"
-          : "bg-white text-muted-foreground border-gray-200 hover:bg-gray-50"
+          : "bg-card text-muted-foreground border-border hover:bg-muted/50"
       }`}
     >
       {children}
@@ -307,6 +309,19 @@ function AnalysisResults({
   const { summary, competitors } = data.competitors
   const [logisticFilter, setLogisticFilter] = useState<LogisticFilter>("all")
   const [listingFilter, setListingFilter] = useState<"all" | "gold_pro" | "gold_special">("all")
+  const [cityFilter, setCityFilter] = useState<string | null>(null)
+
+  const availableCities = useMemo(() => {
+    const cities = new Map<string, number>()
+    for (const c of competitors) {
+      if (!c.location) continue
+      const city = c.location.split(",")[0].trim()
+      if (city) cities.set(city, (cities.get(city) ?? 0) + 1)
+    }
+    return [...cities.entries()]
+      .sort((a, b) => b[1] - a[1])
+      .map(([city, count]) => ({ city, count }))
+  }, [competitors])
 
   const filtered = useMemo(() => {
     let list: CompetitorEntry[] = competitors
@@ -320,8 +335,11 @@ function AnalysisResults({
     if (listingFilter !== "all") {
       list = list.filter((c) => c.listingType === listingFilter)
     }
+    if (cityFilter) {
+      list = list.filter((c) => c.location?.split(",")[0].trim() === cityFilter)
+    }
     return list
-  }, [competitors, logisticFilter, listingFilter])
+  }, [competitors, logisticFilter, listingFilter, cityFilter])
 
   const fullCount = competitors.filter((c) => c.logisticType === "fulfillment").length
   const flexCount = competitors.filter(
@@ -331,7 +349,7 @@ function AnalysisResults({
   return (
     <div className="space-y-5">
       {/* ═══ Product Hero Card ═══ */}
-      <div className="rounded-xl border bg-white p-5 shadow-sm">
+      <div className="rounded-xl border bg-card p-5 shadow-sm">
         <div className="flex gap-5">
           {item.thumbnail && (
             <img
@@ -356,22 +374,22 @@ function AnalysisResults({
             </div>
             <div className="flex flex-wrap items-center gap-2">
               {data.catalog.catalogProductId && (
-                <span className="inline-flex items-center gap-1 rounded-md bg-blue-50 border border-blue-200 px-2 py-0.5 text-[10px] font-mono font-medium text-blue-700">
+                <span className="inline-flex items-center gap-1 rounded-md bg-blue-50 dark:bg-blue-950/30 border border-blue-200 dark:border-blue-800 px-2 py-0.5 text-[10px] font-mono font-medium text-blue-700 dark:text-blue-300">
                   <Tag className="h-3 w-3" />
                   {data.catalog.catalogProductId}
                 </span>
               )}
-              <span className="inline-flex items-center gap-1 rounded-md bg-emerald-50 border border-emerald-200 px-2 py-0.5 text-[10px] font-medium text-emerald-700">
+              <span className="inline-flex items-center gap-1 rounded-md bg-emerald-50 dark:bg-emerald-950/30 border border-emerald-200 dark:border-emerald-800 px-2 py-0.5 text-[10px] font-medium text-emerald-700 dark:text-emerald-300">
                 <Users className="h-3 w-3" />
                 {competitors.length + 1} vendedores em catalogo
               </span>
               {item.freeShipping && (
-                <span className="inline-flex items-center gap-1 rounded-md bg-green-50 border border-green-200 px-2 py-0.5 text-[10px] font-medium text-green-700">
+                <span className="inline-flex items-center gap-1 rounded-md bg-green-50 dark:bg-green-950/30 border border-green-200 dark:border-green-800 px-2 py-0.5 text-[10px] font-medium text-green-700 dark:text-green-300">
                   <Truck className="h-3 w-3" />
                   Frete Gratis
                 </span>
               )}
-              <span className="inline-flex items-center gap-1.5 rounded-md bg-gray-50 border px-2 py-0.5 text-[10px] font-medium text-muted-foreground">
+              <span className="inline-flex items-center gap-1.5 rounded-md bg-muted/50 border px-2 py-0.5 text-[10px] font-medium text-muted-foreground">
                 <Clock className="h-3 w-3" />
                 {data.timings.totalMs}ms
               </span>
@@ -391,7 +409,7 @@ function AnalysisResults({
               href={item.permalink}
               target="_blank"
               rel="noopener noreferrer"
-              className="inline-flex items-center gap-1 rounded-lg border px-3 py-1.5 text-[11px] font-medium text-blue-600 transition-colors hover:bg-blue-50"
+              className="inline-flex items-center gap-1 rounded-lg border px-3 py-1.5 text-[11px] font-medium text-blue-600 dark:text-blue-400 transition-colors hover:bg-blue-50 dark:hover:bg-blue-950/30"
             >
               Ver no ML <ExternalLink className="h-3 w-3" />
             </a>
@@ -402,28 +420,28 @@ function AnalysisResults({
       {/* ═══ Summary Stats ═══ */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
         <StatCard
-          icon={<Users className="h-5 w-5 text-blue-600" />}
-          iconBg="bg-blue-50"
+          icon={<Users className="h-5 w-5 text-blue-600 dark:text-blue-400" />}
+          iconBg="bg-blue-50 dark:bg-blue-950/30"
           label="Concorrentes"
           value={summary.count}
           sub={`${summary.officialStoreCount} lojas oficiais`}
         />
         <StatCard
-          icon={<TrendingDown className="h-5 w-5 text-emerald-600" />}
-          iconBg="bg-emerald-50"
+          icon={<TrendingDown className="h-5 w-5 text-emerald-600 dark:text-emerald-400" />}
+          iconBg="bg-emerald-50 dark:bg-emerald-950/30"
           label="Menor Preco"
           value={formatBrl(summary.minPrice)}
         />
         <StatCard
-          icon={<DollarSign className="h-5 w-5 text-amber-600" />}
-          iconBg="bg-amber-50"
+          icon={<DollarSign className="h-5 w-5 text-amber-600 dark:text-amber-400" />}
+          iconBg="bg-amber-50 dark:bg-amber-950/30"
           label="Preco Medio"
           value={formatBrl(summary.avgPrice)}
           sub={`Mediana ${formatBrl(summary.medianPrice)}`}
         />
         <StatCard
-          icon={<TrendingUp className="h-5 w-5 text-rose-600" />}
-          iconBg="bg-rose-50"
+          icon={<TrendingUp className="h-5 w-5 text-rose-600 dark:text-rose-400" />}
+          iconBg="bg-rose-50 dark:bg-rose-950/30"
           label="Maior Preco"
           value={formatBrl(summary.maxPrice)}
         />
@@ -431,17 +449,17 @@ function AnalysisResults({
 
       {/* ═══ Tabs ═══ */}
       <Tabs defaultValue="competitors">
-        <TabsList className="bg-gray-100/80 rounded-lg p-1 h-auto">
+        <TabsList className="bg-muted rounded-lg p-1 h-auto">
           <TabsTrigger
             value="competitors"
-            className="rounded-md text-xs gap-1.5 data-[state=active]:bg-white data-[state=active]:shadow-sm px-4 py-2"
+            className="rounded-md text-xs gap-1.5 data-[state=active]:bg-background data-[state=active]:shadow-sm px-4 py-2"
           >
             <Users className="h-3.5 w-3.5" />
             Anuncios
           </TabsTrigger>
           <TabsTrigger
             value="catalog"
-            className="rounded-md text-xs gap-1.5 data-[state=active]:bg-white data-[state=active]:shadow-sm px-4 py-2"
+            className="rounded-md text-xs gap-1.5 data-[state=active]:bg-background data-[state=active]:shadow-sm px-4 py-2"
           >
             <BarChart3 className="h-3.5 w-3.5" />
             Detalhes
@@ -456,7 +474,7 @@ function AnalysisResults({
               <h3 className="text-sm font-bold">
                 Anuncios do catalogo
               </h3>
-              <span className="inline-flex items-center justify-center rounded-full bg-gray-200 px-2 py-0.5 text-[10px] font-bold text-gray-700">
+              <span className="inline-flex items-center justify-center rounded-full bg-muted px-2 py-0.5 text-[10px] font-bold text-foreground">
                 {filtered.length}
               </span>
             </div>
@@ -466,8 +484,8 @@ function AnalysisResults({
           <div className="flex flex-wrap items-center gap-2">
             <Filter className="h-3.5 w-3.5 text-muted-foreground" />
             <FilterPill
-              active={logisticFilter === "all" && listingFilter === "all"}
-              onClick={() => { setLogisticFilter("all"); setListingFilter("all") }}
+              active={logisticFilter === "all" && listingFilter === "all" && !cityFilter}
+              onClick={() => { setLogisticFilter("all"); setListingFilter("all"); setCityFilter(null) }}
             >
               Todos os tipos
             </FilterPill>
@@ -483,7 +501,7 @@ function AnalysisResults({
             >
               <Truck className="h-3 w-3" /> Frete Flex ({flexCount})
             </FilterPill>
-            <span className="h-4 w-px bg-gray-200" />
+            <span className="h-4 w-px bg-border" />
             <FilterPill
               active={listingFilter === "gold_pro"}
               onClick={() => setListingFilter(listingFilter === "gold_pro" ? "all" : "gold_pro")}
@@ -496,6 +514,34 @@ function AnalysisResults({
             >
               Classico
             </FilterPill>
+            {availableCities.length > 1 && (
+              <>
+                <span className="h-4 w-px bg-border" />
+                <MapPin className="h-3.5 w-3.5 text-muted-foreground" />
+                {cityFilter ? (
+                  <button
+                    onClick={() => setCityFilter(null)}
+                    className="inline-flex items-center gap-1 rounded-full border border-foreground bg-foreground px-3 py-1 text-[11px] font-medium text-background transition-colors"
+                  >
+                    {cityFilter}
+                    <X className="h-3 w-3" />
+                  </button>
+                ) : (
+                  <select
+                    value=""
+                    onChange={(e) => setCityFilter(e.target.value || null)}
+                    className="h-7 rounded-full border border-border bg-card px-2.5 text-[11px] font-medium text-foreground transition-colors hover:bg-muted/50 focus:outline-none focus:ring-1 focus:ring-ring dark:[color-scheme:dark]"
+                  >
+                    <option value="">Todas as cidades</option>
+                    {availableCities.map(({ city, count }) => (
+                      <option key={city} value={city}>
+                        {city} ({count})
+                      </option>
+                    ))}
+                  </select>
+                )}
+              </>
+            )}
           </div>
 
           {/* Table */}
@@ -508,7 +554,7 @@ function AnalysisResults({
             />
           )}
           {phase === "partial" && (
-            <div className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-xs text-amber-700">
+            <div className="rounded-lg border border-amber-200 dark:border-amber-800 bg-amber-50 dark:bg-amber-950/30 px-4 py-3 text-xs text-amber-700 dark:text-amber-300">
               Dados de catalogo carregados, mas a descoberta de concorrentes
               falhou parcialmente.
             </div>

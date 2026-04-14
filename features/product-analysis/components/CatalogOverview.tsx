@@ -37,10 +37,10 @@ function completenessFieldLabel(field: string): string {
 }
 
 const statusConfig: Record<string, { label: string; bg: string; text: string; border: string }> = {
-  linked: { label: "Vinculado ao Catalogo", bg: "bg-emerald-50", text: "text-emerald-700", border: "border-emerald-200" },
-  eligible: { label: "Elegivel", bg: "bg-amber-50", text: "text-amber-700", border: "border-amber-200" },
-  not_catalog: { label: "Fora do Catalogo", bg: "bg-rose-50", text: "text-rose-700", border: "border-rose-200" },
-  undetermined: { label: "Indeterminado", bg: "bg-gray-50", text: "text-gray-500", border: "border-gray-200" },
+  linked: { label: "Vinculado ao Catalogo", bg: "bg-emerald-50 dark:bg-emerald-950/30", text: "text-emerald-700 dark:text-emerald-300", border: "border-emerald-200 dark:border-emerald-800" },
+  eligible: { label: "Elegivel", bg: "bg-amber-50 dark:bg-amber-950/30", text: "text-amber-700 dark:text-amber-300", border: "border-amber-200 dark:border-amber-800" },
+  not_catalog: { label: "Fora do Catalogo", bg: "bg-rose-50 dark:bg-rose-950/30", text: "text-rose-700 dark:text-rose-300", border: "border-rose-200 dark:border-rose-800" },
+  undetermined: { label: "Indeterminado", bg: "bg-muted/50", text: "text-muted-foreground", border: "border-border" },
 }
 
 function StatusIcon({ status }: { status: string }) {
@@ -63,7 +63,7 @@ function MetricCard({
   sub?: string
 }) {
   return (
-    <div className="flex items-center gap-3 rounded-xl border bg-white p-3 shadow-sm">
+    <div className="flex items-center gap-3 rounded-xl border bg-card p-3 shadow-sm">
       <div className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-lg ${iconBg}`}>
         {icon}
       </div>
@@ -78,10 +78,10 @@ function MetricCard({
 
 function PriceToWinCard({ ptw }: { ptw: NonNullable<CatalogSection["priceToWin"]> }) {
   const statusColors: Record<string, string> = {
-    winning: "bg-emerald-100 text-emerald-700",
-    competing: "bg-rose-100 text-rose-700",
-    sharing_first_place: "bg-amber-100 text-amber-700",
-    listed: "bg-gray-100 text-gray-600",
+    winning: "bg-emerald-100 dark:bg-emerald-900/40 text-emerald-700 dark:text-emerald-300",
+    competing: "bg-rose-100 dark:bg-rose-900/40 text-rose-700 dark:text-rose-300",
+    sharing_first_place: "bg-amber-100 dark:bg-amber-900/40 text-amber-700 dark:text-amber-300",
+    listed: "bg-muted text-muted-foreground",
   }
   const statusLabels: Record<string, string> = {
     winning: "Ganhando",
@@ -91,17 +91,17 @@ function PriceToWinCard({ ptw }: { ptw: NonNullable<CatalogSection["priceToWin"]
   }
 
   return (
-    <div className="rounded-xl border bg-white p-4 shadow-sm">
+    <div className="rounded-xl border bg-card p-4 shadow-sm">
       <div className="flex items-center gap-2 mb-3">
-        <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-blue-50">
-          <Trophy className="h-4 w-4 text-blue-600" />
+        <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-blue-50 dark:bg-blue-950/30">
+          <Trophy className="h-4 w-4 text-blue-600 dark:text-blue-400" />
         </div>
         <h4 className="text-xs font-bold uppercase tracking-wider text-muted-foreground">Price to Win</h4>
       </div>
       <div className="space-y-2.5">
         <div className="flex items-center justify-between">
           <span className="text-xs text-muted-foreground">Status</span>
-          <span className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-[11px] font-semibold ${statusColors[ptw.status] ?? "bg-gray-100 text-gray-600"}`}>
+          <span className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-[11px] font-semibold ${statusColors[ptw.status] ?? "bg-muted text-muted-foreground"}`}>
             {statusLabels[ptw.status] ?? ptw.status}
           </span>
         </div>
@@ -141,7 +141,7 @@ export function CatalogOverview({ data }: { data: CatalogSection }) {
   return (
     <div className="space-y-5">
       {/* Hero card */}
-      <div className="rounded-xl border bg-white p-5 shadow-sm">
+      <div className="rounded-xl border bg-card p-5 shadow-sm">
         <div className="flex gap-4">
           <img
             src={item.thumbnail}
@@ -155,7 +155,7 @@ export function CatalogOverview({ data }: { data: CatalogSection }) {
                 {sc.label}
               </span>
               {data.catalogProductId && (
-                <span className="rounded-md bg-gray-100 px-2 py-0.5 text-[10px] font-mono text-muted-foreground">
+                <span className="rounded-md bg-muted px-2 py-0.5 text-[10px] font-mono text-muted-foreground">
                   {data.catalogProductId}
                 </span>
               )}
@@ -177,50 +177,50 @@ export function CatalogOverview({ data }: { data: CatalogSection }) {
       <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3">
         <MetricCard
           icon={<Package className="h-4 w-4 text-blue-600" />}
-          iconBg="bg-blue-50"
+          iconBg="bg-blue-50 dark:bg-blue-950/30"
           label="Estoque"
           value={item.stock}
         />
         <MetricCard
           icon={<BarChart3 className="h-4 w-4 text-violet-600" />}
-          iconBg="bg-violet-50"
+          iconBg="bg-violet-50 dark:bg-violet-950/30"
           label="Vendidos"
           value={item.sold}
         />
         <MetricCard
           icon={<Eye className="h-4 w-4 text-cyan-600" />}
-          iconBg="bg-cyan-50"
+          iconBg="bg-cyan-50 dark:bg-cyan-950/30"
           label="Visitas 7d"
           value={data.visits["7d"] ?? "-"}
         />
         <MetricCard
           icon={<Eye className="h-4 w-4 text-teal-600" />}
-          iconBg="bg-teal-50"
+          iconBg="bg-teal-50 dark:bg-teal-950/30"
           label="Visitas 30d"
           value={data.visits["30d"] ?? "-"}
         />
         <MetricCard
           icon={<Truck className="h-4 w-4 text-emerald-600" />}
-          iconBg="bg-emerald-50"
+          iconBg="bg-emerald-50 dark:bg-emerald-950/30"
           label="Frete"
           value={item.freeShipping ? "Gratis" : "Pago"}
           sub={item.shippingType ?? undefined}
         />
         <MetricCard
           icon={<Store className="h-4 w-4 text-indigo-600" />}
-          iconBg="bg-indigo-50"
+          iconBg="bg-indigo-50 dark:bg-indigo-950/30"
           label="Loja Oficial"
           value={item.officialStore ? "Sim" : "Nao"}
         />
         <MetricCard
           icon={<TrendingUp className="h-4 w-4 text-amber-600" />}
-          iconBg="bg-amber-50"
+          iconBg="bg-amber-50 dark:bg-amber-950/30"
           label="Tipo"
           value={item.listingType === "gold_pro" ? "Premium" : item.listingType === "gold_special" ? "Classico" : item.listingType}
         />
         <MetricCard
           icon={<Award className="h-4 w-4 text-rose-600" />}
-          iconBg="bg-rose-50"
+          iconBg="bg-rose-50 dark:bg-rose-950/30"
           label="Idade"
           value={`${item.ageDays}d`}
         />
@@ -230,9 +230,9 @@ export function CatalogOverview({ data }: { data: CatalogSection }) {
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
         {ptw && <PriceToWinCard ptw={ptw} />}
 
-        <div className="rounded-xl border bg-white p-4 shadow-sm">
+        <div className="rounded-xl border bg-card p-4 shadow-sm">
           <div className="mb-2 flex items-start gap-2">
-            <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-emerald-50">
+            <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-emerald-50 dark:bg-emerald-950/30">
               <ShieldCheck className="h-4 w-4 text-emerald-600" />
             </div>
             <div className="min-w-0 flex-1">
@@ -279,26 +279,26 @@ export function CatalogOverview({ data }: { data: CatalogSection }) {
 
       {/* Identifiers */}
       {(data.identifiers.hasBrand || data.identifiers.hasModel || data.identifiers.hasGtin) && (
-        <div className="rounded-xl border bg-white p-4 shadow-sm">
+        <div className="rounded-xl border bg-card p-4 shadow-sm">
           <div className="flex items-center gap-2 mb-3">
-            <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-purple-50">
-              <Tag className="h-4 w-4 text-purple-600" />
+            <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-purple-50 dark:bg-purple-950/30">
+              <Tag className="h-4 w-4 text-purple-600 dark:text-purple-400" />
             </div>
             <h4 className="text-xs font-bold uppercase tracking-wider text-muted-foreground">Identificadores</h4>
           </div>
           <div className="flex flex-wrap gap-2">
             {data.identifiers.brand && (
-              <span className="inline-flex items-center rounded-lg border bg-gray-50 px-3 py-1.5 text-xs font-medium">
+              <span className="inline-flex items-center rounded-lg border bg-muted/50 px-3 py-1.5 text-xs font-medium">
                 Marca: <span className="ml-1 font-semibold">{data.identifiers.brand}</span>
               </span>
             )}
             {data.identifiers.model && (
-              <span className="inline-flex items-center rounded-lg border bg-gray-50 px-3 py-1.5 text-xs font-medium">
+              <span className="inline-flex items-center rounded-lg border bg-muted/50 px-3 py-1.5 text-xs font-medium">
                 Modelo: <span className="ml-1 font-semibold">{data.identifiers.model}</span>
               </span>
             )}
             {data.identifiers.gtin && (
-              <span className="inline-flex items-center rounded-lg border bg-gray-50 px-3 py-1.5 text-xs font-medium">
+              <span className="inline-flex items-center rounded-lg border bg-muted/50 px-3 py-1.5 text-xs font-medium">
                 GTIN: <span className="ml-1 font-mono font-semibold">{data.identifiers.gtin}</span>
               </span>
             )}

@@ -27,7 +27,7 @@ function SummaryCard({
   sub?: string
 }) {
   return (
-    <div className="flex items-center gap-3 rounded-xl border bg-white p-4 shadow-sm transition-shadow hover:shadow-md">
+    <div className="flex items-center gap-3 rounded-xl border bg-card p-4 shadow-sm transition-shadow hover:shadow-md">
       <div className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-xl ${iconBg}`}>
         {icon}
       </div>
@@ -45,51 +45,51 @@ export function CompetitorSummaryCards({ summary, myPrice }: { summary: Summary;
     <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
       <SummaryCard
         icon={<Users className="h-5 w-5 text-blue-600" />}
-        iconBg="bg-blue-50"
+        iconBg="bg-blue-50 dark:bg-blue-950/30"
         label="Concorrentes"
         value={summary.count}
       />
       <SummaryCard
         icon={<TrendingDown className="h-5 w-5 text-emerald-600" />}
-        iconBg="bg-emerald-50"
+        iconBg="bg-emerald-50 dark:bg-emerald-950/30"
         label="Menor Preco"
         value={formatBrl(summary.minPrice)}
       />
       <SummaryCard
         icon={<TrendingUp className="h-5 w-5 text-rose-600" />}
-        iconBg="bg-rose-50"
+        iconBg="bg-rose-50 dark:bg-rose-950/30"
         label="Maior Preco"
         value={formatBrl(summary.maxPrice)}
       />
       <SummaryCard
         icon={<Target className="h-5 w-5 text-violet-600" />}
-        iconBg="bg-violet-50"
+        iconBg="bg-violet-50 dark:bg-violet-950/30"
         label="Minha Posicao"
         value={`${summary.myPricePosition}º de ${summary.count}`}
         sub={`${formatBrl(myPrice)} \u2022 Percentil ${summary.myPricePercentile}%`}
       />
       <SummaryCard
         icon={<DollarSign className="h-5 w-5 text-amber-600" />}
-        iconBg="bg-amber-50"
+        iconBg="bg-amber-50 dark:bg-amber-950/30"
         label="Preco Medio"
         value={formatBrl(summary.avgPrice)}
         sub={`Mediana ${formatBrl(summary.medianPrice)}`}
       />
       <SummaryCard
         icon={<Store className="h-5 w-5 text-indigo-600" />}
-        iconBg="bg-indigo-50"
+        iconBg="bg-indigo-50 dark:bg-indigo-950/30"
         label="Loja Oficial"
         value={summary.officialStoreCount}
       />
       <SummaryCard
         icon={<Truck className="h-5 w-5 text-teal-600" />}
-        iconBg="bg-teal-50"
+        iconBg="bg-teal-50 dark:bg-teal-950/30"
         label="Frete Gratis"
         value={summary.freeShippingCount}
       />
       <SummaryCard
         icon={<Zap className="h-5 w-5 text-orange-600" />}
-        iconBg="bg-orange-50"
+        iconBg="bg-orange-50 dark:bg-orange-950/30"
         label="Fulfillment"
         value={summary.fulfillmentCount}
       />

@@ -53,6 +53,7 @@ import {
   Star,
 } from "lucide-react"
 import Image from "next/image"
+import { ThemeToggle } from "@/components/theme-toggle"
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 
 import { api } from "@/convex/_generated/api"
@@ -264,7 +265,7 @@ function stockLevelDotClass(quantity: number) {
 function mlStatusBadgeClass(status: string) {
   const normalizedStatus = status.toLowerCase()
   if (normalizedStatus === "paid" || normalizedStatus === "pago") {
-    return "border-blue-600/40 bg-blue-600/10 text-blue-700"
+    return "border-blue-600/40 bg-blue-600/10 text-blue-700 dark:text-blue-300"
   }
   if (
     normalizedStatus === "shipped" ||
@@ -272,13 +273,13 @@ function mlStatusBadgeClass(status: string) {
     normalizedStatus === "enviado" ||
     normalizedStatus === "ready_to_ship"
   ) {
-    return "border-amber-500/40 bg-amber-500/10 text-amber-700"
+    return "border-amber-500/40 bg-amber-500/10 text-amber-700 dark:text-amber-300"
   }
   if (normalizedStatus === "delivered" || normalizedStatus === "entregue") {
-    return "border-emerald-600/40 bg-emerald-600/10 text-emerald-700"
+    return "border-emerald-600/40 bg-emerald-600/10 text-emerald-700 dark:text-emerald-400"
   }
   if (normalizedStatus === "active") {
-    return "border-emerald-600/40 bg-emerald-600/10 text-emerald-700"
+    return "border-emerald-600/40 bg-emerald-600/10 text-emerald-700 dark:text-emerald-400"
   }
   if (normalizedStatus === "paused") {
     return "border-warning/40 bg-warning/10 text-warning"
@@ -288,11 +289,11 @@ function mlStatusBadgeClass(status: string) {
 
 function catalogCompetitionBadgeClass(status: string) {
   const normalized = String(status ?? "").toLowerCase()
-  if (normalized === "winning") return "border-emerald-500/40 bg-emerald-500/10 text-emerald-700"
+  if (normalized === "winning") return "border-emerald-500/40 bg-emerald-500/10 text-emerald-700 dark:text-emerald-400"
   if (normalized === "sharing_first_place")
-    return "border-amber-500/40 bg-amber-500/10 text-amber-700"
-  if (normalized === "competing") return "border-red-500/40 bg-red-500/10 text-red-700"
-  if (normalized === "listed") return "border-slate-500/40 bg-slate-500/10 text-slate-700"
+    return "border-amber-500/40 bg-amber-500/10 text-amber-700 dark:text-amber-300"
+  if (normalized === "competing") return "border-red-500/40 bg-red-500/10 text-red-700 dark:text-red-300"
+  if (normalized === "listed") return "border-slate-500/40 bg-slate-500/10 text-slate-700 dark:text-slate-300"
   if (normalized === "paused") return "border-warning/40 bg-warning/10 text-amber-800 dark:text-amber-200"
   if (normalized === "not_listed") return "border-muted bg-muted/40 text-muted-foreground"
   return "border-muted bg-muted/30 text-muted-foreground"
@@ -332,13 +333,13 @@ function mlShippingStep(status: string) {
 }
 
 function valueToneClass(value: number) {
-  if (value > 0) return "text-emerald-700"
+  if (value > 0) return "text-emerald-700 dark:text-emerald-400"
   if (value < 0) return "text-destructive"
   return "text-foreground"
 }
 
 function valueBadgeClass(value: number) {
-  if (value > 0) return "bg-emerald-100 text-emerald-700"
+  if (value > 0) return "bg-emerald-100 dark:bg-emerald-900/40 text-emerald-700 dark:text-emerald-400"
   if (value < 0) return "bg-destructive/10 text-destructive"
   return "bg-muted text-muted-foreground"
 }
@@ -2259,11 +2260,11 @@ export function FinancialDashboard() {
   const dreRevenueBase = Math.max(1, dreSnapshot.revenueConfirmed)
   const dreRows = useMemo(
     () => [
-      { label: "Receita Confirmada", value: dreSnapshot.revenueConfirmed, strong: true, color: "text-emerald-700" },
+      { label: "Receita Confirmada", value: dreSnapshot.revenueConfirmed, strong: true, color: "text-emerald-700 dark:text-emerald-400" },
       { label: "(-) Taxas de Marketplace", value: -dreSnapshot.marketplaceFees },
       { label: "(-) Frete Pago pelo Vendedor", value: -dreSnapshot.shippingPaidBySeller },
-      { label: "(+) Bonus de Frete", value: dreSnapshot.shippingBonus, color: "text-emerald-700" },
-      { label: "= Valor Liquido Recebido", value: dreSnapshot.netReceived, strong: true, color: "text-emerald-700" },
+      { label: "(+) Bonus de Frete", value: dreSnapshot.shippingBonus, color: "text-emerald-700 dark:text-emerald-400" },
+      { label: "= Valor Liquido Recebido", value: dreSnapshot.netReceived, strong: true, color: "text-emerald-700 dark:text-emerald-400" },
       { label: "(-) Devolucoes", value: -dreSnapshot.returnsAmount },
       { label: "(-) Custo dos Produtos (SKU)", value: -dreSnapshot.productCosts },
       { label: "(-) Custo de Embalagem", value: -dreSnapshot.packagingCost },
@@ -3056,7 +3057,10 @@ export function FinancialDashboard() {
             />
             <h2 className="text-sm font-semibold">BranchHub</h2>
           </div>
-          <UserButton />
+          <div className="flex items-center gap-1">
+            <ThemeToggle />
+            <UserButton />
+          </div>
         </div>
         <Separator />
         <p className="text-xs text-muted-foreground">Modulos</p>
@@ -3092,7 +3096,7 @@ export function FinancialDashboard() {
             className={cn(
               activeModule === "branchhunter"
                 ? "border-emerald-600 bg-emerald-600 text-white hover:bg-emerald-700"
-                : "border-emerald-600 text-emerald-700 hover:bg-emerald-50",
+                : "border-emerald-600 text-emerald-700 dark:text-emerald-400 hover:bg-emerald-50 dark:hover:bg-emerald-950/40",
             )}
             onClick={() => setActiveModule("branchhunter")}
           >
@@ -3110,7 +3114,7 @@ export function FinancialDashboard() {
               className={cn(
                 "ml-4 justify-start text-xs border-l-2 border-blue-400/30",
                 activeFinanceSection === "cashflow"
-                  ? "bg-blue-50 text-blue-700 border-blue-500 hover:bg-blue-100 dark:bg-blue-950/40 dark:text-blue-300 dark:hover:bg-blue-950/60"
+                  ? "bg-blue-50 text-blue-700 dark:text-blue-300 border-blue-500 hover:bg-blue-100 dark:bg-blue-950/40 dark:hover:bg-blue-950/60"
                   : "text-blue-600/80 hover:bg-blue-50/50 dark:text-blue-400/70 dark:hover:bg-blue-950/30",
               )}
               onClick={() => setActiveFinanceSection("cashflow")}
@@ -3181,6 +3185,9 @@ export function FinancialDashboard() {
       </aside>
 
       <section className="flex-1 space-y-4">
+        <div className="flex justify-end lg:hidden">
+          <ThemeToggle />
+        </div>
         {activeModule === "home" && (
           <div className="mx-auto max-w-6xl space-y-8 pb-8">
             <div className="relative overflow-hidden rounded-2xl border border-border/60 bg-linear-to-br from-sky-500/10 via-card to-violet-500/5 px-5 py-6 shadow-sm sm:px-8 sm:py-8 dark:from-sky-950/40 dark:via-card dark:to-violet-950/20">
@@ -3360,7 +3367,7 @@ export function FinancialDashboard() {
                     <Button
                       variant="ghost"
                       size="sm"
-                      className="text-sky-600 hover:text-sky-700"
+                      className="text-sky-600 dark:text-sky-400 hover:text-sky-700"
                       onClick={() => {
                         setActiveModule("finance")
                         setActiveFinanceSection("overview")
@@ -3469,7 +3476,7 @@ export function FinancialDashboard() {
                 {stockSummary.lowStockCount > 0 && (
                   <Card className="border-amber-500/40 bg-amber-500/6 shadow-sm dark:bg-amber-950/20">
                     <CardContent className="flex items-start gap-3 pt-5">
-                      <AlertCircle className="mt-0.5 size-5 shrink-0 text-amber-600" />
+                      <AlertCircle className="mt-0.5 size-5 shrink-0 text-amber-600 dark:text-amber-400" />
                       <div>
                         <p className="font-medium text-amber-950 dark:text-amber-100">
                           {stockSummary.lowStockCount} produto(s) abaixo do minimo
@@ -3711,7 +3718,7 @@ export function FinancialDashboard() {
                 <Card className="border-border/70">
                   <CardHeader className="pb-3">
                     <CardTitle className="inline-flex items-center gap-2 text-xl">
-                      <Wallet className="size-5 text-orange-500" />
+                      <Wallet className="size-5 text-orange-500 dark:text-orange-400" />
                       Resumo Financeiro
                     </CardTitle>
                     <CardDescription>
@@ -3900,9 +3907,9 @@ export function FinancialDashboard() {
                     </div>
 
                     <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-5">
-                      <Card className="border-emerald-200/70 bg-emerald-50/40">
+                      <Card className="border-emerald-200/70 bg-emerald-50/40 dark:border-emerald-800/50 dark:bg-emerald-950/30">
                         <CardHeader className="pb-2">
-                          <CardDescription className="inline-flex items-center gap-1 text-emerald-700">
+                          <CardDescription className="inline-flex items-center gap-1 text-emerald-700 dark:text-emerald-400">
                             <Wallet className="size-3.5" />
                             Lucro Liquido
                           </CardDescription>
@@ -3926,25 +3933,25 @@ export function FinancialDashboard() {
                           </span>
                         </CardContent>
                       </Card>
-                      <Card className="border-blue-200/70 bg-blue-50/40">
+                      <Card className="border-blue-200/70 bg-blue-50/40 dark:border-blue-800/50 dark:bg-blue-950/30">
                         <CardHeader className="pb-2">
-                          <CardDescription className="inline-flex items-center gap-1 text-blue-700">
+                          <CardDescription className="inline-flex items-center gap-1 text-blue-700 dark:text-blue-300">
                             <ShoppingBag className="size-3.5" />
                             Vendas Brutas
                           </CardDescription>
-                          <CardTitle className="text-blue-700">{formatCurrency(salesInFilterFinal)}</CardTitle>
+                          <CardTitle className="text-blue-700 dark:text-blue-300">{formatCurrency(salesInFilterFinal)}</CardTitle>
                         </CardHeader>
                         <CardContent className="text-xs text-muted-foreground">
                           {soldItemsFinal} itens vendidos
                         </CardContent>
                       </Card>
-                      <Card className="border-emerald-200/70 bg-emerald-50/40">
+                      <Card className="border-emerald-200/70 bg-emerald-50/40 dark:border-emerald-800/50 dark:bg-emerald-950/30">
                         <CardHeader className="pb-2">
-                          <CardDescription className="inline-flex items-center gap-1 text-emerald-700">
+                          <CardDescription className="inline-flex items-center gap-1 text-emerald-700 dark:text-emerald-400">
                             <CircleDollarSign className="size-3.5" />
                             Receita
                           </CardDescription>
-                          <CardTitle className="text-emerald-700">
+                          <CardTitle className="text-emerald-700 dark:text-emerald-400">
                             {formatCurrency(salesInFilterFinal)}
                           </CardTitle>
                         </CardHeader>
@@ -3952,13 +3959,13 @@ export function FinancialDashboard() {
                           {salesCountFinal} vendas confirmadas
                         </CardContent>
                       </Card>
-                      <Card className="border-orange-200/70 bg-orange-50/40">
+                      <Card className="border-orange-200/70 bg-orange-50/40 dark:border-orange-800/50 dark:bg-orange-950/30">
                         <CardHeader className="pb-2">
-                          <CardDescription className="inline-flex items-center gap-1 text-orange-700">
+                          <CardDescription className="inline-flex items-center gap-1 text-orange-700 dark:text-orange-400">
                             <TrendingDown className="size-3.5" />
                             Custos Totais
                           </CardDescription>
-                          <CardTitle className="text-orange-700">
+                          <CardTitle className="text-orange-700 dark:text-orange-400">
                             {formatCurrency(expensesInFilterFinal)}
                           </CardTitle>
                         </CardHeader>
@@ -3966,13 +3973,13 @@ export function FinancialDashboard() {
                           Soma de todos os custos
                         </CardContent>
                       </Card>
-                      <Card className="border-violet-200/70 bg-violet-50/40">
+                      <Card className="border-violet-200/70 bg-violet-50/40 dark:border-violet-800/50 dark:bg-violet-950/30">
                         <CardHeader className="pb-2">
-                          <CardDescription className="inline-flex items-center gap-1 text-violet-700">
+                          <CardDescription className="inline-flex items-center gap-1 text-violet-700 dark:text-violet-300">
                             <CreditCard className="size-3.5" />
                             Ticket Medio
                           </CardDescription>
-                          <CardTitle className="text-violet-700">{formatCurrency(ticketMedioFinal)}</CardTitle>
+                          <CardTitle className="text-violet-700 dark:text-violet-300">{formatCurrency(ticketMedioFinal)}</CardTitle>
                         </CardHeader>
                         <CardContent className="text-xs text-muted-foreground">Valor medio por venda</CardContent>
                       </Card>
@@ -4024,7 +4031,7 @@ export function FinancialDashboard() {
                               </span>
                             </div>
                             {hasOrdersFinancialData && comparePeriodOverview.ordersCount === 0 && (
-                              <p className="mt-2 text-xs text-amber-700 dark:text-amber-500">
+                              <p className="mt-2 text-xs text-amber-700 dark:text-amber-300">
                                 Nenhum pedido no periodo de comparacao (valores podem ser zero).
                               </p>
                             )}
@@ -4235,7 +4242,7 @@ export function FinancialDashboard() {
                                       {item.productName}
                                     </TableCell>
                                     <TableCell className="text-right font-medium">{item.unitsSold}</TableCell>
-                                    <TableCell className="text-right font-medium text-blue-700">
+                                    <TableCell className="text-right font-medium text-blue-700 dark:text-blue-300">
                                       {formatCurrency(item.revenue)}
                                     </TableCell>
                                     <TableCell
@@ -4279,7 +4286,7 @@ export function FinancialDashboard() {
                 <Card>
                   <CardHeader>
                     <CardTitle className="inline-flex items-center gap-2">
-                      <PieChart className="size-5 text-orange-500" />
+                      <PieChart className="size-5 text-orange-500 dark:text-orange-400" />
                       Analise ABC
                     </CardTitle>
                     <CardDescription>
@@ -4357,8 +4364,8 @@ export function FinancialDashboard() {
                         variant="secondary"
                         className={
                           abcUsesOrdersData
-                            ? "bg-emerald-100 text-emerald-700"
-                            : "bg-amber-100 text-amber-700"
+                            ? "bg-emerald-100 dark:bg-emerald-900/40 text-emerald-700 dark:text-emerald-400"
+                            : "bg-amber-100 dark:bg-amber-900/40 text-amber-700 dark:text-amber-300"
                         }
                       >
                         {abcUsesOrdersData
@@ -4375,28 +4382,28 @@ export function FinancialDashboard() {
                         </CardHeader>
                         <CardContent className="text-xs text-muted-foreground">Itens analisados</CardContent>
                       </Card>
-                      <Card className="border-emerald-200/70 bg-emerald-50/40">
+                      <Card className="border-emerald-200/70 bg-emerald-50/40 dark:border-emerald-800/50 dark:bg-emerald-950/30">
                         <CardHeader className="pb-2">
                           <CardDescription>Classe A</CardDescription>
-                          <CardTitle className="text-emerald-700">
+                          <CardTitle className="text-emerald-700 dark:text-emerald-400">
                             {abcSummary.A.count} ({abcSummary.A.share.toFixed(1)}%)
                           </CardTitle>
                         </CardHeader>
                         <CardContent className="text-xs text-muted-foreground">Maior impacto</CardContent>
                       </Card>
-                      <Card className="border-amber-200/70 bg-amber-50/40">
+                      <Card className="border-amber-200/70 bg-amber-50/40 dark:border-amber-800/50 dark:bg-amber-950/30">
                         <CardHeader className="pb-2">
                           <CardDescription>Classe B</CardDescription>
-                          <CardTitle className="text-amber-700">
+                          <CardTitle className="text-amber-700 dark:text-amber-300">
                             {abcSummary.B.count} ({abcSummary.B.share.toFixed(1)}%)
                           </CardTitle>
                         </CardHeader>
                         <CardContent className="text-xs text-muted-foreground">Impacto moderado</CardContent>
                       </Card>
-                      <Card className="border-rose-200/70 bg-rose-50/40">
+                      <Card className="border-rose-200/70 bg-rose-50/40 dark:border-rose-800/50 dark:bg-rose-950/30">
                         <CardHeader className="pb-2">
                           <CardDescription>Classe C</CardDescription>
-                          <CardTitle className="text-rose-700">
+                          <CardTitle className="text-rose-700 dark:text-rose-300">
                             {abcSummary.C.count} ({abcSummary.C.share.toFixed(1)}%)
                           </CardTitle>
                         </CardHeader>
@@ -4469,11 +4476,11 @@ export function FinancialDashboard() {
                                     <Badge
                                       className={cn(
                                         row.abcClass === "A" &&
-                                          "border-emerald-600/30 bg-emerald-100 text-emerald-700",
+                                          "border-emerald-600/30 bg-emerald-100 dark:bg-emerald-900/40 text-emerald-700 dark:text-emerald-400",
                                         row.abcClass === "B" &&
-                                          "border-amber-600/30 bg-amber-100 text-amber-700",
+                                          "border-amber-600/30 bg-amber-100 dark:bg-amber-900/40 text-amber-700 dark:text-amber-300",
                                         row.abcClass === "C" &&
-                                          "border-rose-600/30 bg-rose-100 text-rose-700",
+                                          "border-rose-600/30 bg-rose-100 dark:bg-rose-900/40 text-rose-700 dark:text-rose-300",
                                       )}
                                     >
                                       Classe {row.abcClass}
@@ -4602,10 +4609,10 @@ export function FinancialDashboard() {
                     </div>
 
                     <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
-                      <Card className="border-blue-200/70 bg-blue-50/40">
+                      <Card className="border-blue-200/70 bg-blue-50/40 dark:border-blue-800/50 dark:bg-blue-950/30">
                         <CardHeader className="pb-2">
                           <CardDescription>Vendas Brutas</CardDescription>
-                          <CardTitle className="text-blue-700">
+                          <CardTitle className="text-blue-700 dark:text-blue-300">
                             {formatCurrency(dreSnapshot.revenueConfirmed)}
                           </CardTitle>
                         </CardHeader>
@@ -4613,10 +4620,10 @@ export function FinancialDashboard() {
                           {dreSnapshot.ordersCount} pedidos
                         </CardContent>
                       </Card>
-                      <Card className="border-emerald-200/70 bg-emerald-50/40">
+                      <Card className="border-emerald-200/70 bg-emerald-50/40 dark:border-emerald-800/50 dark:bg-emerald-950/30">
                         <CardHeader className="pb-2">
                           <CardDescription>Vendas Confirmadas</CardDescription>
-                          <CardTitle className="text-emerald-700">
+                          <CardTitle className="text-emerald-700 dark:text-emerald-400">
                             {formatCurrency(dreSnapshot.netReceived)}
                           </CardTitle>
                         </CardHeader>
@@ -4629,7 +4636,7 @@ export function FinancialDashboard() {
                           )}
                         </CardContent>
                       </Card>
-                      <Card className="border-emerald-200/70 bg-emerald-50/40">
+                      <Card className="border-emerald-200/70 bg-emerald-50/40 dark:border-emerald-800/50 dark:bg-emerald-950/30">
                         <CardHeader className="pb-2">
                           <CardDescription>Margem de Contribuicao</CardDescription>
                           <CardTitle className={valueToneClass(dreSnapshot.grossProfit)}>
@@ -4644,7 +4651,7 @@ export function FinancialDashboard() {
                           % margem
                         </CardContent>
                       </Card>
-                      <Card className="border-emerald-200/70 bg-emerald-50/40">
+                      <Card className="border-emerald-200/70 bg-emerald-50/40 dark:border-emerald-800/50 dark:bg-emerald-950/30">
                         <CardHeader className="pb-2">
                           <CardDescription>Lucro Liquido</CardDescription>
                           <CardTitle className={valueToneClass(dreSnapshot.netProfit)}>
@@ -4736,7 +4743,7 @@ export function FinancialDashboard() {
                       className={cn(
                         "md:col-span-2 flex items-center gap-2 rounded-none border px-3 py-2 text-sm",
                         launchFeedback.type === "success"
-                          ? "border-emerald-300 bg-emerald-50 text-emerald-700"
+                          ? "border-emerald-300 dark:border-emerald-800 bg-emerald-50 dark:bg-emerald-950/30 text-emerald-700 dark:text-emerald-400"
                           : "border-destructive/30 bg-destructive/10 text-destructive",
                       )}
                     >
@@ -4979,9 +4986,9 @@ export function FinancialDashboard() {
                   </CardHeader>
                   <CardContent className="space-y-4">
                     <div className="flex flex-wrap gap-2 text-xs">
-                      <Badge variant="secondary" className="bg-emerald-100 text-emerald-700">Entrada prevista</Badge>
+                      <Badge variant="secondary" className="bg-emerald-100 dark:bg-emerald-900/40 text-emerald-700 dark:text-emerald-400">Entrada prevista</Badge>
                       <Badge variant="secondary" className="bg-destructive/10 text-destructive">Custo previsto</Badge>
-                      <Badge variant="secondary" className="bg-blue-100 text-blue-700">Lucro previsto</Badge>
+                      <Badge variant="secondary" className="bg-blue-100 dark:bg-blue-900/40 text-blue-700 dark:text-blue-300">Lucro previsto</Badge>
                     </div>
                     <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
                       {forecastReport.map((item) => (
@@ -5092,28 +5099,28 @@ export function FinancialDashboard() {
                     </div>
 
                     <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
-                      <Card className="border-emerald-200/70 bg-emerald-50/40">
+                      <Card className="border-emerald-200/70 bg-emerald-50/40 dark:border-emerald-800/50 dark:bg-emerald-950/30">
                         <CardHeader className="pb-2">
                           <CardDescription>Entradas</CardDescription>
-                          <CardTitle className="text-emerald-700">{formatCurrency(historySummary.entries)}</CardTitle>
+                          <CardTitle className="text-emerald-700 dark:text-emerald-400">{formatCurrency(historySummary.entries)}</CardTitle>
                         </CardHeader>
                         <CardContent className="text-xs text-muted-foreground">
                           Total de receitas
                         </CardContent>
                       </Card>
-                      <Card className="border-amber-200/70 bg-amber-50/40">
+                      <Card className="border-amber-200/70 bg-amber-50/40 dark:border-amber-800/50 dark:bg-amber-950/30">
                         <CardHeader className="pb-2">
                           <CardDescription>Custo Fixo</CardDescription>
-                          <CardTitle className="text-amber-700">{formatCurrency(historySummary.fixedCost)}</CardTitle>
+                          <CardTitle className="text-amber-700 dark:text-amber-300">{formatCurrency(historySummary.fixedCost)}</CardTitle>
                         </CardHeader>
                         <CardContent className="text-xs text-muted-foreground">
                           Custos fixos mensais
                         </CardContent>
                       </Card>
-                      <Card className="border-orange-200/70 bg-orange-50/40">
+                      <Card className="border-orange-200/70 bg-orange-50/40 dark:border-orange-800/50 dark:bg-orange-950/30">
                         <CardHeader className="pb-2">
                           <CardDescription>Custo Operacional</CardDescription>
-                          <CardTitle className="text-orange-700">
+                          <CardTitle className="text-orange-700 dark:text-orange-400">
                             {formatCurrency(historySummary.operationalCost)}
                           </CardTitle>
                         </CardHeader>
@@ -5121,10 +5128,10 @@ export function FinancialDashboard() {
                           Custos operacionais
                         </CardContent>
                       </Card>
-                      <Card className="border-blue-200/70 bg-blue-50/40">
+                      <Card className="border-blue-200/70 bg-blue-50/40 dark:border-blue-800/50 dark:bg-blue-950/30">
                         <CardHeader className="pb-2">
                           <CardDescription>Recorrentes</CardDescription>
-                          <CardTitle className="text-blue-700">{historySummary.recurring}</CardTitle>
+                          <CardTitle className="text-blue-700 dark:text-blue-300">{historySummary.recurring}</CardTitle>
                         </CardHeader>
                         <CardContent className="text-xs text-muted-foreground">
                           Movimentacoes recorrentes
@@ -5286,7 +5293,7 @@ export function FinancialDashboard() {
                               <TableCell
                                 className={cn(
                                   "text-right font-semibold",
-                                  transaction.kind === "income" ? "text-emerald-700" : "text-destructive",
+                                  transaction.kind === "income" ? "text-emerald-700 dark:text-emerald-400" : "text-destructive",
                                 )}
                               >
                                 {transaction.kind === "income" ? "+" : "-"}
@@ -5333,7 +5340,7 @@ export function FinancialDashboard() {
                     variant="ghost"
                     disabled={mpLoading}
                     onClick={fetchMpData}
-                    className="text-sky-600 hover:text-sky-700"
+                    className="text-sky-600 dark:text-sky-400 hover:text-sky-700"
                   >
                     <RefreshCw className={cn("mr-1 size-4", mpLoading && "animate-spin")} />
                     {mpLoading ? "Atualizando..." : "Atualizar"}
@@ -5391,7 +5398,7 @@ export function FinancialDashboard() {
                           type="button"
                           variant="ghost"
                           size="icon"
-                          className="shrink-0 text-sky-600 hover:text-sky-700"
+                          className="shrink-0 text-sky-600 dark:text-sky-400 hover:text-sky-700"
                           onClick={() => setMpSaldoOculto((v) => !v)}
                           aria-label={mpSaldoOculto ? "Mostrar saldo" : "Ocultar saldo"}
                         >
@@ -5431,7 +5438,7 @@ export function FinancialDashboard() {
                       type="button"
                       disabled={mpFutureLoading}
                       onClick={() => void fetchFutureReleases()}
-                      className="text-sm font-medium text-sky-600 hover:underline disabled:opacity-50"
+                      className="text-sm font-medium text-sky-600 dark:text-sky-400 hover:underline disabled:opacity-50"
                     >
                       {mpFutureLoading ? "Consultando..." : "Consultar →"}
                     </button>
@@ -5533,7 +5540,7 @@ export function FinancialDashboard() {
                       <button
                         type="button"
                         onClick={() => setMpExtratoVerTudo((v) => !v)}
-                        className="text-sm font-medium text-sky-600 hover:underline"
+                        className="text-sm font-medium text-sky-600 dark:text-sky-400 hover:underline"
                       >
                         {mpExtratoVerTudo ? "Ver menos" : "Ver tudo →"}
                       </button>
@@ -5552,7 +5559,7 @@ export function FinancialDashboard() {
                             className={cn(
                               "flex size-10 shrink-0 items-center justify-center rounded-full",
                               tx.type === "credit"
-                                ? "bg-emerald-100 text-emerald-700 dark:bg-emerald-950/50 dark:text-emerald-400"
+                                ? "bg-emerald-100 dark:bg-emerald-900/40 text-emerald-700 dark:text-emerald-400"
                                 : "bg-muted text-muted-foreground",
                             )}
                           >
@@ -6237,7 +6244,7 @@ export function FinancialDashboard() {
                   </div>
                 )}
                 {mlError && <p className="text-sm text-destructive">{mlError}</p>}
-                {mlInfo && <p className="text-sm text-emerald-700">{mlInfo}</p>}
+                {mlInfo && <p className="text-sm text-emerald-700 dark:text-emerald-400">{mlInfo}</p>}
               </CardContent>
             </Card>
 
@@ -6263,7 +6270,7 @@ export function FinancialDashboard() {
                       )}
                       {!mlSyncingStock && mlLastSyncAt && (
                         <div className="inline-flex items-center gap-1.5">
-                          <Badge variant="outline" className="border-emerald-600/50 text-emerald-700">
+                          <Badge variant="outline" className="border-emerald-600/50 text-emerald-700 dark:text-emerald-400">
                             Ultima sync ha {formatElapsedSeconds(mlLastSyncAt, mlNowTimestamp)}
                             {mlLastSyncDurationMs !== null
                               ? ` (durou ${(mlLastSyncDurationMs / 1000).toFixed(1)}s)`
@@ -6346,32 +6353,32 @@ export function FinancialDashboard() {
                         </Card>
                         <Card className="rounded-none border-dashed">
                           <CardHeader className="pb-2">
-                            <CardDescription className="text-emerald-700">Ganhando</CardDescription>
-                            <CardTitle className="text-lg text-emerald-700">
+                            <CardDescription className="text-emerald-700 dark:text-emerald-400">Ganhando</CardDescription>
+                            <CardTitle className="text-lg text-emerald-700 dark:text-emerald-400">
                               {mlCatalogCompetitionSummary?.winning ?? 0}
                             </CardTitle>
                           </CardHeader>
                         </Card>
                         <Card className="rounded-none border-dashed">
                           <CardHeader className="pb-2">
-                            <CardDescription className="text-amber-700">Dividindo 1o</CardDescription>
-                            <CardTitle className="text-lg text-amber-700">
+                            <CardDescription className="text-amber-700 dark:text-amber-300">Dividindo 1o</CardDescription>
+                            <CardTitle className="text-lg text-amber-700 dark:text-amber-300">
                               {mlCatalogCompetitionSummary?.sharingFirstPlace ?? 0}
                             </CardTitle>
                           </CardHeader>
                         </Card>
                         <Card className="rounded-none border-dashed">
                           <CardHeader className="pb-2">
-                            <CardDescription className="text-red-700">Perdendo</CardDescription>
-                            <CardTitle className="text-lg text-red-700">
+                            <CardDescription className="text-red-700 dark:text-red-300">Perdendo</CardDescription>
+                            <CardTitle className="text-lg text-red-700 dark:text-red-300">
                               {mlCatalogCompetitionSummary?.competing ?? 0}
                             </CardTitle>
                           </CardHeader>
                         </Card>
                         <Card className="rounded-none border-dashed">
                           <CardHeader className="pb-2">
-                            <CardDescription className="text-slate-700">Listado / sem exposicao</CardDescription>
-                            <CardTitle className="text-lg text-slate-700">
+                            <CardDescription className="text-slate-700 dark:text-slate-300">Listado / sem exposicao</CardDescription>
+                            <CardTitle className="text-lg text-slate-700 dark:text-slate-300">
                               {mlCatalogCompetitionSummary?.listed ?? 0}
                             </CardTitle>
                           </CardHeader>
@@ -6501,9 +6508,9 @@ export function FinancialDashboard() {
                                         className={cn(
                                           "font-semibold",
                                           difference > 0
-                                            ? "text-red-700"
+                                            ? "text-red-700 dark:text-red-300"
                                             : difference < 0
-                                              ? "text-emerald-700"
+                                              ? "text-emerald-700 dark:text-emerald-400"
                                               : "text-muted-foreground",
                                         )}
                                       >
@@ -6516,7 +6523,7 @@ export function FinancialDashboard() {
                                       <p
                                         className={cn(
                                           "font-semibold",
-                                          estimatedProfitPerSale >= 0 ? "text-emerald-700" : "text-red-700",
+                                          estimatedProfitPerSale >= 0 ? "text-emerald-700 dark:text-emerald-400" : "text-red-700 dark:text-red-300",
                                         )}
                                       >
                                         ~ {formatCurrency(estimatedProfitPerSale)}
@@ -6686,14 +6693,14 @@ export function FinancialDashboard() {
                                   <p
                                     className={cn(
                                       "inline-flex items-center gap-1",
-                                      profit >= 0 ? "text-emerald-700" : "text-destructive",
+                                      profit >= 0 ? "text-emerald-700 dark:text-emerald-400" : "text-destructive",
                                     )}
                                   >
                                     <TrendingUp className="size-3.5" />
                                     {profit >= 0 ? "+" : "-"}
                                     {formatCurrency(Math.abs(profit))}
                                   </p>
-                                  <p className="inline-flex items-center gap-1 text-amber-700">
+                                  <p className="inline-flex items-center gap-1 text-amber-700 dark:text-amber-300">
                                     <Percent className="size-3.5" />
                                     {margin.toFixed(1)}%
                                   </p>
@@ -6933,7 +6940,7 @@ export function FinancialDashboard() {
                           <CardContent className="grid gap-3 sm:grid-cols-4">
                             <div className="rounded-none border bg-muted/30 p-3">
                               <p className="text-xs text-muted-foreground">Receita total</p>
-                              <p className="text-2xl font-semibold text-emerald-700">
+                              <p className="text-2xl font-semibold text-emerald-700 dark:text-emerald-400">
                                 {formatCurrency(mlOrderCostAnalysis.revenueTotal)}
                               </p>
                             </div>
@@ -6945,7 +6952,7 @@ export function FinancialDashboard() {
                             </div>
                             <div className="rounded-none border bg-muted/30 p-3">
                               <p className="text-xs text-muted-foreground">Custo do produto</p>
-                              <p className="text-2xl font-semibold text-orange-600">
+                              <p className="text-2xl font-semibold text-orange-600 dark:text-orange-400">
                                 {formatCurrency(mlOrderCostAnalysis.productCost)}
                               </p>
                             </div>
@@ -6955,7 +6962,7 @@ export function FinancialDashboard() {
                                 className={cn(
                                   "text-2xl font-semibold",
                                   mlOrderCostAnalysis.netProfit >= 0
-                                    ? "text-emerald-700"
+                                    ? "text-emerald-700 dark:text-emerald-400"
                                     : "text-destructive",
                                 )}
                               >
@@ -7022,7 +7029,7 @@ export function FinancialDashboard() {
                                     <p
                                       className={cn(
                                         "font-medium",
-                                        row.positive ? "text-emerald-700" : "text-foreground",
+                                        row.positive ? "text-emerald-700 dark:text-emerald-400" : "text-foreground",
                                       )}
                                     >
                                       {row.positive ? "+" : ""}
@@ -7054,8 +7061,8 @@ export function FinancialDashboard() {
                           </CardHeader>
                           <CardContent className="grid gap-3 sm:grid-cols-2">
                             <div className="rounded-none bg-emerald-500/10 p-3">
-                              <p className="text-sm font-medium text-emerald-700">Margem de contribuicao</p>
-                              <p className="text-3xl font-semibold text-emerald-700">
+                              <p className="text-sm font-medium text-emerald-700 dark:text-emerald-400">Margem de contribuicao</p>
+                              <p className="text-3xl font-semibold text-emerald-700 dark:text-emerald-400">
                                 {mlOrderCostAnalysis.contributionMargin.toFixed(1)}%
                               </p>
                               <p className="text-xs text-muted-foreground">
@@ -7085,7 +7092,7 @@ export function FinancialDashboard() {
         {activeModule === "branchhunter" && activeHunterSection === "padrao" && (
           <Card className="border-emerald-600/40">
             <CardHeader>
-              <CardTitle className="text-emerald-700">Branch Hunter</CardTitle>
+              <CardTitle className="text-emerald-700 dark:text-emerald-400">Branch Hunter</CardTitle>
               <CardDescription>
                 Ferramenta de calculo de payout para anuncios e operacoes de marketplace.
               </CardDescription>
@@ -7187,7 +7194,7 @@ function FinancialEvolutionChart({ data }: { data: SalesEvolutionPoint[] }) {
                   y={y + 4}
                   textAnchor="end"
                   fontSize="10"
-                  fill="rgb(100 116 139)"
+                  className="fill-muted-foreground"
                 >
                   {formatCurrency(moneyValue)}
                 </text>
@@ -7196,7 +7203,7 @@ function FinancialEvolutionChart({ data }: { data: SalesEvolutionPoint[] }) {
                   y={y + 4}
                   textAnchor="start"
                   fontSize="10"
-                  fill="rgb(100 116 139)"
+                  className="fill-muted-foreground"
                 >
                   {ordersValue}
                 </text>
@@ -7262,7 +7269,7 @@ function FinancialEvolutionChart({ data }: { data: SalesEvolutionPoint[] }) {
               y={height - 8}
               textAnchor="middle"
               fontSize="10"
-              fill="rgb(100 116 139)"
+              className="fill-muted-foreground"
             >
               {item.label}
             </text>
