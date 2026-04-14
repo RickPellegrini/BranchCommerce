@@ -16,13 +16,9 @@ export type ScrapeResult = {
   buyBoxWinner: string | null
 }
 
-let bridgeDetected: boolean | null = null
-
 function hasBridge(): boolean {
   if (typeof window === "undefined") return false
-  if (bridgeDetected != null) return bridgeDetected
-  bridgeDetected = !!(window as unknown as Record<string, unknown>).__BH_BRIDGE__
-  return bridgeDetected
+  return !!(window as unknown as Record<string, unknown>).__BH_BRIDGE__
 }
 
 function requestViaBridge(
@@ -72,24 +68,37 @@ export function useExtensionScraping() {
 
   useEffect(() => {
     mountedRef.current = true
+    let attempts = 0
+    const maxAttempts = 10
+
     const check = () => {
-      if (hasBridge()) setExtensionAvailable(true)
+      if (!mountedRef.current) return
+      if (hasBridge()) {
+        console.log("[extension-scraping] bridge detected")
+        setExtensionAvailable(true)
+        return
+      }
+      attempts++
+      if (attempts < maxAttempts) {
+        setTimeout(check, 500)
+      }
     }
     check()
-    const timer = setTimeout(check, 1500)
+
     return () => {
       mountedRef.current = false
-      clearTimeout(timer)
     }
   }, [])
 
   const scrape = useCallback(
     async (itemIds: string[], catalogProductId: string | null) => {
       if (!hasBridge() || itemIds.length === 0) return
+      console.log(`[extension-scraping] scraping ${itemIds.length} items, catalog=${catalogProductId}`)
       setScraping(true)
       setResult(null)
       try {
         const data = await requestViaBridge(itemIds, catalogProductId, 45_000)
+        console.log("[extension-scraping] result:", data)
         if (mountedRef.current) setResult(data)
       } catch (err) {
         console.warn("[extension-scraping]", err)
