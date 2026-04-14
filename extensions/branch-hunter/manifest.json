@@ -4,14 +4,12 @@
   "description": "Calculadora de payout para anuncios do Mercado Livre.",
   "version": "0.1.0",
   "action": {
-    "default_title": "Branch Hunter",
-    "default_popup": "popup/popup.html"
+    "default_title": "Branch Hunter"
   },
   "permissions": ["storage"],
   "host_permissions": [
     "*://*.mercadolivre.com.br/*",
     "*://*.mercadolivre.com/*",
-    "*://api.mercadolibre.com/*",
     "*://branch-commerce.vercel.app/*",
     "*://localhost:3000/*"
   ],
