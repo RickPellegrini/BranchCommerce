@@ -551,6 +551,7 @@ function AnalysisResults({
             <CompetitorTable
               competitors={filtered}
               myPrice={item.price}
+              winnerItemId={data.competitors.buyBoxWinnerItemId}
             />
           )}
           {phase === "partial" && (
