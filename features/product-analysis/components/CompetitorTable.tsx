@@ -2,7 +2,7 @@
 
 import type { CompetitorEntry } from "@/features/product-analysis/domain/types"
 import { formatBrl } from "@/features/product-analysis/utils/money"
-import { ExternalLink, Crown, Zap, Truck, Package } from "lucide-react"
+import { ExternalLink, Zap, Truck, Trophy } from "lucide-react"
 
 // ─── Reputation level bar (5 dots like the reference) ───────────────
 
@@ -90,10 +90,27 @@ function ListingTypeBadge({ type }: { type: string | null }) {
 
 // ─── Helpers ────────────────────────────────────────────────────────
 
-function formatTransactions(total: number): string {
-  if (total >= 1_000_000) return `${(total / 1_000_000).toFixed(1)}M`
-  if (total >= 1_000) return `${(total / 1_000).toFixed(1)}k`
-  return String(total)
+function formatCurrency(value: number): string {
+  if (value >= 1_000_000) return `R$ ${(value / 1_000_000).toFixed(1)} mi`
+  if (value >= 1_000) return `R$ ${(value / 1_000).toFixed(1)} mil`
+  return `R$ ${Math.round(value)}`
+}
+
+function formatDailyRevenue(value: number): string {
+  if (value >= 1_000) return `R$ ${(value / 1_000).toFixed(1)} mil`
+  return `R$ ${Math.round(value)}`
+}
+
+function computeSalesPerDay(
+  soldQuantity: number | null,
+  startTime: string | null,
+): number | null {
+  if (soldQuantity == null || !startTime) return null
+  const created = new Date(startTime).getTime()
+  if (Number.isNaN(created)) return null
+  const days = (Date.now() - created) / 86_400_000
+  if (days < 1) return soldQuantity
+  return soldQuantity / days
 }
 
 // ─── Main table ─────────────────────────────────────────────────────
@@ -101,9 +118,13 @@ function formatTransactions(total: number): string {
 export function CompetitorTable({
   competitors,
   myPrice,
+  winnerItemId,
+  scraping = false,
 }: {
   competitors: CompetitorEntry[]
   myPrice: number
+  winnerItemId: string | null
+  scraping?: boolean
 }) {
   if (competitors.length === 0) return null
 
@@ -120,13 +141,19 @@ export function CompetitorTable({
                 Preco
               </th>
               <th className="px-4 py-3 text-right text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
+                Estoque
+              </th>
+              <th className="px-4 py-3 text-right text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
+                Vendidos
+              </th>
+              <th className="px-4 py-3 text-right text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
                 Visitas 30d
               </th>
               <th className="px-4 py-3 text-center text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
                 Tipo
               </th>
               <th className="px-4 py-3 text-right text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
-                Transacoes
+                Faturamento
               </th>
             </tr>
           </thead>
@@ -134,17 +161,30 @@ export function CompetitorTable({
             {competitors.map((c) => {
               const priceDiff = c.price - myPrice
               const pricePct = myPrice > 0 ? (priceDiff / myPrice) * 100 : 0
+              const isWinner = winnerItemId != null && c.itemId === winnerItemId
 
               return (
                 <tr
                   key={c.itemId}
-                  className="transition-colors hover:bg-muted/50"
+                  className={`transition-colors hover:bg-muted/50 ${
+                    isWinner
+                      ? "bg-amber-50/60 dark:bg-amber-950/20 border-l-[3px] border-l-amber-400"
+                      : ""
+                  }`}
                 >
                   {/* ── Vendedor ── */}
                   <td className="px-4 py-3">
                     <div className="space-y-1">
                       {/* Name + link + badges */}
                       <div className="flex items-center gap-1.5 flex-wrap">
+                        {isWinner && (
+                          <span
+                            className="inline-flex items-center justify-center rounded-full bg-amber-400 p-1 shadow-md shadow-amber-400/30"
+                            title="Ganhador do Buy Box"
+                          >
+                            <Trophy className="h-3.5 w-3.5 text-white" />
+                          </span>
+                        )}
                         {c.sellerNickname ? (
                           <a
                             href={c.sellerPermalink ?? "#"}
@@ -170,6 +210,11 @@ export function CompetitorTable({
                           </a>
                         )}
                         <PowerBadge status={c.sellerPowerStatus} />
+                        {isWinner && (
+                          <span className="inline-flex items-center gap-0.5 rounded-full bg-amber-400/20 dark:bg-amber-400/10 border border-amber-400/50 px-2 py-0.5 text-[10px] font-bold text-amber-700 dark:text-amber-300">
+                            Buy Box
+                          </span>
+                        )}
                       </div>
                       {/* Reputation bar + location */}
                       <div className="flex items-center gap-2">
@@ -208,6 +253,53 @@ export function CompetitorTable({
                     )}
                   </td>
 
+                  {/* ── Estoque ── */}
+                  <td className="px-4 py-3 text-right">
+                    {c.scrapedStock != null ? (
+                      <p className={`font-semibold text-xs tabular-nums ${
+                        !c.scrapedStockIsMinimum && c.scrapedStock <= 3
+                          ? "text-rose-600"
+                          : !c.scrapedStockIsMinimum && c.scrapedStock <= 10
+                            ? "text-amber-600"
+                            : "text-foreground"
+                      }`}>
+                        {c.scrapedStockIsMinimum ? "≥" : ""}{c.scrapedStock}
+                      </p>
+                    ) : scraping ? (
+                      <div className="h-4 w-8 animate-pulse rounded bg-muted ml-auto" />
+                    ) : (
+                      <span className="text-xs text-muted-foreground">-</span>
+                    )}
+                  </td>
+
+                  {/* ── Vendidos + taxa/dia ── */}
+                  <td className="px-4 py-3 text-right">
+                    {(() => {
+                      const perDay = computeSalesPerDay(c.scrapedSoldQuantity, c.scrapedStartTime)
+                      return c.scrapedSoldQuantity != null ? (
+                        <div>
+                          <p className="font-semibold text-xs tabular-nums text-foreground">
+                            {c.scrapedSoldQuantity >= 1000
+                              ? `+${Math.floor(c.scrapedSoldQuantity / 1000)}mil`
+                              : c.scrapedSoldQuantity}
+                          </p>
+                          {perDay != null && (
+                            <p className="text-[10px] text-muted-foreground">
+                              {perDay < 0.1 ? "< 0.1" : perDay.toFixed(1)}/dia
+                            </p>
+                          )}
+                        </div>
+                      ) : scraping ? (
+                        <div className="space-y-1 ml-auto">
+                          <div className="h-4 w-10 animate-pulse rounded bg-muted ml-auto" />
+                          <div className="h-3 w-8 animate-pulse rounded bg-muted ml-auto" />
+                        </div>
+                      ) : (
+                        <span className="text-xs text-muted-foreground">-</span>
+                      )
+                    })()}
+                  </td>
+
                   {/* ── Visitas 30d ── */}
                   <td className="px-4 py-3 text-right">
                     {c.visits30d != null ? (
@@ -237,15 +329,35 @@ export function CompetitorTable({
                     <ListingTypeBadge type={c.listingType} />
                   </td>
 
-                  {/* ── Transacoes do seller ── */}
+                  {/* ── Faturamento (preco × vendidos) ── */}
                   <td className="px-4 py-3 text-right">
-                    {c.sellerTotalTransactions != null ? (
-                      <span className="font-semibold text-xs tabular-nums">
-                        {formatTransactions(c.sellerTotalTransactions)}
-                      </span>
-                    ) : (
-                      <span className="text-xs text-muted-foreground">-</span>
-                    )}
+                    {(() => {
+                      if (c.scrapedSoldQuantity == null || c.scrapedSoldQuantity === 0) {
+                        return scraping ? (
+                          <div className="space-y-1 ml-auto">
+                            <div className="h-4 w-14 animate-pulse rounded bg-muted ml-auto" />
+                            <div className="h-3 w-10 animate-pulse rounded bg-muted ml-auto" />
+                          </div>
+                        ) : (
+                          <span className="text-xs text-muted-foreground">-</span>
+                        )
+                      }
+                      const totalRevenue = c.price * c.scrapedSoldQuantity
+                      const perDay = computeSalesPerDay(c.scrapedSoldQuantity, c.scrapedStartTime)
+                      const dailyRevenue = perDay != null ? c.price * perDay : null
+                      return (
+                        <div>
+                          <p className="font-semibold text-xs tabular-nums text-emerald-600">
+                            {formatCurrency(totalRevenue)}
+                          </p>
+                          {dailyRevenue != null && (
+                            <p className="text-[10px] text-muted-foreground">
+                              {formatDailyRevenue(dailyRevenue)}/dia
+                            </p>
+                          )}
+                        </div>
+                      )
+                    })()}
                   </td>
                 </tr>
               )

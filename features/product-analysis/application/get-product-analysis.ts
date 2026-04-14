@@ -181,6 +181,11 @@ function catalogListingToCompetitor(c: CatalogCompetitor): CompetitorEntry {
     permalink: null,
     visits30d: null,
     visitsShare: null,
+    scrapedStock: null,
+    scrapedStockIsMinimum: false,
+    scrapedSoldLabel: null,
+    scrapedSoldQuantity: null,
+    scrapedStartTime: null,
   }
 }
 
@@ -240,6 +245,7 @@ export async function getProductAnalysis(
   )
 
   // Enrich competitors: sellers + visits (in parallel)
+  // Stock/sold data is scraped client-side via the Chrome extension (residential IP).
   const uniqueSellerIds = [...new Set(competitors.map((c) => c.sellerId))]
   const competitorItemIds = competitors.map((c) => c.itemId)
   logger.log(
@@ -333,6 +339,10 @@ export async function getProductAnalysis(
       totalAfterFilters: competitors.length,
       competitors,
       summary,
+      buyBoxWinnerItemId:
+        ptw?.winner?.item_id
+        ?? allListings[0]?.item_id
+        ?? null,
     },
     logs: logger.entries,
     fetchedAt: new Date().toISOString(),

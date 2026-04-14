@@ -107,6 +107,7 @@ export function AnalysisModal({ itemId, onClose }: { itemId: string; onClose: ()
                       <CompetitorTable
                         competitors={data.competitors.competitors}
                         myPrice={data.catalog.item.price}
+                        winnerItemId={data.competitors.buyBoxWinnerItemId}
                       />
                     </>
                   )}
