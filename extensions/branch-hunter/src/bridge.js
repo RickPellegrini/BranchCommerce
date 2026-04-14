@@ -29,34 +29,45 @@
     const { requestId, itemIds, catalogProductId } = event.data
 
     if (!chrome?.runtime?.id) {
+      console.warn("[BH-bridge] extension context lost, requesting page reload")
       window.postMessage({
         type: "BH_SCRAPE_RESPONSE",
         requestId,
-        error: "Extension context invalidated",
+        error: "Extension context invalidated – recarregue a pagina",
       })
       return
     }
 
-    chrome.runtime.sendMessage(
-      {
-        type: "SCRAPE_COMPETITORS",
-        payload: { itemIds, catalogProductId },
-      },
-      (response) => {
-        if (chrome.runtime.lastError) {
+    try {
+      chrome.runtime.sendMessage(
+        {
+          type: "SCRAPE_COMPETITORS",
+          payload: { itemIds, catalogProductId },
+        },
+        (response) => {
+          if (chrome.runtime.lastError) {
+            console.warn("[BH-bridge] sendMessage error:", chrome.runtime.lastError.message)
+            window.postMessage({
+              type: "BH_SCRAPE_RESPONSE",
+              requestId,
+              error: chrome.runtime.lastError.message,
+            })
+            return
+          }
           window.postMessage({
             type: "BH_SCRAPE_RESPONSE",
             requestId,
-            error: chrome.runtime.lastError.message,
+            data: response,
           })
-          return
-        }
-        window.postMessage({
-          type: "BH_SCRAPE_RESPONSE",
-          requestId,
-          data: response,
-        })
-      },
-    )
+        },
+      )
+    } catch (err) {
+      console.warn("[BH-bridge] runtime error:", err.message)
+      window.postMessage({
+        type: "BH_SCRAPE_RESPONSE",
+        requestId,
+        error: err.message || "Extension context invalidated",
+      })
+    }
   })
 })()

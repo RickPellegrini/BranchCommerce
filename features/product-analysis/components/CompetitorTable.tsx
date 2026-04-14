@@ -91,13 +91,9 @@ function ListingTypeBadge({ type }: { type: string | null }) {
 // ─── Helpers ────────────────────────────────────────────────────────
 
 function formatCurrency(value: number): string {
-  if (value >= 1_000_000) return `R$ ${(value / 1_000_000).toFixed(1)} mi`
-  if (value >= 1_000) return `R$ ${(value / 1_000).toFixed(1)} mil`
-  return `R$ ${Math.round(value)}`
-}
-
-function formatDailyRevenue(value: number): string {
-  if (value >= 1_000) return `R$ ${(value / 1_000).toFixed(1)} mil`
+  if (value >= 1_000_000) return `R$ ${(value / 1_000_000).toFixed(1)}mi`
+  if (value >= 10_000) return `R$ ${(value / 1_000).toFixed(0)}mil`
+  if (value >= 1_000) return `R$ ${(value / 1_000).toFixed(1)}mil`
   return `R$ ${Math.round(value)}`
 }
 
@@ -111,6 +107,21 @@ function computeSalesPerDay(
   const days = (Date.now() - created) / 86_400_000
   if (days < 1) return soldQuantity
   return soldQuantity / days
+}
+
+function formatSoldQty(qty: number): string {
+  if (qty >= 1_000_000) return `${(qty / 1_000_000).toFixed(1)}mi`
+  if (qty >= 10_000) return `${(qty / 1_000).toFixed(0)}mil`
+  if (qty >= 1_000) return `${(qty / 1_000).toFixed(1)}mil`
+  return qty.toLocaleString("pt-BR")
+}
+
+function formatRate(perDay: number): string {
+  if (perDay >= 100) return `${Math.round(perDay)}/dia`
+  if (perDay >= 10) return `${perDay.toFixed(1)}/dia`
+  if (perDay >= 1) return `${perDay.toFixed(1)}/dia`
+  if (perDay >= 0.1) return `${perDay.toFixed(2)}/dia`
+  return "< 0.1/dia"
 }
 
 // ─── Main table ─────────────────────────────────────────────────────
@@ -275,27 +286,31 @@ export function CompetitorTable({
                   {/* ── Vendidos + taxa/dia ── */}
                   <td className="px-4 py-3 text-right">
                     {(() => {
+                      if (c.scrapedSoldQuantity == null) {
+                        if (c.scrapedSoldLabel) {
+                          return <p className="text-xs text-muted-foreground">{c.scrapedSoldLabel}</p>
+                        }
+                        return scraping ? (
+                          <div className="space-y-1 ml-auto">
+                            <div className="h-4 w-10 animate-pulse rounded bg-muted ml-auto" />
+                            <div className="h-3 w-8 animate-pulse rounded bg-muted ml-auto" />
+                          </div>
+                        ) : (
+                          <span className="text-xs text-muted-foreground">-</span>
+                        )
+                      }
                       const perDay = computeSalesPerDay(c.scrapedSoldQuantity, c.scrapedStartTime)
-                      return c.scrapedSoldQuantity != null ? (
+                      return (
                         <div>
                           <p className="font-semibold text-xs tabular-nums text-foreground">
-                            {c.scrapedSoldQuantity >= 1000
-                              ? `+${Math.floor(c.scrapedSoldQuantity / 1000)}mil`
-                              : c.scrapedSoldQuantity}
+                            {formatSoldQty(c.scrapedSoldQuantity)}
                           </p>
                           {perDay != null && (
                             <p className="text-[10px] text-muted-foreground">
-                              {perDay < 0.1 ? "< 0.1" : perDay.toFixed(1)}/dia
+                              {formatRate(perDay)}
                             </p>
                           )}
                         </div>
-                      ) : scraping ? (
-                        <div className="space-y-1 ml-auto">
-                          <div className="h-4 w-10 animate-pulse rounded bg-muted ml-auto" />
-                          <div className="h-3 w-8 animate-pulse rounded bg-muted ml-auto" />
-                        </div>
-                      ) : (
-                        <span className="text-xs text-muted-foreground">-</span>
                       )
                     })()}
                   </td>
@@ -352,7 +367,7 @@ export function CompetitorTable({
                           </p>
                           {dailyRevenue != null && (
                             <p className="text-[10px] text-muted-foreground">
-                              {formatDailyRevenue(dailyRevenue)}/dia
+                              {formatCurrency(dailyRevenue)}/dia
                             </p>
                           )}
                         </div>
