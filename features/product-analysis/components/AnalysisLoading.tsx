@@ -6,8 +6,8 @@ export function AnalysisLoading() {
   return (
     <div className="flex flex-col items-center justify-center gap-4 py-20">
       <div className="relative">
-        <div className="h-12 w-12 rounded-full bg-blue-50 animate-pulse" />
-        <Loader2 className="h-6 w-6 text-blue-600 animate-spin absolute top-3 left-3" />
+        <div className="h-12 w-12 rounded-full bg-blue-50 dark:bg-blue-950/30 animate-pulse" />
+        <Loader2 className="h-6 w-6 text-blue-600 dark:text-blue-400 animate-spin absolute top-3 left-3" />
       </div>
       <div className="text-center">
         <p className="text-sm font-semibold text-foreground">Carregando analise...</p>

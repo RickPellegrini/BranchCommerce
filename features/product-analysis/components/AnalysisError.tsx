@@ -6,7 +6,7 @@ import { AlertTriangle, RefreshCw } from "lucide-react"
 export function AnalysisError({ message, onRetry }: { message: string; onRetry: () => void }) {
   return (
     <div className="flex flex-col items-center justify-center gap-4 py-16">
-      <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-rose-50">
+      <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-rose-50 dark:bg-rose-950/30">
         <AlertTriangle className="h-7 w-7 text-rose-500" />
       </div>
       <div className="text-center">

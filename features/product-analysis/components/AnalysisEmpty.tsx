@@ -6,7 +6,7 @@ import { SearchX, RefreshCw } from "lucide-react"
 export function AnalysisEmpty({ onRetry }: { onRetry: () => void }) {
   return (
     <div className="flex flex-col items-center justify-center gap-4 py-16">
-      <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-gray-100">
+      <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-muted">
         <SearchX className="h-7 w-7 text-muted-foreground" />
       </div>
       <div className="text-center">

@@ -20,13 +20,13 @@ const LEVEL_MAP: Record<string, { level: number; color: string }> = {
 
 function ReputationBar({ levelId }: { levelId: string | null }) {
   if (!levelId) return null
-  const info = LEVEL_MAP[levelId] ?? { level: 0, color: "bg-gray-300" }
+  const info = LEVEL_MAP[levelId] ?? { level: 0, color: "bg-muted-foreground/30" }
   return (
     <div className="flex items-center gap-[2px]" title={`Reputacao ${info.level}/5`}>
       {[1, 2, 3, 4, 5].map((n) => (
         <div
           key={n}
-          className={`h-[6px] w-[10px] rounded-sm ${n <= info.level ? info.color : "bg-gray-200"}`}
+          className={`h-[7px] w-[12px] rounded-sm ${n <= info.level ? info.color : "bg-muted"}`}
         />
       ))}
     </div>
@@ -46,7 +46,7 @@ function PowerBadge({ status }: { status: string | null }) {
   const c = POWER_CONFIG[status]
   if (!c) return null
   return (
-    <span className={`inline-flex items-center rounded-full px-1.5 py-px text-[9px] font-bold ${c.bg} ${c.text}`}>
+    <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-bold ${c.bg} ${c.text}`}>
       {c.label}
     </span>
   )
@@ -57,22 +57,22 @@ function PowerBadge({ status }: { status: string | null }) {
 function LogisticBadge({ entry }: { entry: CompetitorEntry }) {
   if (entry.logisticType === "fulfillment") {
     return (
-      <span className="inline-flex items-center gap-0.5 rounded-full bg-orange-500 px-1.5 py-px text-[9px] font-bold text-white">
-        <Zap className="h-2.5 w-2.5" /> Full
+      <span className="inline-flex items-center gap-1 rounded-full bg-orange-500 px-2.5 py-0.5 text-[11px] font-bold text-white shadow-sm">
+        <Zap className="h-3 w-3" /> Full
       </span>
     )
   }
   if (entry.logisticType === "xd_drop_off" || entry.logisticType === "cross_docking") {
     return (
-      <span className="inline-flex items-center gap-0.5 rounded-full bg-blue-500 px-1.5 py-px text-[9px] font-bold text-white">
-        <Truck className="h-2.5 w-2.5" /> Flex
+      <span className="inline-flex items-center gap-1 rounded-full bg-blue-500 px-2.5 py-0.5 text-[11px] font-bold text-white shadow-sm">
+        <Truck className="h-3 w-3" /> Flex
       </span>
     )
   }
   if (entry.freeShipping) {
     return (
-      <span className="inline-flex items-center gap-0.5 rounded-full bg-emerald-100 px-1.5 py-px text-[9px] font-bold text-emerald-700">
-        <Truck className="h-2.5 w-2.5" /> Gratis
+      <span className="inline-flex items-center gap-0.5 rounded-full bg-emerald-100 dark:bg-emerald-900/40 px-2 py-0.5 text-[10px] font-bold text-emerald-700 dark:text-emerald-300">
+        <Truck className="h-3 w-3" /> Gratis
       </span>
     )
   }
@@ -108,12 +108,12 @@ export function CompetitorTable({
   if (competitors.length === 0) return null
 
   return (
-    <div className="rounded-xl border bg-white shadow-sm overflow-hidden">
+    <div className="rounded-xl border bg-card shadow-sm overflow-hidden">
       <div className="overflow-x-auto">
         <table className="w-full text-sm">
           <thead>
-            <tr className="border-b bg-gray-50/80">
-              <th className="px-4 py-3 text-left text-[11px] font-semibold uppercase tracking-wider text-muted-foreground min-w-[220px]">
+            <tr className="border-b bg-muted/50">
+              <th className="px-4 py-3 text-left text-[11px] font-semibold uppercase tracking-wider text-muted-foreground min-w-[260px]">
                 Vendedor
               </th>
               <th className="px-4 py-3 text-right text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
@@ -138,7 +138,7 @@ export function CompetitorTable({
               return (
                 <tr
                   key={c.itemId}
-                  className="transition-colors hover:bg-gray-50/60"
+                  className="transition-colors hover:bg-muted/50"
                 >
                   {/* ── Vendedor ── */}
                   <td className="px-4 py-3">
@@ -175,7 +175,7 @@ export function CompetitorTable({
                       <div className="flex items-center gap-2">
                         <ReputationBar levelId={c.sellerRepLevel} />
                         {c.location && (
-                          <span className="text-[10px] text-muted-foreground truncate max-w-[150px]">
+                          <span className="text-xs font-medium text-foreground truncate max-w-[200px]">
                             {c.location}
                           </span>
                         )}
@@ -184,7 +184,7 @@ export function CompetitorTable({
                       <div className="flex items-center gap-1">
                         <LogisticBadge entry={c} />
                         {c.officialStore && (
-                          <span className="inline-flex items-center rounded-full bg-blue-100 px-1.5 py-px text-[9px] font-bold text-blue-700">
+                          <span className="inline-flex items-center rounded-full bg-blue-100 dark:bg-blue-900/40 px-2 py-0.5 text-[10px] font-bold text-blue-700 dark:text-blue-300">
                             Oficial
                           </span>
                         )}
