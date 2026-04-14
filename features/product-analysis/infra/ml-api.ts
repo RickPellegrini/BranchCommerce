@@ -133,6 +133,63 @@ export async function getSellersBatch(
   return map
 }
 
+// ─── Multi-get items (stock & sold enrichment) ──────────────────────
+
+type ItemMultiGetEntry = {
+  code: number
+  body: {
+    id?: string
+    available_quantity?: number
+    sold_quantity?: number
+    date_created?: string
+    start_time?: string
+  }
+}
+
+export type ItemStockData = {
+  availableQuantity: number | null
+  soldQuantity: number | null
+  startTime: string | null
+}
+
+/**
+ * Batch-fetch stock & sold data via GET /items?ids=...
+ * Returns per-item data. Items blocked by PolicyAgent (403) are silently skipped.
+ */
+export async function getItemsStockBatch(
+  token: string,
+  itemIds: string[],
+): Promise<Map<string, ItemStockData>> {
+  const map = new Map<string, ItemStockData>()
+  if (itemIds.length === 0) return map
+
+  for (const batch of chunk(itemIds, 20)) {
+    try {
+      const ids = batch.join(",")
+      const result = await fetchMl<ItemMultiGetEntry[]>(
+        `/items?ids=${ids}&attributes=id,available_quantity,sold_quantity,date_created,start_time`,
+        `GET /items?ids= stock (batch=${batch.length})`,
+        token,
+      )
+      for (const entry of result) {
+        if (entry.code === 200 && entry.body?.id) {
+          map.set(entry.body.id, {
+            availableQuantity: entry.body.available_quantity ?? null,
+            soldQuantity: entry.body.sold_quantity ?? null,
+            startTime: entry.body.start_time ?? entry.body.date_created ?? null,
+          })
+        }
+      }
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err)
+      console.warn(`[ml-api] items stock batch failed: ${msg}`)
+    }
+  }
+
+  console.log(`[ml-api] items stock batch: ${map.size}/${itemIds.length} items returned data`)
+  return map
+}
+
 // ─── PRIVATE endpoints (require seller token) ──────────────────────
 
 /** GET /items/{id}/price_to_win — seller-specific, requires auth. */
