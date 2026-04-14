@@ -2,6 +2,7 @@
   const PANEL_HOST_ID = "branch-hunter-inline-host";
   const BRAND_LOGO_URL = "https://branch-commerce.vercel.app/branch_logo.jpeg";
   const DEBUG = false;
+  const LISTING_TYPE_FEES = { premium: 16, gold_special: 12 };
 
   const state = {
     listingId: "",
@@ -98,26 +99,10 @@
           display: grid;
           gap: 8px;
         }
-        .section-dynamic {
-          border-color: #bfdbfe;
-          background: #f8fbff;
-        }
-        .section-manual {
-          border-color: #fde68a;
-          background: #fffbeb;
-        }
-        .section-operation {
-          border-color: #c7d2fe;
-          background: #f8f9ff;
-        }
-        .section-centralize {
-          border-color: #fdba74;
-          background: #fff7ed;
-        }
-        .section-result {
-          border-color: #bbf7d0;
-          background: #f0fdf4;
-        }
+        .section-dynamic { border-color: #bfdbfe; background: #f8fbff; }
+        .section-operation { border-color: #c7d2fe; background: #f8f9ff; }
+        .section-centralize { border-color: #fdba74; background: #fff7ed; }
+        .section-result { border-color: #bbf7d0; background: #f0fdf4; }
         .header {
           display: flex;
           align-items: center;
@@ -137,16 +122,8 @@
           border: 1px solid #cbd5e1;
           background: #fff;
         }
-        .title {
-          font-size: 15px;
-          font-weight: 700;
-          margin: 0;
-        }
-        .subtitle {
-          margin: 0;
-          font-size: 12px;
-          color: #6b7280;
-        }
+        .title { font-size: 15px; font-weight: 700; margin: 0; }
+        .subtitle { margin: 0; font-size: 12px; color: #6b7280; }
         .chip {
           border: 1px solid #d1d5db;
           border-radius: 999px;
@@ -155,320 +132,223 @@
           color: #374151;
           background: #f9fafb;
         }
-        .section-title-row {
-          display: flex;
-          align-items: center;
-          gap: 6px;
-        }
+        .section-title-row { display: flex; align-items: center; gap: 6px; }
         .section-icon {
-          width: 18px;
-          height: 18px;
-          border-radius: 6px;
-          display: inline-flex;
-          align-items: center;
-          justify-content: center;
-          color: #0f172a;
-          background: #e2e8f0;
+          width: 18px; height: 18px; border-radius: 6px;
+          display: inline-flex; align-items: center; justify-content: center;
+          color: #0f172a; background: #e2e8f0;
         }
-        .section-title {
-          margin: 0;
-          font-size: 12px;
-          font-weight: 700;
-          color: #111827;
-        }
-        .listing-title,
-        .subtle {
-          font-size: 12px;
-          color: #374151;
-        }
-        .listing-url {
-          font-size: 11px;
-          color: #6b7280;
-          word-break: break-word;
-        }
-        .grid {
-          display: grid;
-          gap: 8px;
-        }
-        .grid-2 {
-          display: grid;
-          grid-template-columns: 1fr 1fr;
-          gap: 8px;
-        }
+        .section-title { margin: 0; font-size: 12px; font-weight: 700; color: #111827; }
+        .subtle { font-size: 12px; color: #374151; }
+        .grid { display: grid; gap: 8px; }
+        .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
         .freight-box {
-          border: 1px solid #dbeafe;
-          background: #eff6ff;
-          border-radius: 10px;
-          padding: 8px;
-          display: grid;
-          gap: 8px;
+          border: 1px solid #dbeafe; background: #eff6ff;
+          border-radius: 10px; padding: 8px; display: grid; gap: 8px;
         }
         .freight-card {
-          border: 1px solid #d1d5db;
-          border-radius: 10px;
-          background: #ffffff;
-          padding: 10px;
-          display: grid;
-          gap: 6px;
+          border: 1px solid #d1d5db; border-radius: 10px;
+          background: #ffffff; padding: 10px; display: grid; gap: 6px;
         }
-        .freight-card.green {
-          border-color: #bbf7d0;
-          background: #f0fdf4;
-        }
-        .freight-card.blue {
-          border-color: #bfdbfe;
-          background: #eff6ff;
-        }
+        .freight-card.green { border-color: #bbf7d0; background: #f0fdf4; }
+        .freight-card.blue { border-color: #bfdbfe; background: #eff6ff; }
         .switch-row {
-          display: flex;
-          align-items: center;
-          justify-content: space-between;
-          gap: 8px;
+          display: flex; align-items: center; justify-content: space-between; gap: 8px;
         }
         .switch-inline {
-          display: inline-flex;
-          align-items: center;
-          gap: 6px;
-          font-size: 12px;
-          color: #374151;
+          display: inline-flex; align-items: center; gap: 6px;
+          font-size: 12px; color: #374151;
         }
         .switch-green input { accent-color: #16a34a; }
         .switch-blue input { accent-color: #2563eb; }
-        .freight-hint {
-          font-size: 12px;
-          color: #4b5563;
-        }
-        label {
-          display: grid;
-          gap: 4px;
-          font-size: 12px;
-          color: #374151;
-        }
+        .freight-hint { font-size: 12px; color: #4b5563; }
+        label { display: grid; gap: 4px; font-size: 12px; color: #374151; }
         input {
-          width: 100%;
-          border: 1px solid #d1d5db;
-          border-radius: 8px;
-          padding: 8px 9px;
-          font-size: 13px;
-          background: #fff;
-          color: #111827;
+          width: 100%; border: 1px solid #d1d5db; border-radius: 8px;
+          padding: 8px 9px; font-size: 13px; background: #fff; color: #111827;
         }
-        input:focus {
-          outline: 2px solid #bfdbfe;
-          border-color: #60a5fa;
-        }
+        input:focus { outline: 2px solid #bfdbfe; border-color: #60a5fa; }
         select {
-          width: 100%;
-          border: 1px solid #d1d5db;
-          border-radius: 8px;
-          padding: 8px 9px;
-          font-size: 13px;
-          background: #fff;
-          color: #111827;
-        }
-        select:focus {
-          outline: 2px solid #bfdbfe;
-          border-color: #60a5fa;
+          width: 100%; border: 1px solid #d1d5db; border-radius: 8px;
+          padding: 8px 9px; font-size: 13px; background: #fff; color: #111827;
         }
         .dynamic-row {
-          display: flex;
-          align-items: center;
-          justify-content: space-between;
-          gap: 10px;
-          font-size: 12px;
+          display: flex; align-items: center; justify-content: space-between;
+          gap: 10px; font-size: 12px;
         }
-        .row-label {
-          display: inline-flex;
-          align-items: center;
-          gap: 5px;
-        }
-        .row-icon {
-          width: 12px;
-          height: 12px;
-          color: #64748b;
-        }
-        .dynamic-row strong {
-          color: #111827;
-          font-size: 12px;
-        }
-        .dynamic-row small {
-          color: #6b7280;
-          font-size: 11px;
-        }
-        .actions {
-          display: grid;
-          grid-template-columns: 1fr 1fr;
-          gap: 8px;
-        }
+        .row-label { display: inline-flex; align-items: center; gap: 5px; }
+        .row-icon { width: 12px; height: 12px; color: #64748b; }
+        .dynamic-row strong { color: #111827; font-size: 12px; }
+        .dynamic-row small { color: #6b7280; font-size: 11px; }
+        .actions { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
         button {
-          border: 0;
-          border-radius: 8px;
-          padding: 8px 10px;
-          font-size: 12px;
-          font-weight: 600;
-          cursor: pointer;
+          border: 0; border-radius: 8px; padding: 8px 10px;
+          font-size: 12px; font-weight: 600; cursor: pointer;
         }
-        .btn-primary {
-          background: #1d4ed8;
-          color: #fff;
+        .btn-primary { background: #1d4ed8; color: #fff; }
+        .btn-primary:hover { background: #1e40af; }
+        .btn-secondary { background: #e5e7eb; color: #374151; }
+        .btn-secondary:hover { background: #d1d5db; }
+        .btn-toggle {
+          background: none; border: 1px solid #d1d5db; border-radius: 8px;
+          padding: 6px 10px; font-size: 11px; font-weight: 600;
+          color: #6b7280; cursor: pointer; width: 100%;
+          display: flex; align-items: center; justify-content: center; gap: 4px;
+          transition: background 0.15s;
         }
-        .btn-primary:hover {
-          background: #1e40af;
-        }
-        .btn-secondary {
-          background: #e5e7eb;
-          color: #374151;
-        }
-        .btn-secondary:hover {
-          background: #d1d5db;
-        }
-        .result-title {
-          margin: 0;
-          font-size: 12px;
-          font-weight: 700;
-          color: #111827;
-        }
+        .btn-toggle:hover { background: #f1f5f9; }
+        .btn-toggle svg { transition: transform 0.2s; }
+        .btn-toggle.expanded svg { transform: rotate(180deg); }
+        .collapsible { display: none; }
+        .collapsible.open { display: grid; gap: 10px; }
+        .result-title { margin: 0; font-size: 12px; font-weight: 700; color: #111827; }
         .result-row {
-          display: flex;
-          align-items: center;
-          justify-content: space-between;
-          gap: 8px;
-          font-size: 12px;
+          display: flex; align-items: center; justify-content: space-between;
+          gap: 8px; font-size: 12px;
         }
-        .result-row strong {
-          font-size: 13px;
-          color: #111827;
+        .result-row strong { font-size: 13px; color: #111827; }
+        .result-row.critical strong { font-size: 16px; font-weight: 800; }
+        .result-row.total strong { color: #1e40af; }
+        .result-profit strong { color: #16a34a; }
+        .result-profit.negative strong { color: #dc2626; }
+        .compact-input-row {
+          display: flex; align-items: flex-end; gap: 8px;
         }
-        .result-row.critical strong {
-          font-size: 16px;
-          font-weight: 800;
+        .compact-input-row label { flex: 1; }
+        .compact-price-row {
+          display: flex; align-items: center; justify-content: space-between;
+          font-size: 12px; padding: 6px 0;
         }
-        .result-row.total strong {
-          color: #1e40af;
-        }
-        .result-profit strong {
-          color: #16a34a;
-        }
-        .result-profit.negative strong {
-          color: #dc2626;
-        }
+        .compact-price-row strong { font-size: 14px; color: #111827; }
+        .separator { height: 1px; background: #e5e7eb; margin: 2px 0; }
       </style>
       <section class="panel">
         <header class="header">
           <div class="header-main">
             <img class="brand-logo" src="${BRAND_LOGO_URL}" alt="Branch Commerce logo" />
             <div>
-            <p class="title">Branch Hunter</p>
-            <p class="subtitle">Calculadora hibrida ML + operacao</p>
+              <p class="title">Branch Hunter</p>
+              <p class="subtitle">Calculadora ML</p>
             </div>
           </div>
           <span class="chip">Auto</span>
         </header>
 
-        <div class="section section-dynamic">
-          <div class="section-title-row">
-            <span class="section-icon" aria-hidden="true">
-              <svg width="12" height="12" viewBox="0 0 24 24" fill="none">
-                <path d="M4 6h16M4 12h16M4 18h10" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
-              </svg>
-            </span>
-            <p class="section-title">Dados dinamicos Mercado Livre</p>
-          </div>
-          <div>
-            <div class="dynamic-row"><span class="row-label"><svg class="row-icon" viewBox="0 0 24 24" fill="none"><path d="M12 3v18M3 12h18" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>Preco anuncio</span><div style="display:flex;align-items:center;gap:6px;"><strong id="bh-dyn-sale-price">--</strong> <small id="bh-src-sale-price">(indisponivel)</small><label class="switch-inline switch-blue" style="margin-left:4px;"><input id="bh-sale-price-manual-toggle" type="checkbox"> Manual</label></div></div>
-            <div id="bh-sale-price-manual-wrap" style="display:none;margin-top:6px;">
-              <label>Preco do anuncio (R$)<input id="bh-sale-price-manual-input" type="number" step="0.01" min="0" value="0"></label>
+        <!-- ═══ COMPACT: always visible ═══ -->
+        <div style="display:grid;gap:8px;">
+          <div class="compact-price-row">
+            <span class="row-label"><svg class="row-icon" viewBox="0 0 24 24" fill="none"><path d="M12 3v18M3 12h18" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>Preco anuncio</span>
+            <div style="display:flex;align-items:center;gap:6px;">
+              <strong id="bh-dyn-sale-price" style="font-size:14px;">--</strong>
+              <small id="bh-src-sale-price" style="color:#6b7280;font-size:10px;">(indisponivel)</small>
+              <label class="switch-inline switch-blue" style="margin-left:2px;font-size:11px;"><input id="bh-sale-price-manual-toggle" type="checkbox"> Manual</label>
             </div>
           </div>
-          <div class="dynamic-row"><span class="row-label"><svg class="row-icon" viewBox="0 0 24 24" fill="none"><path d="M4 7h16M4 12h10M4 17h7" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>Tipo anuncio</span><div><strong id="bh-dyn-listing-type">--</strong> <small id="bh-src-listing-type">(indisponivel)</small></div></div>
-          <div class="dynamic-row"><span class="row-label"><svg class="row-icon" viewBox="0 0 24 24" fill="none"><path d="M3 10h18M7 6h10M7 14h10M7 18h6" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>Taxa ML</span><div><strong id="bh-dyn-fee">--</strong> <small id="bh-src-fee">(indisponivel)</small></div></div>
-          <div class="dynamic-row"><span class="row-label"><svg class="row-icon" viewBox="0 0 24 24" fill="none"><path d="M4 5h16v14H4zM8 9h8" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>Categoria</span><div><strong id="bh-dyn-category">--</strong></div></div>
-          <div class="dynamic-row"><span class="row-label"><svg class="row-icon" viewBox="0 0 24 24" fill="none"><path d="M3 16h18M5 16l2-6h10l2 6" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>Frete estimado</span><div><strong id="bh-dyn-shipping-estimated">--</strong> <small id="bh-src-shipping-estimated">(indisponivel)</small></div></div>
-          <div class="dynamic-row"><span class="row-label"><svg class="row-icon" viewBox="0 0 24 24" fill="none"><path d="M4 17h16M7 17V7h10v10" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>Frete real</span><div><strong id="bh-dyn-shipping-real">--</strong> <small id="bh-src-shipping-real">(indisponivel)</small></div></div>
-          <div class="dynamic-row"><span class="row-label"><svg class="row-icon" viewBox="0 0 24 24" fill="none"><path d="M3 12h18M12 3v18" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>Modo envio</span><div><strong id="bh-dyn-shipping-mode">--</strong></div></div>
-        </div>
-
-        <div class="section section-operation grid">
-          <div class="section-title-row">
-            <span class="section-icon" aria-hidden="true">
-              <svg width="12" height="12" viewBox="0 0 24 24" fill="none">
-                <path d="M3 6h18v12H3zM8 10h8" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
-              </svg>
-            </span>
-            <p class="section-title">Custos configuraveis do vendedor</p>
+          <div id="bh-sale-price-manual-wrap" style="display:none;">
+            <label>Preco do anuncio (R$)<input id="bh-sale-price-manual-input" type="number" step="0.01" min="0" value="0"></label>
           </div>
-          <div class="grid-2">
+          <div class="compact-price-row">
+            <span class="row-label"><svg class="row-icon" viewBox="0 0 24 24" fill="none"><path d="M4 7h16M4 12h10M4 17h7" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>Tipo anuncio</span>
+            <div style="display:flex;align-items:center;gap:6px;">
+              <select id="bh-listing-type-select" style="width:auto;padding:4px 8px;font-size:12px;border:1px solid #d1d5db;border-radius:6px;background:#fff;color:#111827;cursor:pointer;">
+                <option value="auto">Auto</option>
+                <option value="premium">Premium</option>
+                <option value="gold_special">Classico</option>
+              </select>
+              <small id="bh-listing-type-fee" style="color:#6b7280;font-size:10px;">Taxa: --</small>
+            </div>
+          </div>
+          <div class="compact-input-row">
             <label>Custo produto (R$)<input id="bh-product-cost" type="number" step="0.01" min="0"></label>
-            <label>Imposto (%)<input id="bh-tax-percent" type="number" step="0.01" min="0"></label>
-          </div>
-          <div class="freight-box">
-            <div class="freight-card green">
-              <div class="switch-row">
-                <div>
-                  <p class="section-title">Frete Gratis</p>
-                  <p id="bh-free-shipping-hint" class="freight-hint">Obrigatorio acima de R$ 79,00</p>
-                </div>
-                <label class="switch-inline switch-green">
-                  <input id="bh-free-shipping-toggle" type="checkbox" checked>
-                  ML
-                </label>
-              </div>
-            </div>
-            <div id="bh-custom-shipping-card" class="freight-card blue">
-              <div class="switch-row">
-                <div>
-                  <p class="section-title">Frete Customizado</p>
-                  <p id="bh-custom-shipping-hint" class="freight-hint">Usando valor padrao</p>
-                </div>
-                <label class="switch-inline switch-blue">
-                  <input id="bh-shipping-manual-toggle" type="checkbox">
-                  Manual
-                </label>
-              </div>
-              <div id="bh-shipping-fallback-wrap" style="display:none;">
-                <label>Valor do frete (R$)<input id="bh-shipping-fallback" type="number" step="0.01" min="0" value="12"></label>
-              </div>
-            </div>
-            <div>
-              <p class="subtle"><strong>Frete padrao (SP): R$ 12,00</strong></p>
-            </div>
           </div>
         </div>
 
-        <div class="section section-centralize">
-          <div class="section-title-row">
-            <span class="section-icon" aria-hidden="true">
-              <svg width="12" height="12" viewBox="0 0 24 24" fill="none">
-                <path d="M4 6h16M4 12h16M4 18h10" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
-              </svg>
-            </span>
-            <p class="section-title">Centralize</p>
-          </div>
-          <p class="subtle">Custos fixos aplicados automaticamente em todos os produtos.</p>
-          <div class="dynamic-row"><span>Envio fixo</span><strong>R$ 5,00</strong></div>
-          <div class="dynamic-row"><span>Embalagem fixa</span><strong>R$ 1,50</strong></div>
-        </div>
+        <div class="separator"></div>
 
-        <div class="actions">
-          <button id="bh-sync-dynamic" class="btn-primary" type="button">Atualizar dados ML</button>
-          <button id="bh-reset" class="btn-secondary" type="button">Limpar</button>
-        </div>
-
+        <!-- ═══ RESULT: always visible ═══ -->
         <div class="section section-result">
-          <div class="section-title-row">
-            <span class="section-icon" aria-hidden="true">
-              <svg width="12" height="12" viewBox="0 0 24 24" fill="none">
-                <path d="M4 20V10m6 10V4m6 16v-7" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
-              </svg>
-            </span>
-            <p class="result-title">Resultado</p>
-          </div>
-          <div class="result-row"><span class="row-label"><svg class="row-icon" viewBox="0 0 24 24" fill="none"><path d="M4 12h16M12 4v16" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>Receita bruta</span><strong id="bh-result-gross">R$ 0,00</strong></div>
-          <div class="result-row"><span class="row-label"><svg class="row-icon" viewBox="0 0 24 24" fill="none"><path d="M3 17h18M5 17l2-6h10l2 6" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>Frete usado</span><strong id="bh-result-shipping">R$ 0,00</strong></div>
-          <div class="result-row"><span class="row-label"><svg class="row-icon" viewBox="0 0 24 24" fill="none"><path d="M4 6h16M4 12h16M4 18h10" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>Centralize fixo</span><strong id="bh-result-centralize">R$ 0,00</strong></div>
-          <div class="result-row critical total"><span class="row-label"><svg class="row-icon" viewBox="0 0 24 24" fill="none"><path d="M4 6h16v12H4z" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>Total custos</span><strong id="bh-result-total-costs">R$ 0,00</strong></div>
           <div id="bh-profit-row" class="result-row result-profit critical"><span class="row-label"><svg class="row-icon" viewBox="0 0 24 24" fill="none"><path d="M4 17l6-6 4 4 6-6" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>Lucro liquido</span><strong id="bh-result-profit">R$ 0,00</strong></div>
           <div class="result-row critical"><span class="row-label"><svg class="row-icon" viewBox="0 0 24 24" fill="none"><path d="M12 4v16M4 12h16" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>Margem</span><strong id="bh-result-margin">0,00%</strong></div>
+          <div class="result-row critical total"><span class="row-label"><svg class="row-icon" viewBox="0 0 24 24" fill="none"><path d="M4 6h16v12H4z" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>Total custos</span><strong id="bh-result-total-costs">R$ 0,00</strong></div>
+        </div>
+
+        <!-- ═══ TOGGLE BUTTON ═══ -->
+        <button id="bh-toggle-details" class="btn-toggle" type="button">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none"><path d="M6 9l6 6 6-6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          <span id="bh-toggle-label">Ver mais</span>
+        </button>
+
+        <!-- ═══ COLLAPSIBLE: hidden by default ═══ -->
+        <div id="bh-details" class="collapsible">
+          <div class="section section-dynamic">
+            <div class="section-title-row">
+              <span class="section-icon" aria-hidden="true"><svg width="12" height="12" viewBox="0 0 24 24" fill="none"><path d="M4 6h16M4 12h16M4 18h10" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg></span>
+              <p class="section-title">Dados dinamicos Mercado Livre</p>
+            </div>
+            <div class="dynamic-row"><span class="row-label"><svg class="row-icon" viewBox="0 0 24 24" fill="none"><path d="M4 7h16M4 12h10M4 17h7" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>Tipo anuncio</span><div><strong id="bh-dyn-listing-type">--</strong> <small id="bh-src-listing-type">(indisponivel)</small></div></div>
+            <div class="dynamic-row"><span class="row-label"><svg class="row-icon" viewBox="0 0 24 24" fill="none"><path d="M3 10h18M7 6h10M7 14h10M7 18h6" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>Taxa ML</span><div><strong id="bh-dyn-fee">--</strong> <small id="bh-src-fee">(indisponivel)</small></div></div>
+            <div class="dynamic-row"><span class="row-label"><svg class="row-icon" viewBox="0 0 24 24" fill="none"><path d="M4 5h16v14H4zM8 9h8" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>Categoria</span><div><strong id="bh-dyn-category">--</strong></div></div>
+            <div class="dynamic-row"><span class="row-label"><svg class="row-icon" viewBox="0 0 24 24" fill="none"><path d="M3 16h18M5 16l2-6h10l2 6" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>Frete estimado</span><div><strong id="bh-dyn-shipping-estimated">--</strong> <small id="bh-src-shipping-estimated">(indisponivel)</small></div></div>
+            <div class="dynamic-row"><span class="row-label"><svg class="row-icon" viewBox="0 0 24 24" fill="none"><path d="M4 17h16M7 17V7h10v10" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>Frete real</span><div><strong id="bh-dyn-shipping-real">--</strong> <small id="bh-src-shipping-real">(indisponivel)</small></div></div>
+            <div class="dynamic-row"><span class="row-label"><svg class="row-icon" viewBox="0 0 24 24" fill="none"><path d="M3 12h18M12 3v18" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>Modo envio</span><div><strong id="bh-dyn-shipping-mode">--</strong></div></div>
+          </div>
+
+          <div class="section section-operation grid">
+            <div class="section-title-row">
+              <span class="section-icon" aria-hidden="true"><svg width="12" height="12" viewBox="0 0 24 24" fill="none"><path d="M3 6h18v12H3zM8 10h8" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg></span>
+              <p class="section-title">Configuracoes avancadas</p>
+            </div>
+            <label>Imposto (%)<input id="bh-tax-percent" type="number" step="0.01" min="0"></label>
+            <div class="freight-box">
+              <div class="freight-card green">
+                <div class="switch-row">
+                  <div>
+                    <p class="section-title">Frete Gratis</p>
+                    <p id="bh-free-shipping-hint" class="freight-hint">Obrigatorio acima de R$ 79,00</p>
+                  </div>
+                  <label class="switch-inline switch-green">
+                    <input id="bh-free-shipping-toggle" type="checkbox" checked> ML
+                  </label>
+                </div>
+              </div>
+              <div id="bh-custom-shipping-card" class="freight-card blue">
+                <div class="switch-row">
+                  <div>
+                    <p class="section-title">Frete Customizado</p>
+                    <p id="bh-custom-shipping-hint" class="freight-hint">Usando valor padrao</p>
+                  </div>
+                  <label class="switch-inline switch-blue">
+                    <input id="bh-shipping-manual-toggle" type="checkbox"> Manual
+                  </label>
+                </div>
+                <div id="bh-shipping-fallback-wrap" style="display:none;">
+                  <label>Valor do frete (R$)<input id="bh-shipping-fallback" type="number" step="0.01" min="0" value="12"></label>
+                </div>
+              </div>
+              <div><p class="subtle"><strong>Frete padrao (SP): R$ 12,00</strong></p></div>
+            </div>
+          </div>
+
+          <div class="section section-centralize">
+            <div class="section-title-row">
+              <span class="section-icon" aria-hidden="true"><svg width="12" height="12" viewBox="0 0 24 24" fill="none"><path d="M4 6h16M4 12h16M4 18h10" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg></span>
+              <p class="section-title">Centralize</p>
+            </div>
+            <p class="subtle">Custos fixos aplicados automaticamente.</p>
+            <div class="dynamic-row"><span>Envio fixo</span><strong>R$ 5,00</strong></div>
+            <div class="dynamic-row"><span>Embalagem fixa</span><strong>R$ 1,50</strong></div>
+          </div>
+
+          <div style="display:grid;gap:6px;">
+            <div class="result-row"><span class="row-label"><svg class="row-icon" viewBox="0 0 24 24" fill="none"><path d="M4 12h16M12 4v16" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>Receita bruta</span><strong id="bh-result-gross">R$ 0,00</strong></div>
+            <div class="result-row"><span class="row-label"><svg class="row-icon" viewBox="0 0 24 24" fill="none"><path d="M3 17h18M5 17l2-6h10l2 6" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>Frete usado</span><strong id="bh-result-shipping">R$ 0,00</strong></div>
+            <div class="result-row"><span class="row-label"><svg class="row-icon" viewBox="0 0 24 24" fill="none"><path d="M4 6h16M4 12h16M4 18h10" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>Centralize fixo</span><strong id="bh-result-centralize">R$ 0,00</strong></div>
+          </div>
+
+          <div class="actions">
+            <button id="bh-sync-dynamic" class="btn-primary" type="button">Atualizar dados ML</button>
+            <button id="bh-reset" class="btn-secondary" type="button">Limpar</button>
+          </div>
         </div>
       </section>
     `;
@@ -510,6 +390,11 @@
       profitRow: $("bh-profit-row"),
       resultProfit: $("bh-result-profit"),
       resultMargin: $("bh-result-margin"),
+      toggleDetails: $("bh-toggle-details"),
+      toggleLabel: $("bh-toggle-label"),
+      detailsPanel: $("bh-details"),
+      listingTypeSelect: $("bh-listing-type-select"),
+      listingTypeFee: $("bh-listing-type-fee"),
     };
   }
 
@@ -524,11 +409,16 @@
     const manualSalePrice = forceManualSalePrice
       ? toNumber(elements.salePriceManualInput.value, 0)
       : null;
+    const selectedType = elements.listingTypeSelect?.value || "auto";
+    const forceListingType = selectedType !== "auto";
     return {
       salePrice: manualSalePrice,
       forceManualSalePrice,
-      listingType: null,
-      saleFeePercent: state.manualSaleFeePercentFallback,
+      listingType: forceListingType ? selectedType : null,
+      forceListingType,
+      saleFeePercent: forceListingType
+        ? (LISTING_TYPE_FEES[selectedType] ?? state.manualSaleFeePercentFallback)
+        : state.manualSaleFeePercentFallback,
     };
   }
 
@@ -573,6 +463,7 @@
         : "--";
     elements.dynFee.textContent = feeLabel;
     elements.srcFee.textContent = `(${formatSource(marketplaceData.source.saleFeePercent)})`;
+    elements.listingTypeFee.textContent = `Taxa: ${feeLabel}`;
     elements.dynCategory.textContent = formatNullableText(
       marketplaceData.categoryName || marketplaceData.categoryId,
     );
@@ -653,6 +544,21 @@
       };
     }
 
+    if (manualMarketplace.forceListingType) {
+      const typeLabel = manualMarketplace.listingType === "premium" ? "premium" : "gold_special";
+      marketplace = {
+        ...marketplace,
+        listingType: typeLabel,
+        saleFeePercent: manualMarketplace.saleFeePercent,
+        saleFeeAmount: null,
+        source: {
+          ...(marketplace?.source || {}),
+          listingType: "manual",
+          saleFeePercent: "manual",
+        },
+      };
+    }
+
     return { marketplace, operation, manualMarketplace };
   }
 
@@ -713,6 +619,7 @@
     elements.shippingManualToggle.checked = Boolean(values.forceManualShipping);
     elements.salePriceManualToggle.checked = Boolean(values.forceManualSalePrice);
     elements.salePriceManualInput.value = String(values.manualSalePrice ?? 0);
+    elements.listingTypeSelect.value = values.listingTypeOverride || "auto";
     applySalePriceUiState(elements);
     applyShippingUiState(elements);
   }
@@ -741,6 +648,7 @@
       ...(saved?.operation || {}),
       forceManualSalePrice: saved?.manualMarketplace?.forceManualSalePrice ?? false,
       manualSalePrice: saved?.manualMarketplace?.salePrice ?? 0,
+      listingTypeOverride: saved?.manualMarketplace?.listingType || "auto",
     });
 
     await refreshAndCompute(elements, false, { refreshMarketplace: true });
@@ -780,6 +688,16 @@
         elements.salePriceManualInput.value = String(state.marketplaceDataCache.salePrice);
       }
       void recalcAndPersist();
+    });
+
+    elements.listingTypeSelect.addEventListener("change", () => {
+      void recalcAndPersist();
+    });
+
+    elements.toggleDetails.addEventListener("click", () => {
+      const isOpen = elements.detailsPanel.classList.toggle("open");
+      elements.toggleLabel.textContent = isOpen ? "Ver menos" : "Ver mais";
+      elements.toggleDetails.classList.toggle("expanded", isOpen);
     });
 
     elements.syncDynamic.addEventListener("click", async () => {
