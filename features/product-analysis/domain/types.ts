@@ -259,6 +259,11 @@ export type CompetitorEntry = {
   permalink: string | null
   visits30d: number | null
   visitsShare: number | null
+  scrapedStock: number | null
+  scrapedStockIsMinimum: boolean
+  scrapedSoldLabel: string | null
+  scrapedSoldQuantity: number | null
+  scrapedStartTime: string | null
 }
 
 export type CompetitorSummary = {
@@ -283,6 +288,7 @@ export type CompetitorSection = {
   totalAfterFilters: number
   competitors: CompetitorEntry[]
   summary: CompetitorSummary
+  buyBoxWinnerItemId: string | null
 }
 
 export type LogEntry = { step: string; detail: string; count?: number; ms?: number }
