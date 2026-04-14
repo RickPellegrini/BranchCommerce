@@ -12,7 +12,7 @@
     "*://*.mercadolivre.com/*",
     "*://branchcommercehub.com/*",
     "*://branch-commerce.vercel.app/*",
-    "http://localhost/*"
+    "http://localhost:3000/*"
   ],
   "background": {
     "service_worker": "src/background.js"
@@ -36,7 +36,7 @@
     {
       "matches": [
         "*://branchcommercehub.com/*",
-        "http://localhost/*"
+        "http://localhost:3000/*"
       ],
       "js": ["src/bridge.js"],
       "run_at": "document_idle"
