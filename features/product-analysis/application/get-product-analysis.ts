@@ -245,7 +245,8 @@ export async function getProductAnalysis(
   )
 
   // Enrich competitors: sellers + visits (in parallel)
-  // Stock/sold data is scraped client-side via the Chrome extension (residential IP).
+  // Stock is scraped client-side via Chrome extension (residential IP).
+  // Sold is estimated client-side from catalog total × visit share.
   const uniqueSellerIds = [...new Set(competitors.map((c) => c.sellerId))]
   const competitorItemIds = competitors.map((c) => c.itemId)
   logger.log(

@@ -325,14 +325,14 @@ function AnalysisResults({
     if (!scrapeResult) return rawCompetitors
     return rawCompetitors.map((c) => {
       const s = scrapeResult.stockData[c.itemId]
-      if (!s || s.availableQuantity == null) return c
+      if (!s) return c
       return {
         ...c,
-        scrapedStock: s.availableQuantity,
-        scrapedStockIsMinimum: s.stockIsMinimum,
-        scrapedSoldLabel: s.soldLabel,
-        scrapedSoldQuantity: s.soldQuantity,
-        scrapedStartTime: s.startTime,
+        scrapedStock: s.availableQuantity ?? c.scrapedStock,
+        scrapedStockIsMinimum: s.stockIsMinimum ?? c.scrapedStockIsMinimum,
+        scrapedSoldQuantity: s.soldQuantity ?? c.scrapedSoldQuantity,
+        scrapedSoldLabel: s.soldLabel ?? c.scrapedSoldLabel,
+        scrapedStartTime: s.startTime ?? c.scrapedStartTime,
       }
     })
   }, [rawCompetitors, scrapeResult])
