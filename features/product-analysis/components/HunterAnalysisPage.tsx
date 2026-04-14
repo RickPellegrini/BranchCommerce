@@ -315,6 +315,7 @@ function AnalysisResults({
   const { extensionAvailable, scraping, result: scrapeResult, scrape } = useExtensionScraping()
 
   useEffect(() => {
+    console.log("[analysis] scrape effect:", { extensionAvailable, competitors: rawCompetitors.length, catalogId: data.catalog.catalogProductId })
     if (!extensionAvailable || rawCompetitors.length === 0) return
     const itemIds = rawCompetitors.map((c) => c.itemId)
     scrape(itemIds, data.catalog.catalogProductId)

@@ -1,20 +1,30 @@
 /**
  * Bridge between the BranchCommerce web app and the extension's background
- * service worker. Injected ONLY on the web app domain (branchcommercehub.com
- * and localhost:3000).
+ * service worker. Injected ONLY on the web app domain.
  *
- * Communication flow:
+ * Content scripts run in Chrome's "isolated world" — they share the DOM but
+ * NOT JavaScript globals with the page. All communication uses postMessage.
+ *
  *   React page  ──postMessage──▶  bridge.js  ──chrome.runtime──▶  background.js
  *   React page  ◀──postMessage──  bridge.js  ◀──sendResponse───  background.js
  */
 ;(function () {
   "use strict"
 
-  window.__BH_BRIDGE__ = true
+  console.log("[BH-bridge] injected on", location.href)
+
+  window.postMessage({ type: "BH_BRIDGE_READY" })
 
   window.addEventListener("message", (event) => {
     if (event.source !== window) return
-    if (!event.data || event.data.type !== "BH_SCRAPE_REQUEST") return
+    if (!event.data) return
+
+    if (event.data.type === "BH_BRIDGE_PING") {
+      window.postMessage({ type: "BH_BRIDGE_READY" })
+      return
+    }
+
+    if (event.data.type !== "BH_SCRAPE_REQUEST") return
 
     const { requestId, itemIds, catalogProductId } = event.data
 
