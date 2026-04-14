@@ -2,7 +2,7 @@
 
 import type { CompetitorEntry } from "@/features/product-analysis/domain/types"
 import { formatBrl } from "@/features/product-analysis/utils/money"
-import { ExternalLink, Crown, Zap, Truck, Package, Trophy } from "lucide-react"
+import { ExternalLink, Zap, Truck, Trophy } from "lucide-react"
 
 // ─── Reputation level bar (5 dots like the reference) ───────────────
 
@@ -119,10 +119,12 @@ export function CompetitorTable({
   competitors,
   myPrice,
   winnerItemId,
+  scraping = false,
 }: {
   competitors: CompetitorEntry[]
   myPrice: number
   winnerItemId: string | null
+  scraping?: boolean
 }) {
   if (competitors.length === 0) return null
 
@@ -263,6 +265,8 @@ export function CompetitorTable({
                       }`}>
                         {c.scrapedStockIsMinimum ? "≥" : ""}{c.scrapedStock}
                       </p>
+                    ) : scraping ? (
+                      <div className="h-4 w-8 animate-pulse rounded bg-muted ml-auto" />
                     ) : (
                       <span className="text-xs text-muted-foreground">-</span>
                     )}
@@ -284,6 +288,11 @@ export function CompetitorTable({
                               {perDay < 0.1 ? "< 0.1" : perDay.toFixed(1)}/dia
                             </p>
                           )}
+                        </div>
+                      ) : scraping ? (
+                        <div className="space-y-1 ml-auto">
+                          <div className="h-4 w-10 animate-pulse rounded bg-muted ml-auto" />
+                          <div className="h-3 w-8 animate-pulse rounded bg-muted ml-auto" />
                         </div>
                       ) : (
                         <span className="text-xs text-muted-foreground">-</span>
@@ -324,7 +333,14 @@ export function CompetitorTable({
                   <td className="px-4 py-3 text-right">
                     {(() => {
                       if (c.scrapedSoldQuantity == null || c.scrapedSoldQuantity === 0) {
-                        return <span className="text-xs text-muted-foreground">-</span>
+                        return scraping ? (
+                          <div className="space-y-1 ml-auto">
+                            <div className="h-4 w-14 animate-pulse rounded bg-muted ml-auto" />
+                            <div className="h-3 w-10 animate-pulse rounded bg-muted ml-auto" />
+                          </div>
+                        ) : (
+                          <span className="text-xs text-muted-foreground">-</span>
+                        )
                       }
                       const totalRevenue = c.price * c.scrapedSoldQuantity
                       const perDay = computeSalesPerDay(c.scrapedSoldQuantity, c.scrapedStartTime)

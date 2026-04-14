@@ -10,6 +10,7 @@
   "host_permissions": [
     "*://*.mercadolivre.com.br/*",
     "*://*.mercadolivre.com/*",
+    "*://branchcommercehub.com/*",
     "*://branch-commerce.vercel.app/*",
     "*://localhost:3000/*"
   ],
@@ -30,6 +31,14 @@
         "src/storage.js",
         "src/content-script.js"
       ],
+      "run_at": "document_idle"
+    },
+    {
+      "matches": [
+        "*://branchcommercehub.com/*",
+        "*://localhost:3000/*"
+      ],
+      "js": ["src/bridge.js"],
       "run_at": "document_idle"
     }
   ]

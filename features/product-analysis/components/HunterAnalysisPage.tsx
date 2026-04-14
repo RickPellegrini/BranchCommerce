@@ -33,6 +33,7 @@ import { AnalysisEmpty } from "./AnalysisEmpty"
 import { CatalogOverview } from "./CatalogOverview"
 import { CompetitorTable } from "./CompetitorTable"
 import type { CompetitorEntry } from "@/features/product-analysis/domain/types"
+import { useExtensionScraping } from "@/features/product-analysis/hooks/use-extension-scraping"
 
 function parseMlId(input: string): string | null {
   const trimmed = input.trim()
@@ -306,10 +307,37 @@ function AnalysisResults({
   phase: string
 }) {
   const { item } = data.catalog
-  const { summary, competitors } = data.competitors
+  const { summary, competitors: rawCompetitors } = data.competitors
   const [logisticFilter, setLogisticFilter] = useState<LogisticFilter>("all")
   const [listingFilter, setListingFilter] = useState<"all" | "gold_pro" | "gold_special">("all")
   const [cityFilter, setCityFilter] = useState<string | null>(null)
+
+  const { extensionAvailable, scraping, result: scrapeResult, scrape } = useExtensionScraping()
+
+  useEffect(() => {
+    if (!extensionAvailable || rawCompetitors.length === 0) return
+    const itemIds = rawCompetitors.map((c) => c.itemId)
+    scrape(itemIds, data.catalog.catalogProductId)
+  }, [extensionAvailable, rawCompetitors, data.catalog.catalogProductId, scrape])
+
+  const competitors = useMemo<CompetitorEntry[]>(() => {
+    if (!scrapeResult) return rawCompetitors
+    return rawCompetitors.map((c) => {
+      const s = scrapeResult.stockData[c.itemId]
+      if (!s || s.availableQuantity == null) return c
+      return {
+        ...c,
+        scrapedStock: s.availableQuantity,
+        scrapedStockIsMinimum: s.stockIsMinimum,
+        scrapedSoldLabel: s.soldLabel,
+        scrapedSoldQuantity: s.soldQuantity,
+        scrapedStartTime: s.startTime,
+      }
+    })
+  }, [rawCompetitors, scrapeResult])
+
+  const effectiveBuyBoxWinner =
+    scrapeResult?.buyBoxWinner ?? data.competitors.buyBoxWinnerItemId
 
   const availableCities = useMemo(() => {
     const cities = new Map<string, number>()
@@ -551,7 +579,8 @@ function AnalysisResults({
             <CompetitorTable
               competitors={filtered}
               myPrice={item.price}
-              winnerItemId={data.competitors.buyBoxWinnerItemId}
+              winnerItemId={effectiveBuyBoxWinner}
+              scraping={scraping}
             />
           )}
           {phase === "partial" && (
