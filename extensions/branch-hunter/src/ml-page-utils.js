@@ -180,6 +180,59 @@
     return null;
   }
 
+  function isMlSearchPage() {
+    const host = location.hostname;
+    const isMlDomain =
+      host.endsWith("mercadolivre.com.br") || host.endsWith("mercadolivre.com");
+    if (!isMlDomain) return false;
+    if (host.startsWith("lista.")) return true;
+    if (document.querySelector("ol.ui-search-layout")) return true;
+    if (document.querySelector(".ui-search-results")) return true;
+    return false;
+  }
+
+  function extractSearchQuery() {
+    const url = new URL(location.href);
+    const qParam = url.searchParams.get("q");
+    if (qParam) return qParam.trim();
+    const path = url.pathname.replace(/^\//, "").split("#")[0].split("?")[0];
+    const firstSegment = path.split("/")[0] || "";
+    if (firstSegment) return decodeURIComponent(firstSegment.replace(/-/g, " ")).trim();
+    return null;
+  }
+
+  function extractCardItemIds() {
+    const seen = new Set();
+    const results = [];
+
+    const allLinks = document.querySelectorAll("a[href]");
+    for (const link of allLinks) {
+      const href = link.getAttribute("href") || "";
+      const match = href.match(/MLB[-]?\d+/i);
+      if (!match) continue;
+      const itemId = match[0].toUpperCase().replace("-", "");
+      if (seen.has(itemId)) continue;
+
+      const card =
+        link.closest("li.ui-search-layout__item") ||
+        link.closest("li[class*='ui-search']") ||
+        link.closest("[class*='ui-search-result']") ||
+        link.closest("[class*='layout__item']") ||
+        link.closest(".andes-card") ||
+        link.closest("li") ||
+        link.closest("div[class*='result']") ||
+        link.closest("div[class*='card']");
+
+      if (!card || card.dataset.bhProcessed) continue;
+
+      const isCatalog = /\/p\/MLB/i.test(href);
+
+      seen.add(itemId);
+      results.push({ card, itemId, isCatalog });
+    }
+    return results;
+  }
+
   globalThis.BranchHunterPageUtils = {
     parseBrazilianCurrency,
     getCurrentListingId,
@@ -187,5 +240,8 @@
     getCurrentListingTitle,
     extractPriceFromPage,
     findBestAnchor,
+    isMlSearchPage,
+    extractSearchQuery,
+    extractCardItemIds,
   };
 })();

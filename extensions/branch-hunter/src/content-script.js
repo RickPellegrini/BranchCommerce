@@ -3,6 +3,7 @@
   const BRAND_LOGO_URL = "https://branch-commerce.vercel.app/branch_logo.jpeg";
   const DEBUG = false;
   const LISTING_TYPE_FEES = { premium: 16, gold_special: 12 };
+  const BADGE_ATTR = "data-bh-processed";
 
   const state = {
     listingId: "",
@@ -28,6 +29,7 @@
     },
     costSyncDebounce: null,
     marketplaceDataCache: null,
+    serpEnrichDebounce: null,
   };
 
   function logDebug(message, payload) {
@@ -841,14 +843,124 @@
     });
   }
 
-  async function bootstrap() {
-    if (!isMlProductPage()) return;
-    const { getSettings } = globalThis.BranchHunterStorage;
-    const settings = await getSettings();
-    if (!settings.autoInjectEnabled) return;
+  // ═══════════════════════════════════════════
+  // SERP: Catalog badge injection
+  // ═══════════════════════════════════════════
 
-    await renderOrRefreshPanel();
-    setupDomObserver();
+  function injectCatalogBadge(card) {
+    if (card.querySelector("[data-bh-catalog-badge]")) return;
+
+    const badge = document.createElement("div");
+    badge.setAttribute("data-bh-catalog-badge", "true");
+    Object.assign(badge.style, {
+      display: "inline-flex",
+      alignItems: "center",
+      gap: "4px",
+      background: "#16a34a",
+      color: "#fff",
+      fontSize: "11px",
+      fontWeight: "700",
+      fontFamily: "Inter, 'Segoe UI', Arial, sans-serif",
+      padding: "4px 8px",
+      borderRadius: "4px",
+      position: "absolute",
+      top: "6px",
+      left: "6px",
+      zIndex: "9999",
+      lineHeight: "1",
+      letterSpacing: "0.3px",
+      boxShadow: "0 2px 6px rgba(0,0,0,0.3)",
+      pointerEvents: "none",
+    });
+    badge.innerHTML =
+      '<svg width="11" height="11" viewBox="0 0 24 24" fill="none" style="flex-shrink:0;">' +
+      '<path d="M4 4h6v6H4zM14 4h6v6h-6zM4 14h6v6H4zM14 14h6v6h-6z" fill="currentColor"/>' +
+      "</svg>CATÁLOGO";
+
+    const cardStyle = getComputedStyle(card);
+    if (cardStyle.position === "static" || cardStyle.position === "") {
+      card.style.position = "relative";
+    }
+    card.style.overflow = "visible";
+    card.prepend(badge);
+  }
+
+  function enrichSearchResults() {
+    const { isMlSearchPage, extractCardItemIds } =
+      globalThis.BranchHunterPageUtils;
+
+    if (!isMlSearchPage()) return;
+
+    const cards = extractCardItemIds();
+    if (cards.length === 0) return;
+
+    let badgeCount = 0;
+    for (const { card, itemId, isCatalog } of cards) {
+      card.setAttribute(BADGE_ATTR, "1");
+      if (isCatalog) {
+        injectCatalogBadge(card);
+        badgeCount++;
+      }
+    }
+    console.log("[BH] catalog badges:", badgeCount, "/", cards.length, "cards");
+  }
+
+  function scheduleSerpEnrich() {
+    if (state.serpEnrichDebounce) clearTimeout(state.serpEnrichDebounce);
+    state.serpEnrichDebounce = setTimeout(enrichSearchResults, 300);
+  }
+
+  // ═══════════════════════════════════════════
+  // Bootstrap
+  // ═══════════════════════════════════════════
+
+  async function bootstrap() {
+    const { isMlSearchPage } = globalThis.BranchHunterPageUtils;
+
+    if (isMlProductPage()) {
+      const { getSettings } = globalThis.BranchHunterStorage;
+      const settings = await getSettings();
+      if (!settings.autoInjectEnabled) return;
+      await renderOrRefreshPanel();
+      setupDomObserver();
+      return;
+    }
+
+    if (isMlSearchPage()) {
+      console.log("[BH] Search page detected:", location.href);
+      setupSerpObserver();
+      for (let attempt = 0; attempt < 8; attempt++) {
+        const { extractCardItemIds } = globalThis.BranchHunterPageUtils;
+        const cards = extractCardItemIds();
+        if (cards.length > 0) {
+          enrichSearchResults();
+          return;
+        }
+        await new Promise((r) => setTimeout(r, 500));
+      }
+    }
+  }
+
+  function setupSerpObserver() {
+    if (state.observer) state.observer.disconnect();
+    let tick = 0;
+    state.observer = new MutationObserver(() => {
+      tick++;
+      if (state.lastUrl !== location.href) {
+        state.lastUrl = location.href;
+        tick = 0;
+        scheduleSerpEnrich();
+        return;
+      }
+      if (tick % 5 === 0) {
+        const { extractCardItemIds } = globalThis.BranchHunterPageUtils;
+        if (extractCardItemIds().length > 0) scheduleSerpEnrich();
+      }
+    });
+    state.observer.observe(document.documentElement, {
+      childList: true,
+      subtree: true,
+    });
   }
 
   void bootstrap();
