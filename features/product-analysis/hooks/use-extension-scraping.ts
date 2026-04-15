@@ -90,7 +90,7 @@ export function useExtensionScraping() {
       setScraping(true)
       setResult(null)
       try {
-        const data = await requestViaBridge(itemIds, catalogProductId, 45_000)
+        const data = await requestViaBridge(itemIds, catalogProductId, 15_000)
         console.log("[extension-scraping] result:", data)
         if (mountedRef.current) setResult(data)
       } catch (err) {

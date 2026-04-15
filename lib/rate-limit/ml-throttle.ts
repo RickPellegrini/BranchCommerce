@@ -1,8 +1,8 @@
 const queue: Array<() => void> = []
 let inFlight = 0
 
-const MAX_CONCURRENT = 10
-const MIN_DELAY_MS = 100
+const MAX_CONCURRENT = 15
+const MIN_DELAY_MS = 25
 
 export async function throttledMlFetch<T>(fn: () => Promise<T>): Promise<T> {
   await acquireSlot()

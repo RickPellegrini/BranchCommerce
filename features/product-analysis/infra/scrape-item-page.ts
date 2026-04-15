@@ -74,18 +74,24 @@ export function extractStartTime(html: string): string | null {
 
 // ─── Single item page scrape (stock + startTime) ─────────────────────
 
+const PAGE_TIMEOUT_MS = 4_000
+
 async function fetchPage(url: string): Promise<string | null> {
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), PAGE_TIMEOUT_MS)
   try {
     const res = await fetch(url, {
       headers: SCRAPE_HEADERS,
       redirect: "follow",
-      cache: "no-store",
+      signal: controller.signal,
     })
     if (!res.ok) return null
     const html = await res.text()
     return html.length >= 5000 ? html : null
   } catch {
     return null
+  } finally {
+    clearTimeout(timer)
   }
 }
 
@@ -112,31 +118,31 @@ export async function scrapeItemPage(itemId: string): Promise<ScrapedItemResult>
 
 // ─── Batch scrape item pages ─────────────────────────────────────────
 
-function chunk<T>(arr: T[], size: number): T[][] {
-  const out: T[][] = []
-  for (let i = 0; i < arr.length; i += size) out.push(arr.slice(i, i + size))
-  return out
-}
+const BATCH_TIMEOUT_MS = 6_000
 
+/**
+ * Scrape stock / startTime for a batch of items. Results are written
+ * into `target` as they arrive. If a shared map is passed the caller
+ * can snapshot partial results at any time (e.g. after a grace period).
+ */
 export async function scrapeCompetitorPages(
   itemIds: string[],
+  target: Map<string, ScrapedItemResult> = new Map(),
 ): Promise<Map<string, ScrapedItemResult>> {
-  const map = new Map<string, ScrapedItemResult>()
-  if (itemIds.length === 0) return map
+  if (itemIds.length === 0) return target
 
-  const BATCH_SIZE = 5
-  const batches = chunk(itemIds, BATCH_SIZE)
+  const promises = itemIds.map((id) =>
+    scrapeItemPage(id)
+      .then((r) => { target.set(r.itemId, r) })
+      .catch(() => {}),
+  )
 
-  for (const batch of batches) {
-    const settled = await Promise.allSettled(
-      batch.map((id) => scrapeItemPage(id)),
-    )
-    for (const r of settled) {
-      if (r.status === "fulfilled") {
-        map.set(r.value.itemId, r.value)
-      }
-    }
-  }
+  const allDone = Promise.allSettled(promises)
+  const timeout = new Promise<void>((resolve) =>
+    setTimeout(resolve, BATCH_TIMEOUT_MS),
+  )
 
-  return map
+  await Promise.race([allDone, timeout])
+
+  return target
 }

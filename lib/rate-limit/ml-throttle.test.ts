@@ -14,7 +14,7 @@ describe("throttledMlFetch", () => {
     ).rejects.toThrow("fail")
   })
 
-  it("respects concurrency limit of 10", async () => {
+  it("respects concurrency limit of 15", async () => {
     let concurrent = 0
     let maxConcurrent = 0
 
@@ -28,9 +28,9 @@ describe("throttledMlFetch", () => {
       })
 
     vi.useRealTimers()
-    const tasks = Array.from({ length: 15 }, () => createTask())
+    const tasks = Array.from({ length: 25 }, () => createTask())
     await Promise.all(tasks)
-    expect(maxConcurrent).toBeLessThanOrEqual(10)
+    expect(maxConcurrent).toBeLessThanOrEqual(15)
   })
 
   it("processes all queued tasks", async () => {
