@@ -243,27 +243,51 @@ export async function getProductAnalysis(
     `total=${allListings.length}, afterExcludingSelf=${competitors.length}`,
   )
 
-  // Enrich competitors: sellers + visits + stock (in parallel)
+  // Enrich everything in a single parallel wave:
+  // competitors (sellers + visits + stock) + own item (price_to_win + visits)
   const uniqueSellerIds = [...new Set(competitors.map((c) => c.sellerId))]
   const competitorItemIds = competitors.map((c) => c.itemId)
+  const range7 = dateRange(7)
+  const range30 = dateRange(30)
   logger.log(
-    "enrich_competitors",
-    `Fetching ${uniqueSellerIds.length} sellers + ${competitorItemIds.length} visits + stock pages`,
+    "enrich",
+    `Fetching ${uniqueSellerIds.length} sellers + ${competitorItemIds.length} visits + stock + ptw + own visits`,
   )
-  const enrichCompT0 = Date.now()
+  const enrichT0 = Date.now()
 
-  const [sellersResult, visitsResult, scrapeResult] = await Promise.allSettled([
+  // Shared map: scraping writes results here as each page completes.
+  // This lets us snapshot partial results after a grace period.
+  const scrapeMap = new Map<string, import("@/features/product-analysis/infra/scrape-item-page").ScrapedItemResult>()
+  const scrapePromise = scrapeCompetitorPages(competitorItemIds, scrapeMap)
+
+  // Fast API calls run in parallel with the scraping above.
+  const [sellersResult, visitsResult, ptwResult, visits7Result, visits30Result] = await Promise.allSettled([
     getSellersBatch(token, uniqueSellerIds),
     getCompetitorVisits(token, competitorItemIds),
-    scrapeCompetitorPages(competitorItemIds),
+    getPriceToWin(token, item.id),
+    getVisitsBatch(token, [item.id], range7.from, range7.to).then(
+      (m) => m.get(item.id) ?? null,
+    ),
+    getVisitsBatch(token, [item.id], range30.from, range30.to).then(
+      (m) => m.get(item.id) ?? null,
+    ),
+  ])
+
+  // Give scraping a short grace period after the fast calls finish.
+  // scrapeMap already has partial results; wait up to 2s more for stragglers.
+  const SCRAPE_GRACE_MS = 2_000
+  await Promise.race([
+    scrapePromise,
+    new Promise<void>((resolve) => setTimeout(resolve, SCRAPE_GRACE_MS)),
   ])
 
   const sellersMap =
     sellersResult.status === "fulfilled" ? sellersResult.value : new Map<number, import("@/features/product-analysis/domain/types").MlSeller>()
   const visitsMap =
     visitsResult.status === "fulfilled" ? visitsResult.value : new Map<string, number>()
-  const scrapeMap =
-    scrapeResult.status === "fulfilled" ? scrapeResult.value : new Map<string, import("@/features/product-analysis/infra/scrape-item-page").ScrapedItemResult>()
+  const ptw = ptwResult.status === "fulfilled" ? ptwResult.value : null
+  const visits7 = visits7Result.status === "fulfilled" ? visits7Result.value : null
+  const visits30 = visits30Result.status === "fulfilled" ? visits30Result.value : null
 
   const totalVisits = Array.from(visitsMap.values()).reduce((a, b) => a + b, 0)
 
@@ -295,9 +319,10 @@ export async function getProductAnalysis(
   }
 
   const scrapeHits = Array.from(scrapeMap.values()).filter((r) => r.availableQuantity != null).length
+  const catalogMs = Date.now() - enrichT0
   logger.log(
-    "enrich_competitors",
-    `✓ ${sellersMap.size} sellers, ${visitsMap.size} visits (total=${totalVisits}), stock=${scrapeHits}/${competitorItemIds.length} in ${Date.now() - enrichCompT0}ms`,
+    "enrich",
+    `✓ ${sellersMap.size} sellers, ${visitsMap.size} visits (total=${totalVisits}), stock=${scrapeHits}/${competitorItemIds.length}, ptw=${ptw?.status ?? "N/A"}, visits7d=${visits7}, visits30d=${visits30} in ${catalogMs}ms`,
   )
 
   const summary = aggregateCompetitors(competitors, item.price)
@@ -306,28 +331,6 @@ export async function getProductAnalysis(
     `min=${summary.minPrice}, max=${summary.maxPrice}, avg=${summary.avgPrice}, ` +
       `median=${summary.medianPrice}, freeShipping=${summary.freeShippingCount}, ` +
       `fulfillment=${summary.fulfillmentCount}, officialStore=${summary.officialStoreCount}`,
-  )
-
-  // Private enrichment: price_to_win + visits (may fail for third-party items)
-  const range7 = dateRange(7)
-  const range30 = dateRange(30)
-
-  logger.log("enrich", "price_to_win + visits (private, may 403 for third-party)")
-  const enrichT0 = Date.now()
-  const [ptw, visits7, visits30] = await Promise.all([
-    getPriceToWin(token, item.id),
-    getVisitsBatch(token, [item.id], range7.from, range7.to).then(
-      (m) => m.get(item.id) ?? null,
-    ),
-    getVisitsBatch(token, [item.id], range30.from, range30.to).then(
-      (m) => m.get(item.id) ?? null,
-    ),
-  ])
-  const catalogMs = Date.now() - enrichT0
-  logger.log(
-    "enrich",
-    `✓ ptw=${ptw?.status ?? "N/A"}, visits7d=${visits7}, visits30d=${visits30}`,
-    catalogMs,
   )
 
   const catalog = buildCatalogSection(item, visits7, visits30, ptw)

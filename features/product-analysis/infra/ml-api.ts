@@ -175,21 +175,18 @@ export async function getCompetitorVisits(
   const map = new Map<string, number>()
   if (itemIds.length === 0) return map
 
-  const concurrency = 15
-  for (const batch of chunk(itemIds, concurrency)) {
-    const settled = await Promise.allSettled(
-      batch.map((id) =>
-        fetchMl<VisitsTimeWindowResponse>(
-          `/items/${id}/visits/time_window?last=${days}&unit=day`,
-          `GET visits ${id}`,
-          token,
-        ).then((r) => ({ id, visits: r.total_visits })),
-      ),
-    )
-    for (const r of settled) {
-      if (r.status === "fulfilled") {
-        map.set(r.value.id, r.value.visits)
-      }
+  const settled = await Promise.allSettled(
+    itemIds.map((id) =>
+      fetchMl<VisitsTimeWindowResponse>(
+        `/items/${id}/visits/time_window?last=${days}&unit=day`,
+        `GET visits ${id}`,
+        token,
+      ).then((r) => ({ id, visits: r.total_visits })),
+    ),
+  )
+  for (const r of settled) {
+    if (r.status === "fulfilled") {
+      map.set(r.value.id, r.value.visits)
     }
   }
   return map
