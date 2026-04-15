@@ -233,7 +233,7 @@
               <p class="subtitle">Calculadora ML</p>
             </div>
           </div>
-          <span class="chip">Auto</span>
+          <span id="bh-header-chip" class="chip">Clássico</span>
         </header>
 
         <!-- ═══ COMPACT: always visible ═══ -->
@@ -253,9 +253,8 @@
             <span class="row-label"><svg class="row-icon" viewBox="0 0 24 24" fill="none"><path d="M4 7h16M4 12h10M4 17h7" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>Tipo anuncio</span>
             <div style="display:flex;align-items:center;gap:6px;">
               <select id="bh-listing-type-select" style="width:auto;padding:4px 8px;font-size:12px;border:1px solid #d1d5db;border-radius:6px;background:#fff;color:#111827;cursor:pointer;">
-                <option value="auto">Auto</option>
+                <option value="gold_special">Clássico</option>
                 <option value="premium">Premium</option>
-                <option value="gold_special">Classico</option>
               </select>
               <small id="bh-listing-type-fee" style="color:#6b7280;font-size:10px;">Taxa: --</small>
             </div>
@@ -397,6 +396,7 @@
       detailsPanel: $("bh-details"),
       listingTypeSelect: $("bh-listing-type-select"),
       listingTypeFee: $("bh-listing-type-fee"),
+      headerChip: $("bh-header-chip"),
     };
   }
 
@@ -411,16 +411,13 @@
     const manualSalePrice = forceManualSalePrice
       ? toNumber(elements.salePriceManualInput.value, 0)
       : null;
-    const selectedType = elements.listingTypeSelect?.value || "auto";
-    const forceListingType = selectedType !== "auto";
+    const selectedType = elements.listingTypeSelect?.value || "gold_special";
     return {
       salePrice: manualSalePrice,
       forceManualSalePrice,
-      listingType: forceListingType ? selectedType : null,
-      forceListingType,
-      saleFeePercent: forceListingType
-        ? (LISTING_TYPE_FEES[selectedType] ?? state.manualSaleFeePercentFallback)
-        : state.manualSaleFeePercentFallback,
+      listingType: selectedType,
+      forceListingType: true,
+      saleFeePercent: LISTING_TYPE_FEES[selectedType] ?? state.manualSaleFeePercentFallback,
     };
   }
 
@@ -621,7 +618,11 @@
     elements.shippingManualToggle.checked = Boolean(values.forceManualShipping);
     elements.salePriceManualToggle.checked = Boolean(values.forceManualSalePrice);
     elements.salePriceManualInput.value = String(values.manualSalePrice ?? 0);
-    elements.listingTypeSelect.value = values.listingTypeOverride || "auto";
+    elements.listingTypeSelect.value = values.listingTypeOverride || "gold_special";
+    if (elements.headerChip) {
+      elements.headerChip.textContent =
+        elements.listingTypeSelect.value === "premium" ? "Premium" : "Clássico";
+    }
     applySalePriceUiState(elements);
     applyShippingUiState(elements);
   }
@@ -650,7 +651,7 @@
       ...(saved?.operation || {}),
       forceManualSalePrice: saved?.manualMarketplace?.forceManualSalePrice ?? false,
       manualSalePrice: saved?.manualMarketplace?.salePrice ?? 0,
-      listingTypeOverride: saved?.manualMarketplace?.listingType || "auto",
+      listingTypeOverride: saved?.manualMarketplace?.listingType || "gold_special",
     });
 
     await refreshAndCompute(elements, false, { refreshMarketplace: true });
@@ -693,6 +694,8 @@
     });
 
     elements.listingTypeSelect.addEventListener("change", () => {
+      const label = elements.listingTypeSelect.value === "premium" ? "Premium" : "Clássico";
+      elements.headerChip.textContent = label;
       void recalcAndPersist();
     });
 
