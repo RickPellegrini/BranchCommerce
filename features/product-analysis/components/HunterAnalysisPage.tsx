@@ -330,8 +330,6 @@ function AnalysisResults({
         ...c,
         scrapedStock: s.availableQuantity ?? c.scrapedStock,
         scrapedStockIsMinimum: s.stockIsMinimum ?? c.scrapedStockIsMinimum,
-        scrapedSoldQuantity: s.soldQuantity ?? c.scrapedSoldQuantity,
-        scrapedSoldLabel: s.soldLabel ?? c.scrapedSoldLabel,
         scrapedStartTime: s.startTime ?? c.scrapedStartTime,
       }
     })
