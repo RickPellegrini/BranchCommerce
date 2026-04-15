@@ -88,42 +88,6 @@ function ListingTypeBadge({ type }: { type: string | null }) {
   return <span className="text-xs text-muted-foreground">{type}</span>
 }
 
-// ─── Helpers ────────────────────────────────────────────────────────
-
-function formatCurrency(value: number): string {
-  if (value >= 1_000_000) return `R$ ${(value / 1_000_000).toFixed(1)}mi`
-  if (value >= 10_000) return `R$ ${(value / 1_000).toFixed(0)}mil`
-  if (value >= 1_000) return `R$ ${(value / 1_000).toFixed(1)}mil`
-  return `R$ ${Math.round(value)}`
-}
-
-function computeSalesPerDay(
-  soldQuantity: number | null,
-  startTime: string | null,
-): number | null {
-  if (soldQuantity == null || !startTime) return null
-  const created = new Date(startTime).getTime()
-  if (Number.isNaN(created)) return null
-  const days = (Date.now() - created) / 86_400_000
-  if (days < 1) return soldQuantity
-  return soldQuantity / days
-}
-
-function formatSoldQty(qty: number): string {
-  if (qty >= 1_000_000) return `${(qty / 1_000_000).toFixed(1)}mi`
-  if (qty >= 10_000) return `${(qty / 1_000).toFixed(0)}mil`
-  if (qty >= 1_000) return `${(qty / 1_000).toFixed(1)}mil`
-  return qty.toLocaleString("pt-BR")
-}
-
-function formatRate(perDay: number): string {
-  if (perDay >= 100) return `${Math.round(perDay)}/dia`
-  if (perDay >= 10) return `${perDay.toFixed(1)}/dia`
-  if (perDay >= 1) return `${perDay.toFixed(1)}/dia`
-  if (perDay >= 0.1) return `${perDay.toFixed(2)}/dia`
-  return "< 0.1/dia"
-}
-
 // ─── Main table ─────────────────────────────────────────────────────
 
 export function CompetitorTable({
@@ -154,17 +118,8 @@ export function CompetitorTable({
               <th className="px-4 py-3 text-right text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
                 Estoque
               </th>
-              <th className="px-4 py-3 text-right text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
-                Vendidos
-              </th>
-              <th className="px-4 py-3 text-right text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
-                Visitas 30d
-              </th>
               <th className="px-4 py-3 text-center text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
                 Tipo
-              </th>
-              <th className="px-4 py-3 text-right text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
-                Faturamento
               </th>
             </tr>
           </thead>
@@ -186,7 +141,6 @@ export function CompetitorTable({
                   {/* ── Vendedor ── */}
                   <td className="px-4 py-3">
                     <div className="space-y-1">
-                      {/* Name + link + badges */}
                       <div className="flex items-center gap-1.5 flex-wrap">
                         {isWinner && (
                           <span
@@ -227,7 +181,6 @@ export function CompetitorTable({
                           </span>
                         )}
                       </div>
-                      {/* Reputation bar + location */}
                       <div className="flex items-center gap-2">
                         <ReputationBar levelId={c.sellerRepLevel} />
                         {c.location && (
@@ -236,7 +189,6 @@ export function CompetitorTable({
                           </span>
                         )}
                       </div>
-                      {/* Logistic badges */}
                       <div className="flex items-center gap-1">
                         <LogisticBadge entry={c} />
                         {c.officialStore && (
@@ -283,96 +235,9 @@ export function CompetitorTable({
                     )}
                   </td>
 
-                  {/* ── Vendidos + taxa/dia ── */}
-                  <td className="px-4 py-3 text-right">
-                    {(() => {
-                      if (c.scrapedSoldQuantity == null) {
-                        if (c.scrapedSoldLabel) {
-                          return <p className="text-xs text-muted-foreground">{c.scrapedSoldLabel}</p>
-                        }
-                        return scraping ? (
-                          <div className="space-y-1 ml-auto">
-                            <div className="h-4 w-10 animate-pulse rounded bg-muted ml-auto" />
-                            <div className="h-3 w-8 animate-pulse rounded bg-muted ml-auto" />
-                          </div>
-                        ) : (
-                          <span className="text-xs text-muted-foreground">-</span>
-                        )
-                      }
-                      const perDay = computeSalesPerDay(c.scrapedSoldQuantity, c.scrapedStartTime)
-                      return (
-                        <div>
-                          <p className="font-semibold text-xs tabular-nums text-foreground">
-                            {formatSoldQty(c.scrapedSoldQuantity)}
-                          </p>
-                          {perDay != null && (
-                            <p className="text-[10px] text-muted-foreground">
-                              {formatRate(perDay)}
-                            </p>
-                          )}
-                        </div>
-                      )
-                    })()}
-                  </td>
-
-                  {/* ── Visitas 30d ── */}
-                  <td className="px-4 py-3 text-right">
-                    {c.visits30d != null ? (
-                      <div>
-                        <p className="font-semibold text-xs tabular-nums">
-                          {c.visits30d.toLocaleString("pt-BR")}
-                        </p>
-                        {c.visitsShare != null && (
-                          <p className={`text-[10px] font-medium ${
-                            c.visitsShare >= 20
-                              ? "text-emerald-600"
-                              : c.visitsShare >= 5
-                                ? "text-blue-600"
-                                : "text-muted-foreground"
-                          }`}>
-                            {c.visitsShare.toFixed(1)}% do total
-                          </p>
-                        )}
-                      </div>
-                    ) : (
-                      <span className="text-xs text-muted-foreground">-</span>
-                    )}
-                  </td>
-
                   {/* ── Tipo ── */}
                   <td className="px-4 py-3 text-center">
                     <ListingTypeBadge type={c.listingType} />
-                  </td>
-
-                  {/* ── Faturamento (preco × vendidos) ── */}
-                  <td className="px-4 py-3 text-right">
-                    {(() => {
-                      if (c.scrapedSoldQuantity == null || c.scrapedSoldQuantity === 0) {
-                        return scraping ? (
-                          <div className="space-y-1 ml-auto">
-                            <div className="h-4 w-14 animate-pulse rounded bg-muted ml-auto" />
-                            <div className="h-3 w-10 animate-pulse rounded bg-muted ml-auto" />
-                          </div>
-                        ) : (
-                          <span className="text-xs text-muted-foreground">-</span>
-                        )
-                      }
-                      const totalRevenue = c.price * c.scrapedSoldQuantity
-                      const perDay = computeSalesPerDay(c.scrapedSoldQuantity, c.scrapedStartTime)
-                      const dailyRevenue = perDay != null ? c.price * perDay : null
-                      return (
-                        <div>
-                          <p className="font-semibold text-xs tabular-nums text-emerald-600">
-                            {formatCurrency(totalRevenue)}
-                          </p>
-                          {dailyRevenue != null && (
-                            <p className="text-[10px] text-muted-foreground">
-                              {formatCurrency(dailyRevenue)}/dia
-                            </p>
-                          )}
-                        </div>
-                      )
-                    })()}
                   </td>
                 </tr>
               )

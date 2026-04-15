@@ -16,6 +16,7 @@ import {
   getVisitsBatch,
   MlUpstreamError,
 } from "@/features/product-analysis/infra/ml-api"
+import { scrapeCompetitorPages } from "@/features/product-analysis/infra/scrape-item-page"
 import { dateRange } from "@/features/product-analysis/utils/dates"
 import { buildCatalogSection } from "@/features/product-analysis/application/build-catalog-section"
 import { aggregateCompetitors } from "@/features/product-analysis/application/aggregate-competitors"
@@ -183,8 +184,6 @@ function catalogListingToCompetitor(c: CatalogCompetitor): CompetitorEntry {
     visitsShare: null,
     scrapedStock: null,
     scrapedStockIsMinimum: false,
-    scrapedSoldLabel: null,
-    scrapedSoldQuantity: null,
     scrapedStartTime: null,
   }
 }
@@ -244,26 +243,27 @@ export async function getProductAnalysis(
     `total=${allListings.length}, afterExcludingSelf=${competitors.length}`,
   )
 
-  // Enrich competitors: sellers + visits (in parallel)
-  // Stock is scraped client-side via Chrome extension (residential IP).
-  // Sold is estimated client-side from catalog total × visit share.
+  // Enrich competitors: sellers + visits + stock (in parallel)
   const uniqueSellerIds = [...new Set(competitors.map((c) => c.sellerId))]
   const competitorItemIds = competitors.map((c) => c.itemId)
   logger.log(
     "enrich_competitors",
-    `Fetching ${uniqueSellerIds.length} sellers + ${competitorItemIds.length} visits`,
+    `Fetching ${uniqueSellerIds.length} sellers + ${competitorItemIds.length} visits + stock pages`,
   )
   const enrichCompT0 = Date.now()
 
-  const [sellersResult, visitsResult] = await Promise.allSettled([
+  const [sellersResult, visitsResult, scrapeResult] = await Promise.allSettled([
     getSellersBatch(token, uniqueSellerIds),
     getCompetitorVisits(token, competitorItemIds),
+    scrapeCompetitorPages(competitorItemIds),
   ])
 
   const sellersMap =
     sellersResult.status === "fulfilled" ? sellersResult.value : new Map<number, import("@/features/product-analysis/domain/types").MlSeller>()
   const visitsMap =
     visitsResult.status === "fulfilled" ? visitsResult.value : new Map<string, number>()
+  const scrapeMap =
+    scrapeResult.status === "fulfilled" ? scrapeResult.value : new Map<string, import("@/features/product-analysis/infra/scrape-item-page").ScrapedItemResult>()
 
   const totalVisits = Array.from(visitsMap.values()).reduce((a, b) => a + b, 0)
 
@@ -286,11 +286,18 @@ export async function getProductAnalysis(
       comp.visits30d = v
       comp.visitsShare = totalVisits > 0 ? (v / totalVisits) * 100 : 0
     }
+    const scraped = scrapeMap.get(comp.itemId)
+    if (scraped) {
+      comp.scrapedStock = scraped.availableQuantity
+      comp.scrapedStockIsMinimum = scraped.stockIsMinimum
+      comp.scrapedStartTime = scraped.startTime
+    }
   }
 
+  const scrapeHits = Array.from(scrapeMap.values()).filter((r) => r.availableQuantity != null).length
   logger.log(
     "enrich_competitors",
-    `✓ ${sellersMap.size} sellers, ${visitsMap.size} visits (total=${totalVisits}) in ${Date.now() - enrichCompT0}ms`,
+    `✓ ${sellersMap.size} sellers, ${visitsMap.size} visits (total=${totalVisits}), stock=${scrapeHits}/${competitorItemIds.length} in ${Date.now() - enrichCompT0}ms`,
   )
 
   const summary = aggregateCompetitors(competitors, item.price)

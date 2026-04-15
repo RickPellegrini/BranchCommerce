@@ -261,8 +261,6 @@ export type CompetitorEntry = {
   visitsShare: number | null
   scrapedStock: number | null
   scrapedStockIsMinimum: boolean
-  scrapedSoldLabel: string | null
-  scrapedSoldQuantity: number | null
   scrapedStartTime: string | null
 }
 
