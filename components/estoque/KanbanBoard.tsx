@@ -145,7 +145,7 @@ export function KanbanBoard({
         categories={categories}
       />
 
-      {/* Board */}
+      {/* Boards */}
       <DndContext sensors={sensors} onDragStart={handleDragStart} onDragEnd={handleDragEnd}>
         <div className="-mx-1 overflow-x-auto rounded-xl">
         <div className="flex min-w-max gap-4 px-1 pb-4 pt-1">
