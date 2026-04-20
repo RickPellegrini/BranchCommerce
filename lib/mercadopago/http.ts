@@ -29,10 +29,7 @@ export async function mpFetch<T>(
   return data
 }
 
-export async function mpFetchRaw(
-  path: string,
-  accessToken: string,
-): Promise<string> {
+export async function mpFetchRaw(path: string, accessToken: string): Promise<string> {
   const url = path.startsWith("http") ? path : `${MP_API}${path}`
   console.log(`[mp] GET (raw) ${url}`)
 

@@ -43,10 +43,7 @@ export async function GET() {
     }
 
     if (byTopic.size > 0) {
-      console.log(
-        "[missed-feeds] By topic:",
-        Object.fromEntries(byTopic),
-      )
+      console.log("[missed-feeds] By topic:", Object.fromEntries(byTopic))
     }
 
     return jsonOk({

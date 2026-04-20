@@ -69,11 +69,9 @@ type MlProductItemsPayload = {
 
 async function fetchItemPayload(itemId: string, accessToken: string) {
   try {
-    return await requestMlApi<MlItemPayload>(
-      `/items/${encodeURIComponent(itemId)}`,
-      accessToken,
-      { method: "GET" },
-    )
+    return await requestMlApi<MlItemPayload>(`/items/${encodeURIComponent(itemId)}`, accessToken, {
+      method: "GET",
+    })
   } catch {
     return null
   }
@@ -93,8 +91,7 @@ export async function GET(request: NextRequest) {
     const isDev = process.env.NODE_ENV !== "production"
     const providedKeyFromHeader = String(request.headers.get("x-branch-hunter-key") ?? "").trim()
     const providedKeyFromQuery = String(searchParams.get("key") ?? "").trim()
-    const providedKey =
-      providedKeyFromHeader || (isDev ? providedKeyFromQuery : "")
+    const providedKey = providedKeyFromHeader || (isDev ? providedKeyFromQuery : "")
     if (!providedKey || providedKey !== syncKey) {
       return Response.json(
         {

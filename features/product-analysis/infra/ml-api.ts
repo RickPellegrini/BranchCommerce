@@ -33,7 +33,11 @@ export class MlUpstreamError extends Error {
   }
 
   private tryParseBody(): unknown {
-    try { return JSON.parse(this.bodyText) } catch { return this.bodyText }
+    try {
+      return JSON.parse(this.bodyText)
+    } catch {
+      return this.bodyText
+    }
   }
 }
 
@@ -49,11 +53,7 @@ function maskToken(token: string): string {
   return `${token.slice(0, 6)}…${token.slice(-4)}`
 }
 
-async function fetchMl<T = unknown>(
-  path: string,
-  label: string,
-  token: string | null,
-): Promise<T> {
+async function fetchMl<T = unknown>(path: string, label: string, token: string | null): Promise<T> {
   const url = `${ML_BASE()}${path}`
   const mode = token ? "auth" : "noauth"
   const prefix = token ? maskToken(token) : "none"
@@ -79,7 +79,11 @@ async function fetchMl<T = unknown>(
   return JSON.parse(bodyText) as T
 }
 
-export async function fetchMlPrivate<T = unknown>(path: string, token: string, label: string): Promise<T> {
+export async function fetchMlPrivate<T = unknown>(
+  path: string,
+  token: string,
+  label: string,
+): Promise<T> {
   return fetchMl<T>(path, label, token)
 }
 
@@ -96,7 +100,10 @@ export async function getProduct(productId: string, token: string): Promise<MlPr
   return fetchMl<MlProduct>(`/products/${productId}`, `GET /products/${productId}`, token)
 }
 
-export async function getProductItems(productId: string, token: string): Promise<CatalogProductItemsResponse> {
+export async function getProductItems(
+  productId: string,
+  token: string,
+): Promise<CatalogProductItemsResponse> {
   return fetchMl<CatalogProductItemsResponse>(
     `/products/${productId}/items`,
     `GET /products/${productId}/items`,
@@ -136,7 +143,10 @@ export async function getSellersBatch(
 // ─── PRIVATE endpoints (require seller token) ──────────────────────
 
 /** GET /items/{id}/price_to_win — seller-specific, requires auth. */
-export async function getPriceToWin(token: string, itemId: string): Promise<MlPriceToWinResult | null> {
+export async function getPriceToWin(
+  token: string,
+  itemId: string,
+): Promise<MlPriceToWinResult | null> {
   try {
     return await fetchMlPrivate<MlPriceToWinResult>(
       `/items/${itemId}/price_to_win?version=v2`,

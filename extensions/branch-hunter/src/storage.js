@@ -1,6 +1,6 @@
-(() => {
-  const SETTINGS_KEY = "branchHunter:settings";
-  const LISTING_STATE_PREFIX = "branchHunter:listingState:";
+;(() => {
+  const SETTINGS_KEY = "branchHunter:settings"
+  const LISTING_STATE_PREFIX = "branchHunter:listingState:"
 
   const defaultSettings = {
     autoInjectEnabled: true,
@@ -20,48 +20,47 @@
       shippingFallback: 12,
       forceManualShipping: false,
     },
-  };
+  }
 
   function getSettings() {
     return new Promise((resolve) => {
       chrome.storage.local.get([SETTINGS_KEY], (data) => {
-        const persisted = data[SETTINGS_KEY] || {};
+        const persisted = data[SETTINGS_KEY] || {}
         resolve({
           ...defaultSettings,
           ...persisted,
           sync: {
             ...defaultSettings.sync,
             ...(persisted.sync || {}),
-            apiKey:
-              String(persisted?.sync?.apiKey || "").trim() || defaultSettings.sync.apiKey,
+            apiKey: String(persisted?.sync?.apiKey || "").trim() || defaultSettings.sync.apiKey,
           },
           defaults: {
             ...defaultSettings.defaults,
             ...(persisted.defaults || {}),
           },
-        });
-      });
-    });
+        })
+      })
+    })
   }
 
   function saveSettings(settings) {
     return new Promise((resolve) => {
-      chrome.storage.local.set({ [SETTINGS_KEY]: settings }, () => resolve(true));
-    });
+      chrome.storage.local.set({ [SETTINGS_KEY]: settings }, () => resolve(true))
+    })
   }
 
   function getListingState(listingId) {
-    const key = `${LISTING_STATE_PREFIX}${listingId}`;
+    const key = `${LISTING_STATE_PREFIX}${listingId}`
     return new Promise((resolve) => {
-      chrome.storage.local.get([key], (data) => resolve(data[key] || null));
-    });
+      chrome.storage.local.get([key], (data) => resolve(data[key] || null))
+    })
   }
 
   function saveListingState(listingId, payload) {
-    const key = `${LISTING_STATE_PREFIX}${listingId}`;
+    const key = `${LISTING_STATE_PREFIX}${listingId}`
     return new Promise((resolve) => {
-      chrome.storage.local.set({ [key]: payload }, () => resolve(true));
-    });
+      chrome.storage.local.set({ [key]: payload }, () => resolve(true))
+    })
   }
 
   globalThis.BranchHunterStorage = {
@@ -72,5 +71,5 @@
     saveSettings,
     getListingState,
     saveListingState,
-  };
-})();
+  }
+})()

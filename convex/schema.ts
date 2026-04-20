@@ -1,5 +1,5 @@
-import { defineSchema, defineTable } from "convex/server";
-import { v } from "convex/values";
+import { defineSchema, defineTable } from "convex/server"
+import { v } from "convex/values"
 
 export default defineSchema({
   categories: defineTable({
@@ -82,12 +82,7 @@ export default defineSchema({
   stockMovements: defineTable({
     userId: v.string(),
     productId: v.id("stockProducts"),
-    type: v.union(
-      v.literal("in"),
-      v.literal("out"),
-      v.literal("adjustment"),
-      v.literal("sale"),
-    ),
+    type: v.union(v.literal("in"), v.literal("out"), v.literal("adjustment"), v.literal("sale")),
     quantity: v.number(),
     date: v.string(),
     unitPrice: v.optional(v.number()),
@@ -111,4 +106,4 @@ export default defineSchema({
   })
     .index("by_app_user", ["appUserId"])
     .index("by_ml_user", ["mlUserId"]),
-});
+})

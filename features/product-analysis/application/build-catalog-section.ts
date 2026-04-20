@@ -19,7 +19,9 @@ function determineCatalogStatus(item: MlItemFull): CatalogStatus {
   return "not_catalog"
 }
 
-function buildAttributes(attrs: Array<import("@/features/product-analysis/domain/types").MlAttribute>): CatalogSection["attributes"] {
+function buildAttributes(
+  attrs: Array<import("@/features/product-analysis/domain/types").MlAttribute>,
+): CatalogSection["attributes"] {
   return attrs.map((a) => ({
     key: a.id,
     name: a.name,

@@ -61,10 +61,7 @@ async function tryBalance(
 }
 
 async function resolveMpUserId(accessToken: string, mlUserId: string): Promise<string> {
-  const urls = [
-    "https://api.mercadopago.com/users/me",
-    "https://api.mercadopago.com/v1/users/me",
-  ]
+  const urls = ["https://api.mercadopago.com/users/me", "https://api.mercadopago.com/v1/users/me"]
   for (const url of urls) {
     try {
       const res = await fetch(url, {
@@ -87,10 +84,7 @@ async function resolveMpUserId(accessToken: string, mlUserId: string): Promise<s
   return mlUserId
 }
 
-export async function getBalance(
-  accessToken: string,
-  mlUserId: string,
-): Promise<MpBalance> {
+export async function getBalance(accessToken: string, mlUserId: string): Promise<MpBalance> {
   const mpBase = "https://api.mercadopago.com"
   const mlBase = getMercadoLivreConfig().apiUrl.replace(/\/$/, "")
   const userId = await resolveMpUserId(accessToken, mlUserId)
@@ -168,7 +162,10 @@ function mpPartyIds(p: MpPaymentSearchRow): { payerId: string | null; collectorI
  * Debito = dinheiro sai (voce e o payer e nao e o collector), ex.: Pix enviado, ou cobranca nao aprovada.
  * Antes: qualquer `approved` virava credito — Pix enviado tambem e approved, gerando o bug.
  */
-function classifyMpTransactionType(p: MpPaymentSearchRow, accountUserId: string): "credit" | "debit" {
+function classifyMpTransactionType(
+  p: MpPaymentSearchRow,
+  accountUserId: string,
+): "credit" | "debit" {
   const me = String(accountUserId).trim()
   const { payerId, collectorId } = mpPartyIds(p)
   const imCollector = collectorId !== null && collectorId === me
@@ -220,10 +217,7 @@ function classifyMpTransactionType(p: MpPaymentSearchRow, accountUserId: string)
  * Saldo do MP reflete valor liquido nas vendas (apos taxas). O extrato usava
  * `transaction_amount` (bruto), inflando o "saldo estimado" vs app oficial.
  */
-function amountForBalanceLine(
-  p: MpPaymentSearchRow,
-  type: "credit" | "debit",
-): number {
+function amountForBalanceLine(p: MpPaymentSearchRow, type: "credit" | "debit"): number {
   if (type === "debit") {
     return p.transaction_amount
   }
@@ -257,13 +251,9 @@ export async function getTransactions(
     type: classifyMpTransactionType(p, accountUserId),
   }))
 
-  const creditIds = [
-    ...new Set(classified.filter((r) => r.type === "credit").map((r) => r.p.id)),
-  ]
+  const creditIds = [...new Set(classified.filter((r) => r.type === "credit").map((r) => r.p.id))]
   const detailsById =
-    creditIds.length > 0
-      ? await fetchMpPaymentDetailsForIds(creditIds, accessToken)
-      : new Map()
+    creditIds.length > 0 ? await fetchMpPaymentDetailsForIds(creditIds, accessToken) : new Map()
 
   return classified.map(({ p, type }) => {
     let amount: number

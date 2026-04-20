@@ -1,23 +1,23 @@
-import { auth, currentUser } from "@clerk/nextjs/server";
-import { redirect } from "next/navigation";
+import { auth, currentUser } from "@clerk/nextjs/server"
+import { redirect } from "next/navigation"
 
-import { isAdminEmail } from "@/lib/auth/admin";
+import { isAdminEmail } from "@/lib/auth/admin"
 
 export default async function Home() {
-  const { userId } = await auth();
+  const { userId } = await auth()
 
   if (!userId) {
-    redirect("/sign-in");
+    redirect("/sign-in")
   }
 
-  const user = await currentUser();
+  const user = await currentUser()
   const primaryEmail = user?.emailAddresses.find(
     (emailAddress) => emailAddress.id === user.primaryEmailAddressId,
-  )?.emailAddress;
+  )?.emailAddress
 
   if (!isAdminEmail(primaryEmail)) {
-    redirect("/unauthorized");
+    redirect("/unauthorized")
   }
 
-  redirect("/dashboard");
+  redirect("/dashboard")
 }

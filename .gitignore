@@ -12,6 +12,7 @@
 
 # testing
 /coverage
+/coverage-jest
 
 # next.js
 /.next/
@@ -44,3 +45,7 @@ next-env.d.ts
 
 # clerk configuration (can include secrets)
 /.clerk/
+.env*.local
+
+# local Claude / Cursor settings
+.claude/settings.local.json

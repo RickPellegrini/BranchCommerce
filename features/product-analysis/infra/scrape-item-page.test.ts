@@ -1,9 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest"
-import {
-  extractStock,
-  extractStartTime,
-  scrapeCompetitorPages,
-} from "./scrape-item-page"
+import { extractStock, extractStartTime, scrapeCompetitorPages } from "./scrape-item-page"
 
 // ─── extractStock ────────────────────────────────────────────────────
 

@@ -39,11 +39,16 @@ export function useProductAnalysis(itemId: string | null) {
   }, [])
 
   useEffect(() => {
-    if (itemId) fetch_(itemId)
-    else {
-      setPhase("idle")
-      setData(null)
-      setError(null)
+    if (itemId) {
+      queueMicrotask(() => {
+        void fetch_(itemId)
+      })
+    } else {
+      queueMicrotask(() => {
+        setPhase("idle")
+        setData(null)
+        setError(null)
+      })
     }
   }, [itemId, fetch_])
 

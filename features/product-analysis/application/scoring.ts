@@ -1,7 +1,4 @@
-import type {
-  MlItemFull,
-  CompletenessDetail,
-} from "@/features/product-analysis/domain/types"
+import type { MlItemFull, CompletenessDetail } from "@/features/product-analysis/domain/types"
 import {
   extractGtin,
   extractBrand,
@@ -16,7 +13,11 @@ const FIELDS: Array<{ field: string; weight: number; test: (item: MlItemFull) =>
   { field: "pictures_3+", weight: 10, test: (i) => (i.pictures?.length ?? 0) >= 3 },
   { field: "attributes_5+", weight: 10, test: (i) => (i.attributes?.length ?? 0) >= 5 },
   { field: "free_shipping", weight: 10, test: (i) => !!i.shipping?.free_shipping },
-  { field: "original_price", weight: 5, test: (i) => i.original_price != null && i.original_price > i.price },
+  {
+    field: "original_price",
+    weight: 5,
+    test: (i) => i.original_price != null && i.original_price > i.price,
+  },
   { field: "condition_new", weight: 5, test: (i) => i.condition === "new" },
   { field: "stock_positive", weight: 15, test: (i) => i.available_quantity > 0 },
 ]

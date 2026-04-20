@@ -12,10 +12,7 @@ export default defineConfig({
         extends: true,
         test: {
           name: "unit",
-          include: [
-            "lib/**/*.test.ts",
-            "features/**/*.test.ts",
-          ],
+          include: ["lib/**/*.test.ts", "features/**/*.test.ts"],
         },
       },
       {

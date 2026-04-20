@@ -97,10 +97,7 @@ export async function GET(request: Request) {
       ),
     )
 
-    const itemDetailsMap = new Map<
-      string,
-      { thumbnail?: string; catalogListing?: boolean }
-    >()
+    const itemDetailsMap = new Map<string, { thumbnail?: string; catalogListing?: boolean }>()
     if (uniqueItemIds.length > 0) {
       const itemDetails = await fetchMlApi<MlItemsMultiResponse>(
         `/items?ids=${uniqueItemIds.join(",")}`,
@@ -116,7 +113,11 @@ export async function GET(request: Request) {
     }
 
     const uniqueShipmentIds = Array.from(
-      new Set(payload.results.map((order) => order.shipping?.id).filter((id): id is number => Boolean(id))),
+      new Set(
+        payload.results
+          .map((order) => order.shipping?.id)
+          .filter((id): id is number => Boolean(id)),
+      ),
     )
 
     const shipmentDetailsMap = new Map<number, MlShipmentResponse>()
@@ -127,12 +128,16 @@ export async function GET(request: Request) {
           try {
             const [shipment, shipmentCosts] = await Promise.all([
               fetchMlApi<MlShipmentResponse>(`/shipments/${shipmentId}`, connection.accessToken),
-              fetchMlApi<MlShipmentCostResponse>(`/shipments/${shipmentId}/costs`, connection.accessToken),
+              fetchMlApi<MlShipmentCostResponse>(
+                `/shipments/${shipmentId}/costs`,
+                connection.accessToken,
+              ),
             ])
             return {
               shipment,
               senderCost:
-                shipmentCosts.senders?.reduce((total, sender) => total + (sender.cost ?? 0), 0) ?? 0,
+                shipmentCosts.senders?.reduce((total, sender) => total + (sender.cost ?? 0), 0) ??
+                0,
             }
           } catch {
             return null
@@ -148,7 +153,8 @@ export async function GET(request: Request) {
 
     const orders = payload.results.map((order) => {
       const buyerName =
-        [order.buyer?.first_name, order.buyer?.last_name].filter(Boolean).join(" ") || "Sem comprador"
+        [order.buyer?.first_name, order.buyer?.last_name].filter(Boolean).join(" ") ||
+        "Sem comprador"
       const shipmentId = order.shipping?.id
       const shipmentDetails = shipmentId ? shipmentDetailsMap.get(shipmentId) : undefined
       const firstItemId = order.order_items?.[0]?.item?.id ?? ""
@@ -166,10 +172,11 @@ export async function GET(request: Request) {
         order.payments?.reduce((total, payment) => total + (payment.taxes_amount ?? 0), 0) ?? 0
       const productAmount =
         order.order_items?.reduce(
-          (total, orderItem) =>
-            total + (orderItem.unit_price ?? 0) * (orderItem.quantity ?? 0),
+          (total, orderItem) => total + (orderItem.unit_price ?? 0) * (orderItem.quantity ?? 0),
           0,
-        ) ?? order.total_amount ?? 0
+        ) ??
+        order.total_amount ??
+        0
 
       return {
         id: String(order.id),
@@ -184,8 +191,7 @@ export async function GET(request: Request) {
         shippingMode: order.shipping?.shipping_mode ?? "unknown",
         shippingLogisticType: shipmentDetails?.logistic_type ?? "unknown",
         shippingId: shipmentId ? String(shipmentId) : "",
-        dateDelivered:
-          shipmentDetails?.date_delivered ?? order.shipping?.date_delivered ?? "",
+        dateDelivered: shipmentDetails?.date_delivered ?? order.shipping?.date_delivered ?? "",
         dateFirstPrinted: shipmentDetails?.date_first_printed ?? "",
         paymentMethod: order.payments?.[0]?.payment_method_id ?? "N/A",
         paymentStatus: order.payments?.[0]?.status ?? "unknown",

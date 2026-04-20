@@ -46,7 +46,9 @@ function PowerBadge({ status }: { status: string | null }) {
   const c = POWER_CONFIG[status]
   if (!c) return null
   return (
-    <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-bold ${c.bg} ${c.text}`}>
+    <span
+      className={`inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-bold ${c.bg} ${c.text}`}
+    >
       {c.label}
     </span>
   )
@@ -84,7 +86,8 @@ function LogisticBadge({ entry }: { entry: CompetitorEntry }) {
 function ListingTypeBadge({ type }: { type: string | null }) {
   if (!type) return <span className="text-xs text-muted-foreground">-</span>
   if (type === "gold_pro") return <span className="text-xs font-medium">Premium</span>
-  if (type === "gold_special") return <span className="text-xs text-muted-foreground">Classico</span>
+  if (type === "gold_special")
+    return <span className="text-xs text-muted-foreground">Classico</span>
   return <span className="text-xs text-muted-foreground">{type}</span>
 }
 
@@ -209,7 +212,9 @@ export function CompetitorTable({
                       </p>
                     )}
                     {Math.abs(priceDiff) >= 0.01 && (
-                      <p className={`text-[10px] font-medium ${priceDiff < 0 ? "text-emerald-600" : priceDiff > 0 ? "text-rose-600" : "text-muted-foreground"}`}>
+                      <p
+                        className={`text-[10px] font-medium ${priceDiff < 0 ? "text-emerald-600" : priceDiff > 0 ? "text-rose-600" : "text-muted-foreground"}`}
+                      >
                         {priceDiff > 0 ? "+" : ""}
                         {pricePct.toFixed(1)}%
                       </p>
@@ -219,14 +224,17 @@ export function CompetitorTable({
                   {/* ── Estoque ── */}
                   <td className="px-4 py-3 text-right">
                     {c.scrapedStock != null ? (
-                      <p className={`font-semibold text-xs tabular-nums ${
-                        !c.scrapedStockIsMinimum && c.scrapedStock <= 3
-                          ? "text-rose-600"
-                          : !c.scrapedStockIsMinimum && c.scrapedStock <= 10
-                            ? "text-amber-600"
-                            : "text-foreground"
-                      }`}>
-                        {c.scrapedStockIsMinimum ? "≥" : ""}{c.scrapedStock}
+                      <p
+                        className={`font-semibold text-xs tabular-nums ${
+                          !c.scrapedStockIsMinimum && c.scrapedStock <= 3
+                            ? "text-rose-600"
+                            : !c.scrapedStockIsMinimum && c.scrapedStock <= 10
+                              ? "text-amber-600"
+                              : "text-foreground"
+                        }`}
+                      >
+                        {c.scrapedStockIsMinimum ? "≥" : ""}
+                        {c.scrapedStock}
                       </p>
                     ) : scraping ? (
                       <div className="h-4 w-8 animate-pulse rounded bg-muted ml-auto" />

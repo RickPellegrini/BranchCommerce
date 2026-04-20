@@ -83,24 +83,23 @@ export function useExtensionScraping() {
     }
   }, [])
 
-  const scrape = useCallback(
-    async (itemIds: string[], catalogProductId: string | null) => {
-      if (itemIds.length === 0) return
-      console.log(`[extension-scraping] scraping ${itemIds.length} items, catalog=${catalogProductId}`)
-      setScraping(true)
-      setResult(null)
-      try {
-        const data = await requestViaBridge(itemIds, catalogProductId, 15_000)
-        console.log("[extension-scraping] result:", data)
-        if (mountedRef.current) setResult(data)
-      } catch (err) {
-        console.warn("[extension-scraping]", err)
-      } finally {
-        if (mountedRef.current) setScraping(false)
-      }
-    },
-    [],
-  )
+  const scrape = useCallback(async (itemIds: string[], catalogProductId: string | null) => {
+    if (itemIds.length === 0) return
+    console.log(
+      `[extension-scraping] scraping ${itemIds.length} items, catalog=${catalogProductId}`,
+    )
+    setScraping(true)
+    setResult(null)
+    try {
+      const data = await requestViaBridge(itemIds, catalogProductId, 15_000)
+      console.log("[extension-scraping] result:", data)
+      if (mountedRef.current) setResult(data)
+    } catch (err) {
+      console.warn("[extension-scraping]", err)
+    } finally {
+      if (mountedRef.current) setScraping(false)
+    }
+  }, [])
 
   return { extensionAvailable, scraping, result, scrape }
 }

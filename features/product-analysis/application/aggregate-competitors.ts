@@ -25,7 +25,8 @@ export function aggregateCompetitors(
   const max = prices[prices.length - 1]
   const avg = Math.round(prices.reduce((s, p) => s + p, 0) / prices.length)
   const mid = Math.floor(prices.length / 2)
-  const median = prices.length % 2 === 0 ? Math.round((prices[mid - 1] + prices[mid]) / 2) : prices[mid]
+  const median =
+    prices.length % 2 === 0 ? Math.round((prices[mid - 1] + prices[mid]) / 2) : prices[mid]
 
   const below = prices.filter((p) => p < myPrice).length
   const position = below + 1

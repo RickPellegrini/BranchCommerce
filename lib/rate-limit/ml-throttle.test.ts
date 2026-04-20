@@ -9,9 +9,7 @@ describe("throttledMlFetch", () => {
   })
 
   it("propagates errors", async () => {
-    await expect(
-      throttledMlFetch(() => Promise.reject(new Error("fail"))),
-    ).rejects.toThrow("fail")
+    await expect(throttledMlFetch(() => Promise.reject(new Error("fail")))).rejects.toThrow("fail")
   })
 
   it("respects concurrency limit of 15", async () => {

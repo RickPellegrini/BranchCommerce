@@ -414,8 +414,7 @@ describe("stock", () => {
         minStock: 0,
         unitCost: 10,
       })
-      const data = await t.query(api.stock.getDashboardData, { userId: "user1" })
-      const product = data.products[0]
+      await t.query(api.stock.getDashboardData, { userId: "user1" })
       await t.mutation(api.stock.syncFromMercadoLivre, {
         userId: "user1",
         listings: [
@@ -447,7 +446,7 @@ describe("stock", () => {
         unitCost: 50,
       })
       // addProduct sets unitCostSource to "manual"
-      const synced = await t.mutation(api.stock.syncFromMercadoLivre, {
+      await t.mutation(api.stock.syncFromMercadoLivre, {
         userId: "user1",
         listings: [
           { id: "MLB-MANUAL", title: "Manual Cost", price: 100, availableQuantity: 1, sku: "MAN1" },
@@ -502,15 +501,11 @@ describe("stock", () => {
       const t = convexTest(schema, modules)
       await t.mutation(api.stock.syncFromMercadoLivre, {
         userId: "user1",
-        listings: [
-          { id: "MLB001", title: "V1", price: 99, availableQuantity: 10 },
-        ],
+        listings: [{ id: "MLB001", title: "V1", price: 99, availableQuantity: 10 }],
       })
       const result = await t.mutation(api.stock.syncFromMercadoLivre, {
         userId: "user1",
-        listings: [
-          { id: "MLB001", title: "V2", price: 129, availableQuantity: 8 },
-        ],
+        listings: [{ id: "MLB001", title: "V2", price: 129, availableQuantity: 8 }],
       })
       expect(result.updated).toBe(1)
       expect(result.created).toBe(0)
@@ -523,15 +518,11 @@ describe("stock", () => {
       const t = convexTest(schema, modules)
       await t.mutation(api.stock.syncFromMercadoLivre, {
         userId: "user1",
-        listings: [
-          { id: "MLB001", title: "Prod", price: 50, availableQuantity: 10 },
-        ],
+        listings: [{ id: "MLB001", title: "Prod", price: 50, availableQuantity: 10 }],
       })
       await t.mutation(api.stock.syncFromMercadoLivre, {
         userId: "user1",
-        listings: [
-          { id: "MLB001", title: "Prod", price: 50, availableQuantity: 7 },
-        ],
+        listings: [{ id: "MLB001", title: "Prod", price: 50, availableQuantity: 7 }],
       })
       const data = await t.query(api.stock.getDashboardData, { userId: "user1" })
       const adjustments = data.movements.filter((m) => m.type === "adjustment")

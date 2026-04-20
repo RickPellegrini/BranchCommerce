@@ -79,7 +79,7 @@ export async function POST(request: NextRequest) {
     return new Response("Forbidden", { status: 403 })
   }
 
-  const payload = await request.json().catch(() => null) as MlNotification | null
+  const payload = (await request.json().catch(() => null)) as MlNotification | null
 
   if (!payload || !payload.topic || !payload.resource) {
     console.warn("[ml-webhook] Invalid payload:", payload)
@@ -88,7 +88,7 @@ export async function POST(request: NextRequest) {
 
   console.log(
     `[ml-webhook] Received: topic=${payload.topic} resource=${payload.resource} ` +
-    `user_id=${payload.user_id} attempt=${payload.attempts ?? 1} ip=${ip ?? "unknown"}`,
+      `user_id=${payload.user_id} attempt=${payload.attempts ?? 1} ip=${ip ?? "unknown"}`,
   )
 
   try {

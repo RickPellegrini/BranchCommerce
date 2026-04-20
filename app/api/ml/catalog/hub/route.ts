@@ -44,7 +44,9 @@ function chunkArray<T>(items: T[], size: number) {
 
 function isNoWinnersError(error: unknown) {
   if (!(error instanceof Error)) return false
-  return error.message.includes("No winners found") || error.message.includes('"error": "not_found"')
+  return (
+    error.message.includes("No winners found") || error.message.includes('"error": "not_found"')
+  )
 }
 
 function getParam(url: URL, key: string) {
@@ -131,7 +133,9 @@ async function handleGet(url: URL) {
     )
 
     const rows = competitionData.map((row) => {
-      const itemStatus = String(row.status ?? "").trim().toLowerCase()
+      const itemStatus = String(row.status ?? "")
+        .trim()
+        .toLowerCase()
       const comp = row.competition
       let competitionStatus = String(comp?.status ?? "listed").trim()
       if (itemStatus === "paused") {
@@ -177,7 +181,11 @@ async function handleGet(url: URL) {
       return b.price - a.price
     })
 
-    const publicRows = rows.map(({ _sortTier: _t, ...rest }) => rest)
+    const publicRows = rows.map((row) => {
+      const { _sortTier, ...rest } = row
+      void _sortTier
+      return rest
+    })
 
     const summary = {
       total: publicRows.length,
@@ -240,12 +248,18 @@ async function handleGet(url: URL) {
   }
 
   if (action === "domains_required") {
-    const result = await fetchMlApi<unknown>(`/catalog/dumps/domains/${siteId}/catalog_required`, accessToken)
+    const result = await fetchMlApi<unknown>(
+      `/catalog/dumps/domains/${siteId}/catalog_required`,
+      accessToken,
+    )
     return jsonOk(result)
   }
 
   if (action === "domains_only") {
-    const result = await fetchMlApi<unknown>(`/catalog/dumps/domains/${siteId}/catalog_only`, accessToken)
+    const result = await fetchMlApi<unknown>(
+      `/catalog/dumps/domains/${siteId}/catalog_only`,
+      accessToken,
+    )
     return jsonOk(result)
   }
 
@@ -260,7 +274,10 @@ async function handleGet(url: URL) {
   if (action === "forewarning_date") {
     const itemId = getParam(url, "itemId")
     if (!itemId) return jsonError("itemId obrigatorio.", 400)
-    const result = await fetchMlApi<unknown>(`/items/${itemId}/catalog_forewarning/date`, accessToken)
+    const result = await fetchMlApi<unknown>(
+      `/items/${itemId}/catalog_forewarning/date`,
+      accessToken,
+    )
     return jsonOk(result)
   }
 
@@ -291,8 +308,7 @@ async function handleGet(url: URL) {
     const domainId = getParam(url, "domainId")
     const part = getParam(url, "part")
     if (!domainId) return jsonError("domainId obrigatorio.", 400)
-    const suffix =
-      part === "input" ? "/input" : part === "output" ? "/output" : ""
+    const suffix = part === "input" ? "/input" : part === "output" ? "/output" : ""
     const result = await fetchMlApi<unknown>(
       `/domains/${domainId}/technical_specs${suffix}?channel_id=catalog_suggestions`,
       accessToken,
@@ -360,10 +376,14 @@ async function handlePost(request: Request, url: URL) {
   }
 
   if (action === "brand_validate") {
-    const result = await requestMlApi<unknown>("/catalog_suggestions/validate", connection.accessToken, {
-      method: "POST",
-      body,
-    })
+    const result = await requestMlApi<unknown>(
+      "/catalog_suggestions/validate",
+      connection.accessToken,
+      {
+        method: "POST",
+        body,
+      },
+    )
     return jsonOk(result)
   }
 

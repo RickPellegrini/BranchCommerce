@@ -37,10 +37,30 @@ function completenessFieldLabel(field: string): string {
 }
 
 const statusConfig: Record<string, { label: string; bg: string; text: string; border: string }> = {
-  linked: { label: "Vinculado ao Catalogo", bg: "bg-emerald-50 dark:bg-emerald-950/30", text: "text-emerald-700 dark:text-emerald-300", border: "border-emerald-200 dark:border-emerald-800" },
-  eligible: { label: "Elegivel", bg: "bg-amber-50 dark:bg-amber-950/30", text: "text-amber-700 dark:text-amber-300", border: "border-amber-200 dark:border-amber-800" },
-  not_catalog: { label: "Fora do Catalogo", bg: "bg-rose-50 dark:bg-rose-950/30", text: "text-rose-700 dark:text-rose-300", border: "border-rose-200 dark:border-rose-800" },
-  undetermined: { label: "Indeterminado", bg: "bg-muted/50", text: "text-muted-foreground", border: "border-border" },
+  linked: {
+    label: "Vinculado ao Catalogo",
+    bg: "bg-emerald-50 dark:bg-emerald-950/30",
+    text: "text-emerald-700 dark:text-emerald-300",
+    border: "border-emerald-200 dark:border-emerald-800",
+  },
+  eligible: {
+    label: "Elegivel",
+    bg: "bg-amber-50 dark:bg-amber-950/30",
+    text: "text-amber-700 dark:text-amber-300",
+    border: "border-amber-200 dark:border-amber-800",
+  },
+  not_catalog: {
+    label: "Fora do Catalogo",
+    bg: "bg-rose-50 dark:bg-rose-950/30",
+    text: "text-rose-700 dark:text-rose-300",
+    border: "border-rose-200 dark:border-rose-800",
+  },
+  undetermined: {
+    label: "Indeterminado",
+    bg: "bg-muted/50",
+    text: "text-muted-foreground",
+    border: "border-border",
+  },
 }
 
 function StatusIcon({ status }: { status: string }) {
@@ -68,7 +88,9 @@ function MetricCard({
         {icon}
       </div>
       <div>
-        <p className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground">{label}</p>
+        <p className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
+          {label}
+        </p>
         <p className="text-sm font-bold">{value}</p>
         {sub && <p className="text-[10px] text-muted-foreground">{sub}</p>}
       </div>
@@ -96,12 +118,16 @@ function PriceToWinCard({ ptw }: { ptw: NonNullable<CatalogSection["priceToWin"]
         <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-blue-50 dark:bg-blue-950/30">
           <Trophy className="h-4 w-4 text-blue-600 dark:text-blue-400" />
         </div>
-        <h4 className="text-xs font-bold uppercase tracking-wider text-muted-foreground">Price to Win</h4>
+        <h4 className="text-xs font-bold uppercase tracking-wider text-muted-foreground">
+          Price to Win
+        </h4>
       </div>
       <div className="space-y-2.5">
         <div className="flex items-center justify-between">
           <span className="text-xs text-muted-foreground">Status</span>
-          <span className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-[11px] font-semibold ${statusColors[ptw.status] ?? "bg-muted text-muted-foreground"}`}>
+          <span
+            className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-[11px] font-semibold ${statusColors[ptw.status] ?? "bg-muted text-muted-foreground"}`}
+          >
             {statusLabels[ptw.status] ?? ptw.status}
           </span>
         </div>
@@ -114,11 +140,20 @@ function PriceToWinCard({ ptw }: { ptw: NonNullable<CatalogSection["priceToWin"]
         {ptw.visit_share != null && (
           <div className="flex items-center justify-between">
             <span className="text-xs text-muted-foreground">Share visitas</span>
-            <span className={`text-xs font-medium ${
-              ptw.visit_share === "maximum" ? "text-emerald-600" :
-              ptw.visit_share === "medium" ? "text-amber-600" : "text-rose-600"
-            }`}>
-              {ptw.visit_share === "maximum" ? "Maximo" : ptw.visit_share === "medium" ? "Medio" : "Minimo"}
+            <span
+              className={`text-xs font-medium ${
+                ptw.visit_share === "maximum"
+                  ? "text-emerald-600"
+                  : ptw.visit_share === "medium"
+                    ? "text-amber-600"
+                    : "text-rose-600"
+              }`}
+            >
+              {ptw.visit_share === "maximum"
+                ? "Maximo"
+                : ptw.visit_share === "medium"
+                  ? "Medio"
+                  : "Minimo"}
             </span>
           </div>
         )}
@@ -150,7 +185,9 @@ export function CatalogOverview({ data }: { data: CatalogSection }) {
           />
           <div className="flex-1 min-w-0">
             <div className="flex items-center gap-2 mb-1.5 flex-wrap">
-              <span className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-0.5 text-[11px] font-semibold ${sc.bg} ${sc.text} ${sc.border}`}>
+              <span
+                className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-0.5 text-[11px] font-semibold ${sc.bg} ${sc.text} ${sc.border}`}
+              >
                 <StatusIcon status={data.status} />
                 {sc.label}
               </span>
@@ -216,7 +253,13 @@ export function CatalogOverview({ data }: { data: CatalogSection }) {
           icon={<TrendingUp className="h-4 w-4 text-amber-600" />}
           iconBg="bg-amber-50 dark:bg-amber-950/30"
           label="Tipo"
-          value={item.listingType === "gold_pro" ? "Premium" : item.listingType === "gold_special" ? "Classico" : item.listingType}
+          value={
+            item.listingType === "gold_pro"
+              ? "Premium"
+              : item.listingType === "gold_special"
+                ? "Classico"
+                : item.listingType
+          }
         />
         <MetricCard
           icon={<Award className="h-4 w-4 text-rose-600" />}
@@ -240,11 +283,14 @@ export function CatalogOverview({ data }: { data: CatalogSection }) {
                 <h4 className="text-xs font-bold uppercase tracking-wider text-muted-foreground">
                   Qualidade do anuncio
                 </h4>
-                <span className="shrink-0 text-lg font-bold tabular-nums">{data.completenessScore}%</span>
+                <span className="shrink-0 text-lg font-bold tabular-nums">
+                  {data.completenessScore}%
+                </span>
               </div>
               <p className="mt-1 text-[11px] leading-snug text-muted-foreground">
-                Checklist interno: o quanto seu anuncio preenche boas praticas (fotos, catalogo, frete,
-                etc.). Nao e pontuacao oficial do Mercado Livre — serve para voce ver o que falta melhorar.
+                Checklist interno: o quanto seu anuncio preenche boas praticas (fotos, catalogo,
+                frete, etc.). Nao e pontuacao oficial do Mercado Livre — serve para voce ver o que
+                falta melhorar.
               </p>
             </div>
           </div>
@@ -268,7 +314,9 @@ export function CatalogOverview({ data }: { data: CatalogSection }) {
                 ) : (
                   <XCircle className="h-3.5 w-3.5 shrink-0 text-rose-400" />
                 )}
-                <span className={d.present ? "font-medium text-foreground" : "text-muted-foreground"}>
+                <span
+                  className={d.present ? "font-medium text-foreground" : "text-muted-foreground"}
+                >
                   {completenessFieldLabel(d.field)}
                 </span>
               </div>
@@ -284,7 +332,9 @@ export function CatalogOverview({ data }: { data: CatalogSection }) {
             <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-purple-50 dark:bg-purple-950/30">
               <Tag className="h-4 w-4 text-purple-600 dark:text-purple-400" />
             </div>
-            <h4 className="text-xs font-bold uppercase tracking-wider text-muted-foreground">Identificadores</h4>
+            <h4 className="text-xs font-bold uppercase tracking-wider text-muted-foreground">
+              Identificadores
+            </h4>
           </div>
           <div className="flex flex-wrap gap-2">
             {data.identifiers.brand && (

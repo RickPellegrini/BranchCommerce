@@ -4,11 +4,7 @@ import { getBalance } from "@/lib/mercadopago/simple-balance"
 
 function isBalanceForbidden(detail: string): boolean {
   const d = detail.toLowerCase()
-  return (
-    d.includes("403") ||
-    d.includes("forbidden") ||
-    d.includes("forbiddenapierror")
-  )
+  return d.includes("403") || d.includes("forbidden") || d.includes("forbiddenapierror")
 }
 
 /** Resposta quando o MP nao libera GET .../mercadopago_account/balance (comum com OAuth ML). */
@@ -25,14 +21,10 @@ export async function GET() {
     const { connection } = await requireMlConnection()
 
     try {
-      const balance = await getBalance(
-        connection.accessToken,
-        connection.mlUserId,
-      )
+      const balance = await getBalance(connection.accessToken, connection.mlUserId)
       return jsonOk({ balanceUnavailable: false as const, ...balance })
     } catch (balanceErr) {
-      const detail =
-        balanceErr instanceof Error ? balanceErr.message : String(balanceErr)
+      const detail = balanceErr instanceof Error ? balanceErr.message : String(balanceErr)
       if (isBalanceForbidden(detail)) {
         console.warn(
           "[mp/balance] Endpoint de saldo retornou 403 (esperado para varios tokens de vendedor). UI usara estado neutro.",

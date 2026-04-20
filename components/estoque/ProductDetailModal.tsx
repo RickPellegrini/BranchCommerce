@@ -117,7 +117,8 @@ export function ProductDetailModal({
               <div>
                 <span className="text-muted-foreground">Estoque: </span>
                 <span style={{ color: dotColor }}>{product.quantity}</span>
-                {" / "}{product.minStock} min
+                {" / "}
+                {product.minStock} min
               </div>
               {product.sellingPrice !== undefined && (
                 <div>
@@ -207,14 +208,11 @@ export function ProductDetailModal({
                     <div key={m.id} className="flex items-start gap-3 text-sm">
                       <div className="mt-1.5 h-2 w-2 flex-shrink-0 rounded-full bg-muted-foreground/40" />
                       <div>
-                        <span className="font-medium">
-                          {MOVEMENT_LABELS[m.type] ?? m.type}
-                        </span>
-                        {" · "}{m.quantity} un.{" · "}
+                        <span className="font-medium">{MOVEMENT_LABELS[m.type] ?? m.type}</span>
+                        {" · "}
+                        {m.quantity} un.{" · "}
                         {new Date(m.date + "T00:00:00").toLocaleDateString("pt-BR")}
-                        {m.note && (
-                          <p className="text-xs text-muted-foreground">{m.note}</p>
-                        )}
+                        {m.note && <p className="text-xs text-muted-foreground">{m.note}</p>}
                       </div>
                     </div>
                   ))}

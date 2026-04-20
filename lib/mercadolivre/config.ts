@@ -1,8 +1,5 @@
 function requireEnv(
-  name:
-    | "MERCADO_LIVRE_CLIENT_ID"
-    | "MERCADO_LIVRE_CLIENT_SECRET"
-    | "MERCADO_LIVRE_REDIRECT_URI",
+  name: "MERCADO_LIVRE_CLIENT_ID" | "MERCADO_LIVRE_CLIENT_SECRET" | "MERCADO_LIVRE_REDIRECT_URI",
 ) {
   const value = process.env[name]
   if (!value) {

@@ -10,14 +10,7 @@ import {
   useSensor,
   useSensors,
 } from "@dnd-kit/core"
-import {
-  Package,
-  BarChart2,
-  AlertCircle,
-  TrendingDown,
-  Truck,
-  ClipboardList,
-} from "lucide-react"
+import { Package, BarChart2, AlertCircle, TrendingDown, Truck, ClipboardList } from "lucide-react"
 import { Card, CardContent } from "@/components/ui/card"
 import { cn } from "@/lib/utils"
 import {
@@ -53,10 +46,7 @@ interface KanbanBoardProps {
     note?: string,
     estimatedArrival?: string,
   ) => Promise<void>
-  onSaveProductEdits: (
-    productId: string,
-    updates: Partial<KanbanProduct>,
-  ) => Promise<void>
+  onSaveProductEdits: (productId: string, updates: Partial<KanbanProduct>) => Promise<void>
   onDeleteProduct: (productId: string) => Promise<void>
 }
 
@@ -74,9 +64,7 @@ export function KanbanBoard({
   const [urgencyFilter, setUrgencyFilter] = useState<"all" | UrgencyLevel>("all")
   const [categoryFilter, setCategoryFilter] = useState("all")
 
-  const sensors = useSensors(
-    useSensor(PointerSensor, { activationConstraint: { distance: 8 } }),
-  )
+  const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 8 } }))
 
   const categories = useMemo(
     () => [...new Set(products.map((p) => p.category))].filter(Boolean),
@@ -86,8 +74,7 @@ export function KanbanBoard({
   const filteredProducts = useMemo(() => {
     const q = search.toLowerCase()
     return products.filter((p) => {
-      if (q && !p.name.toLowerCase().includes(q) && !p.sku.toLowerCase().includes(q))
-        return false
+      if (q && !p.name.toLowerCase().includes(q) && !p.sku.toLowerCase().includes(q)) return false
       if (urgencyFilter !== "all" && getUrgency(p) !== urgencyFilter) return false
       if (categoryFilter !== "all" && p.category !== categoryFilter) return false
       return true
@@ -149,40 +136,40 @@ export function KanbanBoard({
       {/* Boards */}
       <DndContext sensors={sensors} onDragStart={handleDragStart} onDragEnd={handleDragEnd}>
         <div className="-mx-1 overflow-x-auto rounded-xl">
-        <div className="flex min-w-max gap-4 px-1 pb-4 pt-1">
-          {/* Em falta: quantidade 0 + status físico "no estoque" (sem pipeline) */}
-          <KanbanColumn
-            id={EM_FALTA_COLUMN.id}
-            label={EM_FALTA_COLUMN.label}
-            droppable={EM_FALTA_COLUMN.droppable}
-            products={filteredProducts.filter(
-              (p) => p.quantity === 0 && p.kanbanStatus === "in_stock",
-            )}
-            onCardDetails={setSelectedProduct}
-            onCardMoveTo={(product, columnTarget) =>
-              void onUpdateKanbanStatus(product.id, columnTarget)
-            }
-            onCardDelete={(product) => void onDeleteProduct(product.id)}
-          />
-          {KANBAN_COLUMNS.map((col) => (
+          <div className="flex min-w-max gap-4 px-1 pb-4 pt-1">
+            {/* Em falta: quantidade 0 + status físico "no estoque" (sem pipeline) */}
             <KanbanColumn
-              key={col.id}
-              id={col.id}
-              label={col.label}
-              products={filteredProducts.filter((p) => {
-                if (col.id === "in_stock") {
-                  return p.kanbanStatus === "in_stock" && p.quantity > 0
-                }
-                return p.kanbanStatus === col.id
-              })}
+              id={EM_FALTA_COLUMN.id}
+              label={EM_FALTA_COLUMN.label}
+              droppable={EM_FALTA_COLUMN.droppable}
+              products={filteredProducts.filter(
+                (p) => p.quantity === 0 && p.kanbanStatus === "in_stock",
+              )}
               onCardDetails={setSelectedProduct}
               onCardMoveTo={(product, columnTarget) =>
                 void onUpdateKanbanStatus(product.id, columnTarget)
               }
               onCardDelete={(product) => void onDeleteProduct(product.id)}
             />
-          ))}
-        </div>
+            {KANBAN_COLUMNS.map((col) => (
+              <KanbanColumn
+                key={col.id}
+                id={col.id}
+                label={col.label}
+                products={filteredProducts.filter((p) => {
+                  if (col.id === "in_stock") {
+                    return p.kanbanStatus === "in_stock" && p.quantity > 0
+                  }
+                  return p.kanbanStatus === col.id
+                })}
+                onCardDetails={setSelectedProduct}
+                onCardMoveTo={(product, columnTarget) =>
+                  void onUpdateKanbanStatus(product.id, columnTarget)
+                }
+                onCardDelete={(product) => void onDeleteProduct(product.id)}
+              />
+            ))}
+          </div>
         </div>
 
         <DragOverlay>

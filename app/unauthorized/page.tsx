@@ -1,7 +1,7 @@
-import { SignOutButton } from "@clerk/nextjs";
+import { SignOutButton } from "@clerk/nextjs"
 
-import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Button } from "@/components/ui/button"
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 
 export default function UnauthorizedPage() {
   return (
@@ -20,5 +20,5 @@ export default function UnauthorizedPage() {
         </CardContent>
       </Card>
     </main>
-  );
+  )
 }

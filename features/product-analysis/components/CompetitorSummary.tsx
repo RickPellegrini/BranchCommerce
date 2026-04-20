@@ -32,7 +32,9 @@ function SummaryCard({
         {icon}
       </div>
       <div className="min-w-0">
-        <p className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">{label}</p>
+        <p className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
+          {label}
+        </p>
         <p className="text-base font-bold leading-tight">{value}</p>
         {sub && <p className="text-[11px] text-muted-foreground truncate">{sub}</p>}
       </div>
@@ -40,7 +42,13 @@ function SummaryCard({
   )
 }
 
-export function CompetitorSummaryCards({ summary, myPrice }: { summary: Summary; myPrice: number }) {
+export function CompetitorSummaryCards({
+  summary,
+  myPrice,
+}: {
+  summary: Summary
+  myPrice: number
+}) {
   return (
     <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
       <SummaryCard

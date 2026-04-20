@@ -39,14 +39,9 @@ type ResolveResult =
 // Used when /items/{id} is blocked (third-party items).
 // Combines /products/{id} metadata with /products/{id}/items first listing.
 
-function synthesizeItem(
-  product: MlProduct,
-  firstListing: CatalogCompetitor,
-): MlItemFull {
+function synthesizeItem(product: MlProduct, firstListing: CatalogCompetitor): MlItemFull {
   const firstPic = product.pictures?.[0]
-  const thumbnailUrl = firstPic
-    ? firstPic.url.replace("-F.jpg", "-I.jpg")
-    : ""
+  const thumbnailUrl = firstPic ? firstPic.url.replace("-F.jpg", "-I.jpg") : ""
 
   return {
     id: firstListing.item_id,
@@ -112,10 +107,7 @@ async function resolveId(
     const listings = itemsRes.results ?? []
 
     if (listings.length > 0) {
-      logger.log(
-        "resolve:A",
-        `✓ CATALOG_RESOLVED — "${product.name}", ${listings.length} listings`,
-      )
+      logger.log("resolve:A", `✓ CATALOG_RESOLVED — "${product.name}", ${listings.length} listings`)
       return {
         type: "catalog_product",
         catalogProductId: rawId,
@@ -190,10 +182,7 @@ function catalogListingToCompetitor(c: CatalogCompetitor): CompetitorEntry {
 
 // ─── Main orchestration ─────────────────────────────────────────────
 
-export async function getProductAnalysis(
-  token: string,
-  receivedId: string,
-): Promise<FullAnalysis> {
+export async function getProductAnalysis(token: string, receivedId: string): Promise<FullAnalysis> {
   const logger = createAnalysisLogger()
   logger.log("start", `receivedId=${receivedId}`)
   const t0 = Date.now()
@@ -226,8 +215,7 @@ export async function getProductAnalysis(
         allListings = res.results ?? []
         logger.log("discover", `✓ ${allListings.length} listings`)
       } catch (err: unknown) {
-        const detail =
-          err instanceof MlUpstreamError ? `ML ${err.mlStatus}` : String(err)
+        const detail = err instanceof MlUpstreamError ? `ML ${err.mlStatus}` : String(err)
         logger.log("discover", `✗ ${detail} — continuing without competitors`)
       }
     }
@@ -238,10 +226,7 @@ export async function getProductAnalysis(
     .filter((c) => c.item_id !== item.id)
     .map(catalogListingToCompetitor)
 
-  logger.log(
-    "competitors",
-    `total=${allListings.length}, afterExcludingSelf=${competitors.length}`,
-  )
+  logger.log("competitors", `total=${allListings.length}, afterExcludingSelf=${competitors.length}`)
 
   // Enrich everything in a single parallel wave:
   // competitors (sellers + visits + stock) + own item (price_to_win + visits)
@@ -257,21 +242,23 @@ export async function getProductAnalysis(
 
   // Shared map: scraping writes results here as each page completes.
   // This lets us snapshot partial results after a grace period.
-  const scrapeMap = new Map<string, import("@/features/product-analysis/infra/scrape-item-page").ScrapedItemResult>()
+  const scrapeMap = new Map<
+    string,
+    import("@/features/product-analysis/infra/scrape-item-page").ScrapedItemResult
+  >()
   const scrapePromise = scrapeCompetitorPages(competitorItemIds, scrapeMap)
 
   // Fast API calls run in parallel with the scraping above.
-  const [sellersResult, visitsResult, ptwResult, visits7Result, visits30Result] = await Promise.allSettled([
-    getSellersBatch(token, uniqueSellerIds),
-    getCompetitorVisits(token, competitorItemIds),
-    getPriceToWin(token, item.id),
-    getVisitsBatch(token, [item.id], range7.from, range7.to).then(
-      (m) => m.get(item.id) ?? null,
-    ),
-    getVisitsBatch(token, [item.id], range30.from, range30.to).then(
-      (m) => m.get(item.id) ?? null,
-    ),
-  ])
+  const [sellersResult, visitsResult, ptwResult, visits7Result, visits30Result] =
+    await Promise.allSettled([
+      getSellersBatch(token, uniqueSellerIds),
+      getCompetitorVisits(token, competitorItemIds),
+      getPriceToWin(token, item.id),
+      getVisitsBatch(token, [item.id], range7.from, range7.to).then((m) => m.get(item.id) ?? null),
+      getVisitsBatch(token, [item.id], range30.from, range30.to).then(
+        (m) => m.get(item.id) ?? null,
+      ),
+    ])
 
   // Give scraping a short grace period after the fast calls finish.
   // scrapeMap already has partial results; wait up to 2s more for stragglers.
@@ -282,7 +269,9 @@ export async function getProductAnalysis(
   ])
 
   const sellersMap =
-    sellersResult.status === "fulfilled" ? sellersResult.value : new Map<number, import("@/features/product-analysis/domain/types").MlSeller>()
+    sellersResult.status === "fulfilled"
+      ? sellersResult.value
+      : new Map<number, import("@/features/product-analysis/domain/types").MlSeller>()
   const visitsMap =
     visitsResult.status === "fulfilled" ? visitsResult.value : new Map<string, number>()
   const ptw = ptwResult.status === "fulfilled" ? ptwResult.value : null
@@ -318,7 +307,9 @@ export async function getProductAnalysis(
     }
   }
 
-  const scrapeHits = Array.from(scrapeMap.values()).filter((r) => r.availableQuantity != null).length
+  const scrapeHits = Array.from(scrapeMap.values()).filter(
+    (r) => r.availableQuantity != null,
+  ).length
   const catalogMs = Date.now() - enrichT0
   logger.log(
     "enrich",
@@ -350,10 +341,7 @@ export async function getProductAnalysis(
       totalAfterFilters: competitors.length,
       competitors,
       summary,
-      buyBoxWinnerItemId:
-        ptw?.winner?.item_id
-        ?? allListings[0]?.item_id
-        ?? null,
+      buyBoxWinnerItemId: ptw?.winner?.item_id ?? allListings[0]?.item_id ?? null,
     },
     logs: logger.entries,
     fetchedAt: new Date().toISOString(),

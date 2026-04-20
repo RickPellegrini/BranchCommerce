@@ -12,7 +12,6 @@ import {
   TrendingDown,
   TrendingUp,
   DollarSign,
-  Store,
   Truck,
   Zap,
   Tag,
@@ -67,9 +66,7 @@ function StatCard({
           {label}
         </p>
         <p className="text-base font-bold leading-tight">{value}</p>
-        {sub && (
-          <p className="text-[11px] text-muted-foreground truncate">{sub}</p>
-        )}
+        {sub && <p className="text-[11px] text-muted-foreground truncate">{sub}</p>}
       </div>
     </div>
   )
@@ -88,9 +85,7 @@ export function HunterAnalysisPage() {
     setSearchError(null)
     const mlId = parseMlId(searchInput)
     if (!mlId) {
-      setSearchError(
-        "Insira um link ou ID valido do Mercado Livre (ex: MLB1234567890)",
-      )
+      setSearchError("Insira um link ou ID valido do Mercado Livre (ex: MLB1234567890)")
       return
     }
     setActiveItemId(mlId)
@@ -100,16 +95,18 @@ export function HunterAnalysisPage() {
     if (!data || !activeItemId) return
     if (lastRecordedId.current === activeItemId) return
     lastRecordedId.current = activeItemId
-    setRecentSearches((prev) => {
-      const filtered = prev.filter((s) => s.id !== activeItemId)
-      return [
-        {
-          id: activeItemId,
-          title: data.catalog.item.title,
-          timestamp: Date.now(),
-        },
-        ...filtered,
-      ].slice(0, 10)
+    queueMicrotask(() => {
+      setRecentSearches((prev) => {
+        const filtered = prev.filter((s) => s.id !== activeItemId)
+        return [
+          {
+            id: activeItemId,
+            title: data.catalog.item.title,
+            timestamp: Date.now(),
+          },
+          ...filtered,
+        ].slice(0, 10)
+      })
     })
   }, [data, activeItemId])
 
@@ -127,29 +124,21 @@ export function HunterAnalysisPage() {
 
   const isShowingResults =
     activeItemId !== null &&
-    (phase === "loading" ||
-      phase === "success" ||
-      phase === "partial" ||
-      phase === "error")
+    (phase === "loading" || phase === "success" || phase === "partial" || phase === "error")
 
   return (
     <div className="space-y-6">
       {/* Breadcrumb */}
       <div className="flex items-center gap-2 text-sm text-muted-foreground">
         {isShowingResults ? (
-          <button
-            className="hover:text-foreground transition-colors"
-            onClick={handleBack}
-          >
+          <button className="hover:text-foreground transition-colors" onClick={handleBack}>
             &larr; Voltar
           </button>
         ) : (
           <>
             <span>Dashboard</span>
             <ChevronRight className="size-3" />
-            <span className="font-medium text-foreground">
-              Analise de Anuncio
-            </span>
+            <span className="font-medium text-foreground">Analise de Anuncio</span>
           </>
         )}
       </div>
@@ -158,12 +147,10 @@ export function HunterAnalysisPage() {
       {!isShowingResults && (
         <div className="flex items-start justify-between gap-4">
           <div>
-            <h1 className="text-2xl font-bold tracking-tight">
-              Analise de Anuncio
-            </h1>
+            <h1 className="text-2xl font-bold tracking-tight">Analise de Anuncio</h1>
             <p className="mt-1 text-sm text-muted-foreground">
-              Analise anuncios e catalogos do Mercado Livre para ver metricas de
-              vendas, informacoes do vendedor e desempenho.
+              Analise anuncios e catalogos do Mercado Livre para ver metricas de vendas, informacoes
+              do vendedor e desempenho.
             </p>
           </div>
         </div>
@@ -193,9 +180,7 @@ export function HunterAnalysisPage() {
             Analisar
           </Button>
         </div>
-        {searchError && (
-          <p className="text-xs text-destructive">{searchError}</p>
-        )}
+        {searchError && <p className="text-xs text-destructive">{searchError}</p>}
       </div>
 
       {/* ── Empty state ── */}
@@ -205,20 +190,16 @@ export function HunterAnalysisPage() {
             <div className="mb-4 rounded-2xl bg-orange-50 p-5 dark:bg-orange-950/30">
               <BarChart3 className="size-10 text-orange-500" />
             </div>
-            <h3 className="text-lg font-semibold">
-              Analise anuncios do Mercado Livre
-            </h3>
+            <h3 className="text-lg font-semibold">Analise anuncios do Mercado Livre</h3>
             <p className="mt-1 max-w-md text-sm text-muted-foreground">
-              Cole o link ou ID de um anuncio e veja metricas de vendas,
-              informacoes do vendedor e desempenho em segundos.
+              Cole o link ou ID de um anuncio e veja metricas de vendas, informacoes do vendedor e
+              desempenho em segundos.
             </p>
           </div>
 
           <Card>
             <CardHeader className="pb-3">
-              <CardTitle className="text-sm font-semibold">
-                Buscas Recentes
-              </CardTitle>
+              <CardTitle className="text-sm font-semibold">Buscas Recentes</CardTitle>
             </CardHeader>
             <CardContent>
               {recentSearches.length === 0 ? (
@@ -237,9 +218,7 @@ export function HunterAnalysisPage() {
                         <Search className="size-3.5 shrink-0 text-muted-foreground" />
                         <span className="truncate">{s.title}</span>
                       </div>
-                      <span className="ml-2 shrink-0 text-xs text-muted-foreground">
-                        Carregar
-                      </span>
+                      <span className="ml-2 shrink-0 text-xs text-muted-foreground">Carregar</span>
                     </button>
                   ))}
                 </div>
@@ -254,16 +233,13 @@ export function HunterAnalysisPage() {
 
       {/* ── Error ── */}
       {isShowingResults && phase === "error" && (
-        <AnalysisError
-          message={error ?? "Erro desconhecido"}
-          onRetry={refresh}
-        />
+        <AnalysisError message={error ?? "Erro desconhecido"} onRetry={refresh} />
       )}
 
       {/* ── Results ── */}
-      {isShowingResults &&
-        (phase === "success" || phase === "partial") &&
-        data && <AnalysisResults data={data} refresh={refresh} phase={phase} />}
+      {isShowingResults && (phase === "success" || phase === "partial") && data && (
+        <AnalysisResults data={data} refresh={refresh} phase={phase} />
+      )}
     </div>
   )
 }
@@ -315,7 +291,11 @@ function AnalysisResults({
   const { extensionAvailable, scraping, result: scrapeResult, scrape } = useExtensionScraping()
 
   useEffect(() => {
-    console.log("[analysis] scrape effect:", { extensionAvailable, competitors: rawCompetitors.length, catalogId: data.catalog.catalogProductId })
+    console.log("[analysis] scrape effect:", {
+      extensionAvailable,
+      competitors: rawCompetitors.length,
+      catalogId: data.catalog.catalogProductId,
+    })
     if (!extensionAvailable || rawCompetitors.length === 0) return
     const itemIds = rawCompetitors.map((c) => c.itemId)
     scrape(itemIds, data.catalog.catalogProductId)
@@ -335,8 +315,7 @@ function AnalysisResults({
     })
   }, [rawCompetitors, scrapeResult])
 
-  const effectiveBuyBoxWinner =
-    scrapeResult?.buyBoxWinner ?? data.competitors.buyBoxWinnerItemId
+  const effectiveBuyBoxWinner = scrapeResult?.buyBoxWinner ?? data.competitors.buyBoxWinnerItemId
 
   const availableCities = useMemo(() => {
     const cities = new Map<string, number>()
@@ -386,13 +365,9 @@ function AnalysisResults({
             />
           )}
           <div className="flex-1 min-w-0">
-            <h2 className="font-bold text-base leading-snug line-clamp-2 mb-2">
-              {item.title}
-            </h2>
+            <h2 className="font-bold text-base leading-snug line-clamp-2 mb-2">{item.title}</h2>
             <div className="flex items-baseline gap-3 mb-2">
-              <span className="text-2xl font-bold text-emerald-600">
-                {formatBrl(item.price)}
-              </span>
+              <span className="text-2xl font-bold text-emerald-600">{formatBrl(item.price)}</span>
               {item.originalPrice && item.originalPrice > item.price && (
                 <span className="text-sm text-muted-foreground line-through">
                   {formatBrl(item.originalPrice)}
@@ -423,12 +398,7 @@ function AnalysisResults({
             </div>
           </div>
           <div className="flex flex-col items-end gap-2 shrink-0">
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={refresh}
-              className="gap-1.5"
-            >
+            <Button variant="outline" size="sm" onClick={refresh} className="gap-1.5">
               <RefreshCw className="size-3.5" />
               Atualizar
             </Button>
@@ -498,9 +468,7 @@ function AnalysisResults({
           <div className="flex items-center justify-between flex-wrap gap-3">
             <div className="flex items-center gap-2">
               <Package className="h-4 w-4 text-muted-foreground" />
-              <h3 className="text-sm font-bold">
-                Anuncios do catalogo
-              </h3>
+              <h3 className="text-sm font-bold">Anuncios do catalogo</h3>
               <span className="inline-flex items-center justify-center rounded-full bg-muted px-2 py-0.5 text-[10px] font-bold text-foreground">
                 {filtered.length}
               </span>
@@ -512,7 +480,11 @@ function AnalysisResults({
             <Filter className="h-3.5 w-3.5 text-muted-foreground" />
             <FilterPill
               active={logisticFilter === "all" && listingFilter === "all" && !cityFilter}
-              onClick={() => { setLogisticFilter("all"); setListingFilter("all"); setCityFilter(null) }}
+              onClick={() => {
+                setLogisticFilter("all")
+                setListingFilter("all")
+                setCityFilter(null)
+              }}
             >
               Todos os tipos
             </FilterPill>
@@ -537,7 +509,9 @@ function AnalysisResults({
             </FilterPill>
             <FilterPill
               active={listingFilter === "gold_special"}
-              onClick={() => setListingFilter(listingFilter === "gold_special" ? "all" : "gold_special")}
+              onClick={() =>
+                setListingFilter(listingFilter === "gold_special" ? "all" : "gold_special")
+              }
             >
               Classico
             </FilterPill>
@@ -584,8 +558,7 @@ function AnalysisResults({
           )}
           {phase === "partial" && (
             <div className="rounded-lg border border-amber-200 dark:border-amber-800 bg-amber-50 dark:bg-amber-950/30 px-4 py-3 text-xs text-amber-700 dark:text-amber-300">
-              Dados de catalogo carregados, mas a descoberta de concorrentes
-              falhou parcialmente.
+              Dados de catalogo carregados, mas a descoberta de concorrentes falhou parcialmente.
             </div>
           )}
         </TabsContent>

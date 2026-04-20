@@ -118,7 +118,10 @@ export function ProductCard({
                   onClick={() => onMoveTo(EM_FALTA_COLUMN.id)}
                 >
                   <span className="flex items-center gap-2">
-                    <KanbanStageIcon stageId={EM_FALTA_COLUMN.id} className="h-3.5 w-3.5 opacity-80" />
+                    <KanbanStageIcon
+                      stageId={EM_FALTA_COLUMN.id}
+                      className="h-3.5 w-3.5 opacity-80"
+                    />
                     <span>
                       Mover para <span className="font-medium">{EM_FALTA_COLUMN.label}</span>
                     </span>
@@ -175,8 +178,7 @@ export function ProductCard({
       {product.estimatedArrival &&
         (product.kanbanStatus === "buying" || product.kanbanStatus === "in_transit") && (
           <p className="mt-1.5 text-xs text-muted-foreground">
-            🗓{" "}
-            {new Date(product.estimatedArrival + "T00:00:00").toLocaleDateString("pt-BR")}
+            🗓 {new Date(product.estimatedArrival + "T00:00:00").toLocaleDateString("pt-BR")}
           </p>
         )}
     </div>

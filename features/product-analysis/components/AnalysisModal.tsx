@@ -44,7 +44,12 @@ export function AnalysisModal({ itemId, onClose }: { itemId: string; onClose: ()
                 Atualizar
               </Button>
             )}
-            <Button variant="ghost" size="icon" onClick={onClose} className="h-8 w-8 rounded-lg hover:bg-muted">
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={onClose}
+              className="h-8 w-8 rounded-lg hover:bg-muted"
+            >
               <X className="h-4 w-4" />
             </Button>
           </div>
@@ -53,7 +58,9 @@ export function AnalysisModal({ itemId, onClose }: { itemId: string; onClose: ()
         {/* Body */}
         <div className="p-5 max-h-[80vh] overflow-y-auto">
           {phase === "loading" && <AnalysisLoading />}
-          {phase === "error" && <AnalysisError message={error ?? "Erro desconhecido"} onRetry={refresh} />}
+          {phase === "error" && (
+            <AnalysisError message={error ?? "Erro desconhecido"} onRetry={refresh} />
+          )}
 
           {(phase === "success" || phase === "partial") && data && (
             <>
@@ -67,7 +74,8 @@ export function AnalysisModal({ itemId, onClose }: { itemId: string; onClose: ()
                   {strategyLabels[data.competitors.strategy] ?? data.competitors.strategy}
                 </span>
                 <span className="inline-flex items-center gap-1.5 rounded-lg border bg-emerald-50 dark:bg-emerald-950/30 px-2.5 py-1 text-[11px] font-medium text-emerald-700 dark:text-emerald-300">
-                  {data.competitors.totalCandidatesRaw} brutos &rarr; {data.competitors.totalAfterFilters} final
+                  {data.competitors.totalCandidatesRaw} brutos &rarr;{" "}
+                  {data.competitors.totalAfterFilters} final
                 </span>
                 <a
                   href={data.catalog.item.permalink}
@@ -81,11 +89,17 @@ export function AnalysisModal({ itemId, onClose }: { itemId: string; onClose: ()
 
               <Tabs defaultValue="competitors">
                 <TabsList className="bg-muted rounded-lg p-1 h-auto">
-                  <TabsTrigger value="catalog" className="rounded-md text-xs gap-1.5 data-[state=active]:bg-background data-[state=active]:shadow-sm px-4 py-2">
+                  <TabsTrigger
+                    value="catalog"
+                    className="rounded-md text-xs gap-1.5 data-[state=active]:bg-background data-[state=active]:shadow-sm px-4 py-2"
+                  >
                     <BarChart3 className="h-3.5 w-3.5" />
                     Catalogo
                   </TabsTrigger>
-                  <TabsTrigger value="competitors" className="rounded-md text-xs gap-1.5 data-[state=active]:bg-background data-[state=active]:shadow-sm px-4 py-2">
+                  <TabsTrigger
+                    value="competitors"
+                    className="rounded-md text-xs gap-1.5 data-[state=active]:bg-background data-[state=active]:shadow-sm px-4 py-2"
+                  >
                     <Users className="h-3.5 w-3.5" />
                     Concorrentes ({data.competitors.competitors.length})
                   </TabsTrigger>
@@ -113,7 +127,8 @@ export function AnalysisModal({ itemId, onClose }: { itemId: string; onClose: ()
                   )}
                   {phase === "partial" && (
                     <div className="text-xs text-amber-700 dark:text-amber-300 bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800 rounded-lg px-4 py-3">
-                      Dados de catalogo carregados, mas a descoberta de concorrentes falhou parcialmente.
+                      Dados de catalogo carregados, mas a descoberta de concorrentes falhou
+                      parcialmente.
                     </div>
                   )}
                 </TabsContent>

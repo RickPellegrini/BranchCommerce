@@ -19,10 +19,7 @@
   },
   "content_scripts": [
     {
-      "matches": [
-        "*://*.mercadolivre.com.br/*",
-        "*://*.mercadolivre.com/*"
-      ],
+      "matches": ["*://*.mercadolivre.com.br/*", "*://*.mercadolivre.com/*"],
       "js": [
         "src/domain/types.js",
         "src/domain/hybrid-calculator.js",
@@ -34,10 +31,7 @@
       "run_at": "document_idle"
     },
     {
-      "matches": [
-        "*://branchcommercehub.com/*",
-        "http://localhost:3000/*"
-      ],
+      "matches": ["*://branchcommercehub.com/*", "http://localhost:3000/*"],
       "js": ["src/bridge.js"],
       "run_at": "document_idle"
     }

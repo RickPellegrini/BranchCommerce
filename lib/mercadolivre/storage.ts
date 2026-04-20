@@ -16,9 +16,7 @@ function safeEncrypt(value: string): string {
   return isEncrypted(value) ? value : encryptToken(value)
 }
 
-type MlConnection = Awaited<
-  ReturnType<typeof getMlConnectionByAppUser>
->
+type MlConnection = Awaited<ReturnType<typeof getMlConnectionByAppUser>>
 
 function getConvexClient() {
   const convexUrl = process.env.NEXT_PUBLIC_CONVEX_URL
@@ -79,12 +77,10 @@ export async function updateMlTokens(params: {
 export async function disconnectMlConnection(appUserId: string) {
   const client = getConvexClient()
   // Convex codegen may be out-of-date until next `npx convex dev`.
-  return client.mutation((api as any).mercadolivre.disconnectConnection, { appUserId })
+  return client.mutation(api.mercadolivre.disconnectConnection, { appUserId })
 }
 
-function decryptConnection<T extends { accessToken: string; refreshToken: string }>(
-  conn: T,
-): T {
+function decryptConnection<T extends { accessToken: string; refreshToken: string }>(conn: T): T {
   return {
     ...conn,
     accessToken: safeDecrypt(conn.accessToken),
@@ -213,10 +209,7 @@ export async function requestMlApi<T>(
   return doMlRequest<T>(path, accessToken, init)
 }
 
-export function parseTokenToConnection(params: {
-  appUserId: string
-  token: MlTokenResponse
-}) {
+export function parseTokenToConnection(params: { appUserId: string; token: MlTokenResponse }) {
   const expiresAt = Date.now() + params.token.expires_in * 1000
   return {
     appUserId: params.appUserId,

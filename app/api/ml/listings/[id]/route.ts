@@ -9,10 +9,7 @@ type UpdateListingBody = {
   status?: "active" | "paused" | "closed"
 }
 
-export async function PATCH(
-  request: Request,
-  context: { params: Promise<{ id: string }> },
-) {
+export async function PATCH(request: Request, context: { params: Promise<{ id: string }> }) {
   try {
     const { id } = await context.params
     const payload = (await request.json()) as UpdateListingBody

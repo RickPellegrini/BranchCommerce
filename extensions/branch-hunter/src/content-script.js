@@ -1,9 +1,9 @@
-(() => {
-  const PANEL_HOST_ID = "branch-hunter-inline-host";
-  const BRAND_LOGO_URL = "https://branch-commerce.vercel.app/branch_logo.jpeg";
-  const DEBUG = false;
-  const LISTING_TYPE_FEES = { premium: 16, gold_special: 12 };
-  const BADGE_ATTR = "data-bh-processed";
+;(() => {
+  const PANEL_HOST_ID = "branch-hunter-inline-host"
+  const BRAND_LOGO_URL = "https://branch-commerce.vercel.app/branch_logo.jpeg"
+  const DEBUG = false
+  const LISTING_TYPE_FEES = { premium: 16, gold_special: 12 }
+  const BADGE_ATTR = "data-bh-processed"
 
   const state = {
     listingId: "",
@@ -30,47 +30,47 @@
     costSyncDebounce: null,
     marketplaceDataCache: null,
     serpEnrichDebounce: null,
-  };
+  }
 
   function logDebug(message, payload) {
-    if (!DEBUG) return;
-    console.log(`[BranchHunter] ${message}`, payload || "");
+    if (!DEBUG) return
+    console.log(`[BranchHunter] ${message}`, payload || "")
   }
 
   function isMlProductPage() {
-    return /MLB[-]?\d+/i.test(location.href);
+    return /MLB[-]?\d+/i.test(location.href)
   }
 
   function toNumber(value, fallback = 0) {
-    const number = Number(value);
-    return Number.isFinite(number) ? number : fallback;
+    const number = Number(value)
+    return Number.isFinite(number) ? number : fallback
   }
 
   function formatMoney(value) {
     return new Intl.NumberFormat("pt-BR", {
       style: "currency",
       currency: "BRL",
-    }).format(value);
+    }).format(value)
   }
 
   function formatPercent(value) {
-    return `${value.toFixed(2)}%`;
+    return `${value.toFixed(2)}%`
   }
 
   function formatSource(source) {
-    if (!source) return "indisponivel";
-    if (source === "api") return "api";
-    if (source === "page") return "pagina";
-    if (source === "manual") return "manual";
-    return "derivado";
+    if (!source) return "indisponivel"
+    if (source === "api") return "api"
+    if (source === "page") return "pagina"
+    if (source === "manual") return "manual"
+    return "derivado"
   }
 
   function formatNullableMoney(value) {
-    return typeof value === "number" && Number.isFinite(value) ? formatMoney(value) : "--";
+    return typeof value === "number" && Number.isFinite(value) ? formatMoney(value) : "--"
   }
 
   function formatNullableText(value) {
-    return value && String(value).trim() ? String(value) : "--";
+    return value && String(value).trim() ? String(value) : "--"
   }
 
   function buildPanelHTML() {
@@ -352,12 +352,12 @@
           </div>
         </div>
       </section>
-    `;
+    `
   }
 
   function getElements() {
-    if (!state.shadowRoot) return null;
-    const $ = (id) => state.shadowRoot.getElementById(id);
+    if (!state.shadowRoot) return null
+    const $ = (id) => state.shadowRoot.getElementById(id)
     return {
       dynSalePrice: $("bh-dyn-sale-price"),
       srcSalePrice: $("bh-src-sale-price"),
@@ -397,28 +397,28 @@
       listingTypeSelect: $("bh-listing-type-select"),
       listingTypeFee: $("bh-listing-type-fee"),
       headerChip: $("bh-header-chip"),
-    };
+    }
   }
 
   function applySalePriceUiState(elements) {
-    const manual = Boolean(elements.salePriceManualToggle.checked);
-    elements.salePriceManualWrap.style.display = manual ? "block" : "none";
-    elements.salePriceManualInput.disabled = !manual;
+    const manual = Boolean(elements.salePriceManualToggle.checked)
+    elements.salePriceManualWrap.style.display = manual ? "block" : "none"
+    elements.salePriceManualInput.disabled = !manual
   }
 
   function readManualMarketplaceValues(elements) {
-    const forceManualSalePrice = elements && Boolean(elements.salePriceManualToggle.checked);
+    const forceManualSalePrice = elements && Boolean(elements.salePriceManualToggle.checked)
     const manualSalePrice = forceManualSalePrice
       ? toNumber(elements.salePriceManualInput.value, 0)
-      : null;
-    const selectedType = elements.listingTypeSelect?.value || "gold_special";
+      : null
+    const selectedType = elements.listingTypeSelect?.value || "gold_special"
     return {
       salePrice: manualSalePrice,
       forceManualSalePrice,
       listingType: selectedType,
       forceListingType: true,
       saleFeePercent: LISTING_TYPE_FEES[selectedType] ?? state.manualSaleFeePercentFallback,
-    };
+    }
   }
 
   function readOperationValues(elements) {
@@ -435,74 +435,73 @@
       freeShippingMinPrice: Number(state.shippingConfig.freeShippingMinPrice ?? 79),
       freeShippingSubsidyPercent: Number(state.shippingConfig.freeShippingSubsidyPercent ?? 50),
       defaultShippingCost: 12,
-    };
+    }
   }
 
   function applyShippingUiState(elements) {
-    const manual = Boolean(elements.shippingManualToggle.checked);
-    elements.shippingFallback.disabled = !manual;
-    elements.shippingFallbackWrap.style.display = manual ? "block" : "none";
+    const manual = Boolean(elements.shippingManualToggle.checked)
+    elements.shippingFallback.disabled = !manual
+    elements.shippingFallbackWrap.style.display = manual ? "block" : "none"
     elements.customShippingHint.textContent = manual
       ? "Usando valor personalizado"
-      : "Usando valor padrao";
+      : "Usando valor padrao"
     elements.freeShippingHint.textContent = `Obrigatorio acima de ${formatMoney(
       Number(state.shippingConfig.freeShippingMinPrice ?? 79),
-    )}`;
-    elements.freeShippingToggle.disabled = manual;
+    )}`
+    elements.freeShippingToggle.disabled = manual
   }
 
   function writeMarketplaceDynamicSection(elements, marketplaceData) {
-    elements.dynSalePrice.textContent = formatNullableMoney(marketplaceData.salePrice);
-    elements.srcSalePrice.textContent = `(${formatSource(marketplaceData.source.salePrice)})`;
-    elements.dynListingType.textContent = formatNullableText(marketplaceData.listingType);
-    elements.srcListingType.textContent = `(${formatSource(marketplaceData.source.listingType)})`;
+    elements.dynSalePrice.textContent = formatNullableMoney(marketplaceData.salePrice)
+    elements.srcSalePrice.textContent = `(${formatSource(marketplaceData.source.salePrice)})`
+    elements.dynListingType.textContent = formatNullableText(marketplaceData.listingType)
+    elements.srcListingType.textContent = `(${formatSource(marketplaceData.source.listingType)})`
     const feeLabel =
       marketplaceData.saleFeePercent !== null
         ? `${formatPercent(marketplaceData.saleFeePercent)}`
-        : "--";
-    elements.dynFee.textContent = feeLabel;
-    elements.srcFee.textContent = `(${formatSource(marketplaceData.source.saleFeePercent)})`;
-    elements.listingTypeFee.textContent = `Taxa: ${feeLabel}`;
+        : "--"
+    elements.dynFee.textContent = feeLabel
+    elements.srcFee.textContent = `(${formatSource(marketplaceData.source.saleFeePercent)})`
+    elements.listingTypeFee.textContent = `Taxa: ${feeLabel}`
     elements.dynCategory.textContent = formatNullableText(
       marketplaceData.categoryName || marketplaceData.categoryId,
-    );
+    )
     elements.dynShippingEstimated.textContent = formatNullableMoney(
       marketplaceData.shippingEstimatedCost,
-    );
+    )
     elements.srcShippingEstimated.textContent = `(${formatSource(
       marketplaceData.source.shippingEstimatedCost,
-    )})`;
-    elements.dynShippingReal.textContent = formatNullableMoney(marketplaceData.shippingRealCost);
+    )})`
+    elements.dynShippingReal.textContent = formatNullableMoney(marketplaceData.shippingRealCost)
     elements.srcShippingReal.textContent = `(${formatSource(
       marketplaceData.source.shippingRealCost,
-    )})`;
-    elements.dynShippingMode.textContent = formatNullableText(marketplaceData.shippingMode);
-
+    )})`
+    elements.dynShippingMode.textContent = formatNullableText(marketplaceData.shippingMode)
   }
 
   function updateResultUI(elements, calculationResult) {
-    elements.resultGross.textContent = formatMoney(calculationResult.grossRevenue);
-    elements.resultShipping.textContent = formatMoney(calculationResult.shippingCostUsed);
-    elements.resultCentralize.textContent = formatMoney(calculationResult.centralizeFixedCosts);
-    elements.resultTotalCosts.textContent = formatMoney(calculationResult.totalCosts);
-    elements.resultProfit.textContent = formatMoney(calculationResult.netProfit);
-    elements.resultMargin.textContent = formatPercent(calculationResult.netMarginPercent);
+    elements.resultGross.textContent = formatMoney(calculationResult.grossRevenue)
+    elements.resultShipping.textContent = formatMoney(calculationResult.shippingCostUsed)
+    elements.resultCentralize.textContent = formatMoney(calculationResult.centralizeFixedCosts)
+    elements.resultTotalCosts.textContent = formatMoney(calculationResult.totalCosts)
+    elements.resultProfit.textContent = formatMoney(calculationResult.netProfit)
+    elements.resultMargin.textContent = formatPercent(calculationResult.netMarginPercent)
     if (calculationResult.netProfit < 0) {
-      elements.profitRow.classList.add("negative");
+      elements.profitRow.classList.add("negative")
     } else {
-      elements.profitRow.classList.remove("negative");
+      elements.profitRow.classList.remove("negative")
     }
   }
 
   async function syncListingContext() {
     const { getCurrentListingId, getCurrentListingTitle, extractPriceFromPage } =
-      globalThis.BranchHunterPageUtils;
-    state.listingId = getCurrentListingId();
-    state.listingTitle = getCurrentListingTitle();
-    state.listingUrl = location.href;
-    state.detectedPrice = extractPriceFromPage();
+      globalThis.BranchHunterPageUtils
+    state.listingId = getCurrentListingId()
+    state.listingTitle = getCurrentListingTitle()
+    state.listingUrl = location.href
+    state.detectedPrice = extractPriceFromPage()
 
-    if (!chrome?.runtime?.id) return;
+    if (!chrome?.runtime?.id) return
     chrome.runtime.sendMessage(
       {
         type: "BRANCH_HUNTER_LISTING",
@@ -514,22 +513,22 @@
         },
       },
       () => void chrome.runtime.lastError,
-    );
+    )
   }
 
   async function buildCalculationContext(elements, options = {}) {
     const shouldRefreshMarketplace =
-      options.refreshMarketplace === true || !state.marketplaceDataCache;
-    const manualMarketplace = readManualMarketplaceValues(elements);
-    const operation = readOperationValues(elements);
-    let marketplace = state.marketplaceDataCache;
+      options.refreshMarketplace === true || !state.marketplaceDataCache
+    const manualMarketplace = readManualMarketplaceValues(elements)
+    const operation = readOperationValues(elements)
+    let marketplace = state.marketplaceDataCache
 
     if (shouldRefreshMarketplace) {
       marketplace = await globalThis.BranchHunterMarketplaceService.getMarketplaceDynamicData({
         listingId: state.listingId,
         manualFallback: manualMarketplace,
-      });
-      state.marketplaceDataCache = marketplace;
+      })
+      state.marketplaceDataCache = marketplace
     }
 
     if (manualMarketplace.forceManualSalePrice) {
@@ -540,11 +539,11 @@
           ...(marketplace?.source || {}),
           salePrice: "manual",
         },
-      };
+      }
     }
 
     if (manualMarketplace.forceListingType) {
-      const typeLabel = manualMarketplace.listingType === "premium" ? "premium" : "gold_special";
+      const typeLabel = manualMarketplace.listingType === "premium" ? "premium" : "gold_special"
       marketplace = {
         ...marketplace,
         listingType: typeLabel,
@@ -555,44 +554,44 @@
           listingType: "manual",
           saleFeePercent: "manual",
         },
-      };
+      }
     }
 
-    return { marketplace, operation, manualMarketplace };
+    return { marketplace, operation, manualMarketplace }
   }
 
   async function refreshAndCompute(elements, shouldPersist = true, options = {}) {
-    const context = await buildCalculationContext(elements, options);
-    writeMarketplaceDynamicSection(elements, context.marketplace);
+    const context = await buildCalculationContext(elements, options)
+    writeMarketplaceDynamicSection(elements, context.marketplace)
     const result = globalThis.BranchHunterCalculator.calculateHybridResult({
       marketplace: context.marketplace,
       operation: context.operation,
-    });
-    updateResultUI(elements, result);
+    })
+    updateResultUI(elements, result)
 
     if (shouldPersist) {
       await globalThis.BranchHunterStorage.saveListingState(state.listingId, {
         manualMarketplace: context.manualMarketplace,
         operation: context.operation,
-      });
-      scheduleRemoteCostSync(context.operation.productCost);
+      })
+      scheduleRemoteCostSync(context.operation.productCost)
     }
   }
 
   function scheduleRemoteCostSync(productCost) {
-    if (state.costSyncDebounce) clearTimeout(state.costSyncDebounce);
+    if (state.costSyncDebounce) clearTimeout(state.costSyncDebounce)
     state.costSyncDebounce = setTimeout(() => {
-      void syncProductCostToPlatform(productCost);
-    }, 700);
+      void syncProductCostToPlatform(productCost)
+    }, 700)
   }
 
   async function syncProductCostToPlatform(productCost) {
-    if (!state.syncConfig.enabled) return;
-    if (!state.syncConfig.apiBaseUrl || !state.syncConfig.apiKey) return;
-    if (!state.listingId || state.listingId === "unknown-item") return;
-    if (!Number.isFinite(productCost) || productCost <= 0) return;
+    if (!state.syncConfig.enabled) return
+    if (!state.syncConfig.apiBaseUrl || !state.syncConfig.apiKey) return
+    if (!state.listingId || state.listingId === "unknown-item") return
+    if (!Number.isFinite(productCost) || productCost <= 0) return
 
-    const endpoint = `${state.syncConfig.apiBaseUrl.replace(/\/+$/, "")}/api/branch-hunter/cost`;
+    const endpoint = `${state.syncConfig.apiBaseUrl.replace(/\/+$/, "")}/api/branch-hunter/cost`
     try {
       await fetch(endpoint, {
         method: "POST",
@@ -604,47 +603,47 @@
           mlItemId: state.listingId,
           unitCost: productCost,
         }),
-      });
+      })
     } catch {
       // Keep calculator smooth even if remote sync fails.
     }
   }
 
   function setOperationInputs(elements, values) {
-    elements.productCost.value = String(values.productCost ?? 0);
-    elements.taxPercent.value = String(values.taxPercent ?? 0);
-    elements.freeShippingToggle.checked = values.freeShippingEnabled ?? true;
-    elements.shippingFallback.value = String(values.shippingFallback ?? 12);
-    elements.shippingManualToggle.checked = Boolean(values.forceManualShipping);
-    elements.salePriceManualToggle.checked = Boolean(values.forceManualSalePrice);
-    elements.salePriceManualInput.value = String(values.manualSalePrice ?? 0);
-    elements.listingTypeSelect.value = values.listingTypeOverride || "gold_special";
+    elements.productCost.value = String(values.productCost ?? 0)
+    elements.taxPercent.value = String(values.taxPercent ?? 0)
+    elements.freeShippingToggle.checked = values.freeShippingEnabled ?? true
+    elements.shippingFallback.value = String(values.shippingFallback ?? 12)
+    elements.shippingManualToggle.checked = Boolean(values.forceManualShipping)
+    elements.salePriceManualToggle.checked = Boolean(values.forceManualSalePrice)
+    elements.salePriceManualInput.value = String(values.manualSalePrice ?? 0)
+    elements.listingTypeSelect.value = values.listingTypeOverride || "gold_special"
     if (elements.headerChip) {
       elements.headerChip.textContent =
-        elements.listingTypeSelect.value === "premium" ? "Premium" : "Clássico";
+        elements.listingTypeSelect.value === "premium" ? "Premium" : "Clássico"
     }
-    applySalePriceUiState(elements);
-    applyShippingUiState(elements);
+    applySalePriceUiState(elements)
+    applyShippingUiState(elements)
   }
 
   async function hydrateInputs() {
-    const elements = getElements();
-    if (!elements) return;
+    const elements = getElements()
+    if (!elements) return
 
-    const { getSettings, getListingState } = globalThis.BranchHunterStorage;
-    const settings = await getSettings();
-    state.manualSaleFeePercentFallback = Number(settings.manualSaleFeePercentFallback ?? 16);
+    const { getSettings, getListingState } = globalThis.BranchHunterStorage
+    const settings = await getSettings()
+    state.manualSaleFeePercentFallback = Number(settings.manualSaleFeePercentFallback ?? 16)
     state.syncConfig = {
       enabled: Boolean(settings.sync?.enabled),
       apiBaseUrl: String(settings.sync?.apiBaseUrl || ""),
       apiKey: String(settings.sync?.apiKey || ""),
-    };
+    }
     state.shippingConfig = {
       freeShippingMinPrice: Number(settings.defaults?.freeShippingMinPrice ?? 79),
       freeShippingSubsidyPercent: Number(settings.defaults?.freeShippingSubsidyPercent ?? 50),
       defaultShippingCost: Number(settings.defaults?.defaultShippingCost ?? 12),
-    };
-    const saved = await getListingState(state.listingId);
+    }
+    const saved = await getListingState(state.listingId)
 
     setOperationInputs(elements, {
       ...settings.defaults,
@@ -652,17 +651,17 @@
       forceManualSalePrice: saved?.manualMarketplace?.forceManualSalePrice ?? false,
       manualSalePrice: saved?.manualMarketplace?.salePrice ?? 0,
       listingTypeOverride: saved?.manualMarketplace?.listingType || "gold_special",
-    });
+    })
 
-    await refreshAndCompute(elements, false, { refreshMarketplace: true });
+    await refreshAndCompute(elements, false, { refreshMarketplace: true })
   }
 
   function bindEvents() {
-    const elements = getElements();
-    if (!elements) return;
+    const elements = getElements()
+    if (!elements) return
 
     async function recalcAndPersist() {
-      await refreshAndCompute(elements, true);
+      await refreshAndCompute(elements, true)
     }
 
     const inputFields = [
@@ -670,180 +669,180 @@
       elements.taxPercent,
       elements.shippingFallback,
       elements.salePriceManualInput,
-    ];
+    ]
 
     for (const input of inputFields) {
       input.addEventListener("input", () => {
-        void recalcAndPersist();
-      });
+        void recalcAndPersist()
+      })
     }
     elements.shippingManualToggle.addEventListener("change", () => {
-      applyShippingUiState(elements);
-      void recalcAndPersist();
-    });
+      applyShippingUiState(elements)
+      void recalcAndPersist()
+    })
     elements.freeShippingToggle.addEventListener("change", () => {
-      applyShippingUiState(elements);
-      void recalcAndPersist();
-    });
+      applyShippingUiState(elements)
+      void recalcAndPersist()
+    })
     elements.salePriceManualToggle.addEventListener("change", () => {
-      applySalePriceUiState(elements);
+      applySalePriceUiState(elements)
       if (elements.salePriceManualToggle.checked && state.marketplaceDataCache?.salePrice) {
-        elements.salePriceManualInput.value = String(state.marketplaceDataCache.salePrice);
+        elements.salePriceManualInput.value = String(state.marketplaceDataCache.salePrice)
       }
-      void recalcAndPersist();
-    });
+      void recalcAndPersist()
+    })
 
     elements.listingTypeSelect.addEventListener("change", () => {
-      const label = elements.listingTypeSelect.value === "premium" ? "Premium" : "Clássico";
-      elements.headerChip.textContent = label;
-      void recalcAndPersist();
-    });
+      const label = elements.listingTypeSelect.value === "premium" ? "Premium" : "Clássico"
+      elements.headerChip.textContent = label
+      void recalcAndPersist()
+    })
 
     elements.toggleDetails.addEventListener("click", () => {
-      const isOpen = elements.detailsPanel.classList.toggle("open");
-      elements.toggleLabel.textContent = isOpen ? "Ver menos" : "Ver mais";
-      elements.toggleDetails.classList.toggle("expanded", isOpen);
-    });
+      const isOpen = elements.detailsPanel.classList.toggle("open")
+      elements.toggleLabel.textContent = isOpen ? "Ver menos" : "Ver mais"
+      elements.toggleDetails.classList.toggle("expanded", isOpen)
+    })
 
     elements.syncDynamic.addEventListener("click", async () => {
-      await syncListingContext();
-      await refreshAndCompute(elements, true, { refreshMarketplace: true });
-    });
+      await syncListingContext()
+      await refreshAndCompute(elements, true, { refreshMarketplace: true })
+    })
 
     elements.reset.addEventListener("click", async () => {
-      const { getSettings } = globalThis.BranchHunterStorage;
-      const settings = await getSettings();
-      state.manualSaleFeePercentFallback = Number(settings.manualSaleFeePercentFallback ?? 16);
+      const { getSettings } = globalThis.BranchHunterStorage
+      const settings = await getSettings()
+      state.manualSaleFeePercentFallback = Number(settings.manualSaleFeePercentFallback ?? 16)
       state.syncConfig = {
         enabled: Boolean(settings.sync?.enabled),
         apiBaseUrl: String(settings.sync?.apiBaseUrl || ""),
         apiKey: String(settings.sync?.apiKey || ""),
-      };
+      }
 
       setOperationInputs(elements, {
         ...settings.defaults,
-      });
-      await recalcAndPersist();
-    });
+      })
+      await recalcAndPersist()
+    })
   }
 
   function mountPanel() {
-    const anchorResult = globalThis.BranchHunterPageUtils.findBestAnchor();
+    const anchorResult = globalThis.BranchHunterPageUtils.findBestAnchor()
     const fallbackNode =
       document.querySelector("[data-testid='buy-box-container']") ||
       document.querySelector(".ui-pdp-container__col.col-2") ||
-      document.querySelector(".ui-pdp-right-column");
+      document.querySelector(".ui-pdp-right-column")
     const resolvedAnchor = anchorResult?.node
       ? anchorResult
       : fallbackNode
         ? { node: fallbackNode, mode: "after" }
-        : null;
+        : null
     if (!resolvedAnchor?.node) {
-      logDebug("Anchor nao encontrado no momento.");
-      return false;
+      logDebug("Anchor nao encontrado no momento.")
+      return false
     }
 
-    const existingHost = document.getElementById(PANEL_HOST_ID);
+    const existingHost = document.getElementById(PANEL_HOST_ID)
     if (existingHost) {
-      state.host = existingHost;
-      state.shadowRoot = existingHost.shadowRoot;
-      return true;
+      state.host = existingHost
+      state.shadowRoot = existingHost.shadowRoot
+      return true
     }
 
-    const host = document.createElement("div");
-    host.id = PANEL_HOST_ID;
-    host.style.display = "block";
-    host.style.width = "100%";
-    host.style.marginTop = "12px";
-    host.style.marginBottom = "12px";
+    const host = document.createElement("div")
+    host.id = PANEL_HOST_ID
+    host.style.display = "block"
+    host.style.width = "100%"
+    host.style.marginTop = "12px"
+    host.style.marginBottom = "12px"
 
     const inBuyColumn = Boolean(
       resolvedAnchor.node.closest?.(".ui-pdp-container__col.col-2") ||
-        resolvedAnchor.node.matches?.("[data-testid='buy-box-container']"),
-    );
+      resolvedAnchor.node.matches?.("[data-testid='buy-box-container']"),
+    )
     if (inBuyColumn) {
-      host.style.position = "sticky";
-      host.style.top = "12px";
-      host.style.zIndex = "10";
+      host.style.position = "sticky"
+      host.style.top = "12px"
+      host.style.zIndex = "10"
     }
 
     if (resolvedAnchor.mode === "before") {
-      resolvedAnchor.node.parentNode?.insertBefore(host, resolvedAnchor.node);
+      resolvedAnchor.node.parentNode?.insertBefore(host, resolvedAnchor.node)
     } else if (resolvedAnchor.mode === "after") {
-      resolvedAnchor.node.parentNode?.insertBefore(host, resolvedAnchor.node.nextSibling);
+      resolvedAnchor.node.parentNode?.insertBefore(host, resolvedAnchor.node.nextSibling)
     } else if (resolvedAnchor.mode === "prepend") {
-      resolvedAnchor.node.prepend(host);
+      resolvedAnchor.node.prepend(host)
     } else {
-      resolvedAnchor.node.append(host);
+      resolvedAnchor.node.append(host)
     }
 
-    const shadow = host.attachShadow({ mode: "open" });
-    shadow.innerHTML = buildPanelHTML();
-    state.host = host;
-    state.shadowRoot = shadow;
-    return true;
+    const shadow = host.attachShadow({ mode: "open" })
+    shadow.innerHTML = buildPanelHTML()
+    state.host = host
+    state.shadowRoot = shadow
+    return true
   }
 
   async function renderOrRefreshPanel() {
-    if (!isMlProductPage()) return;
+    if (!isMlProductPage()) return
 
-    const mounted = mountPanel();
-    if (!mounted || !state.shadowRoot) return;
+    const mounted = mountPanel()
+    if (!mounted || !state.shadowRoot) return
 
-    await syncListingContext();
-    state.marketplaceDataCache = null;
+    await syncListingContext()
+    state.marketplaceDataCache = null
 
     if (!state.isInitialized) {
-      await hydrateInputs();
-      bindEvents();
-      state.isInitialized = true;
-      logDebug("Painel injetado com sucesso.");
-      return;
+      await hydrateInputs()
+      bindEvents()
+      state.isInitialized = true
+      logDebug("Painel injetado com sucesso.")
+      return
     }
 
-    const elements = getElements();
-    if (!elements) return;
+    const elements = getElements()
+    if (!elements) return
 
-    await refreshAndCompute(elements, false, { refreshMarketplace: false });
+    await refreshAndCompute(elements, false, { refreshMarketplace: false })
   }
 
   function scheduleRefresh() {
-    if (state.renderDebounce) clearTimeout(state.renderDebounce);
+    if (state.renderDebounce) clearTimeout(state.renderDebounce)
     state.renderDebounce = setTimeout(() => {
-      void renderOrRefreshPanel();
-    }, 140);
+      void renderOrRefreshPanel()
+    }, 140)
   }
 
   function setupDomObserver() {
-    if (state.observer) state.observer.disconnect();
+    if (state.observer) state.observer.disconnect()
     state.observer = new MutationObserver(() => {
-      let mustRefresh = false;
+      let mustRefresh = false
       if (state.lastUrl !== location.href) {
-        state.lastUrl = location.href;
-        state.isInitialized = false;
-        state.marketplaceDataCache = null;
-        mustRefresh = true;
+        state.lastUrl = location.href
+        state.isInitialized = false
+        state.marketplaceDataCache = null
+        mustRefresh = true
       }
-      const hostGone = state.host && !document.body.contains(state.host);
+      const hostGone = state.host && !document.body.contains(state.host)
       if (hostGone) {
-        state.host = null;
-        state.shadowRoot = null;
-        state.isInitialized = false;
-        state.marketplaceDataCache = null;
-        mustRefresh = true;
+        state.host = null
+        state.shadowRoot = null
+        state.isInitialized = false
+        state.marketplaceDataCache = null
+        mustRefresh = true
       }
       if (!state.host) {
-        mustRefresh = true;
+        mustRefresh = true
       }
       if (mustRefresh) {
-        scheduleRefresh();
+        scheduleRefresh()
       }
-    });
+    })
 
     state.observer.observe(document.documentElement, {
       childList: true,
       subtree: true,
-    });
+    })
   }
 
   // ═══════════════════════════════════════════
@@ -851,10 +850,10 @@
   // ═══════════════════════════════════════════
 
   function injectCatalogBadge(card) {
-    if (card.querySelector("[data-bh-catalog-badge]")) return;
+    if (card.querySelector("[data-bh-catalog-badge]")) return
 
-    const badge = document.createElement("div");
-    badge.setAttribute("data-bh-catalog-badge", "true");
+    const badge = document.createElement("div")
+    badge.setAttribute("data-bh-catalog-badge", "true")
     Object.assign(badge.style, {
       display: "inline-flex",
       alignItems: "center",
@@ -874,43 +873,42 @@
       letterSpacing: "0.3px",
       boxShadow: "0 2px 6px rgba(0,0,0,0.3)",
       pointerEvents: "none",
-    });
+    })
     badge.innerHTML =
       '<svg width="11" height="11" viewBox="0 0 24 24" fill="none" style="flex-shrink:0;">' +
       '<path d="M4 4h6v6H4zM14 4h6v6h-6zM4 14h6v6H4zM14 14h6v6h-6z" fill="currentColor"/>' +
-      "</svg>CATÁLOGO";
+      "</svg>CATÁLOGO"
 
-    const cardStyle = getComputedStyle(card);
+    const cardStyle = getComputedStyle(card)
     if (cardStyle.position === "static" || cardStyle.position === "") {
-      card.style.position = "relative";
+      card.style.position = "relative"
     }
-    card.style.overflow = "visible";
-    card.prepend(badge);
+    card.style.overflow = "visible"
+    card.prepend(badge)
   }
 
   function enrichSearchResults() {
-    const { isMlSearchPage, extractCardItemIds } =
-      globalThis.BranchHunterPageUtils;
+    const { isMlSearchPage, extractCardItemIds } = globalThis.BranchHunterPageUtils
 
-    if (!isMlSearchPage()) return;
+    if (!isMlSearchPage()) return
 
-    const cards = extractCardItemIds();
-    if (cards.length === 0) return;
+    const cards = extractCardItemIds()
+    if (cards.length === 0) return
 
-    let badgeCount = 0;
-    for (const { card, itemId, isCatalog } of cards) {
-      card.setAttribute(BADGE_ATTR, "1");
+    let badgeCount = 0
+    for (const { card, isCatalog } of cards) {
+      card.setAttribute(BADGE_ATTR, "1")
       if (isCatalog) {
-        injectCatalogBadge(card);
-        badgeCount++;
+        injectCatalogBadge(card)
+        badgeCount++
       }
     }
-    console.log("[BH] catalog badges:", badgeCount, "/", cards.length, "cards");
+    console.log("[BH] catalog badges:", badgeCount, "/", cards.length, "cards")
   }
 
   function scheduleSerpEnrich() {
-    if (state.serpEnrichDebounce) clearTimeout(state.serpEnrichDebounce);
-    state.serpEnrichDebounce = setTimeout(enrichSearchResults, 300);
+    if (state.serpEnrichDebounce) clearTimeout(state.serpEnrichDebounce)
+    state.serpEnrichDebounce = setTimeout(enrichSearchResults, 300)
   }
 
   // ═══════════════════════════════════════════
@@ -918,53 +916,53 @@
   // ═══════════════════════════════════════════
 
   async function bootstrap() {
-    const { isMlSearchPage } = globalThis.BranchHunterPageUtils;
+    const { isMlSearchPage } = globalThis.BranchHunterPageUtils
 
     if (isMlProductPage()) {
-      const { getSettings } = globalThis.BranchHunterStorage;
-      const settings = await getSettings();
-      if (!settings.autoInjectEnabled) return;
-      await renderOrRefreshPanel();
-      setupDomObserver();
-      return;
+      const { getSettings } = globalThis.BranchHunterStorage
+      const settings = await getSettings()
+      if (!settings.autoInjectEnabled) return
+      await renderOrRefreshPanel()
+      setupDomObserver()
+      return
     }
 
     if (isMlSearchPage()) {
-      console.log("[BH] Search page detected:", location.href);
-      setupSerpObserver();
+      console.log("[BH] Search page detected:", location.href)
+      setupSerpObserver()
       for (let attempt = 0; attempt < 8; attempt++) {
-        const { extractCardItemIds } = globalThis.BranchHunterPageUtils;
-        const cards = extractCardItemIds();
+        const { extractCardItemIds } = globalThis.BranchHunterPageUtils
+        const cards = extractCardItemIds()
         if (cards.length > 0) {
-          enrichSearchResults();
-          return;
+          enrichSearchResults()
+          return
         }
-        await new Promise((r) => setTimeout(r, 500));
+        await new Promise((r) => setTimeout(r, 500))
       }
     }
   }
 
   function setupSerpObserver() {
-    if (state.observer) state.observer.disconnect();
-    let tick = 0;
+    if (state.observer) state.observer.disconnect()
+    let tick = 0
     state.observer = new MutationObserver(() => {
-      tick++;
+      tick++
       if (state.lastUrl !== location.href) {
-        state.lastUrl = location.href;
-        tick = 0;
-        scheduleSerpEnrich();
-        return;
+        state.lastUrl = location.href
+        tick = 0
+        scheduleSerpEnrich()
+        return
       }
       if (tick % 5 === 0) {
-        const { extractCardItemIds } = globalThis.BranchHunterPageUtils;
-        if (extractCardItemIds().length > 0) scheduleSerpEnrich();
+        const { extractCardItemIds } = globalThis.BranchHunterPageUtils
+        if (extractCardItemIds().length > 0) scheduleSerpEnrich()
       }
-    });
+    })
     state.observer.observe(document.documentElement, {
       childList: true,
       subtree: true,
-    });
+    })
   }
 
-  void bootstrap();
-})();
+  void bootstrap()
+})()

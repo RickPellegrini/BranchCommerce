@@ -1,4 +1,4 @@
-(() => {
+;(() => {
   /**
    * @typedef {"api"|"page"|"manual"|"derived"|null} DataSourceKind
    */
@@ -13,7 +13,7 @@
    * @property {string|null} listingType
    * @property {number|null} saleFeePercent
    * @property {number|null} saleFeeAmount
- * @property {number|null} reviewRating
+   * @property {number|null} reviewRating
    * @property {string|null} categoryId
    * @property {string|null} categoryName
    * @property {string|null} shippingMode
@@ -23,7 +23,7 @@
    *   salePrice: DataSourceKind,
    *   listingType: DataSourceKind,
    *   saleFeePercent: DataSourceKind,
- *   reviewRating: DataSourceKind,
+   *   reviewRating: DataSourceKind,
    *   shippingEstimatedCost: DataSourceKind,
    *   shippingRealCost: DataSourceKind
    * }} source
@@ -60,13 +60,13 @@
    * @property {number} riskAmount
    * @property {number} shippingCostUsed
    * @property {ShippingCostSource} shippingCostSource
- * @property {string} shippingModeLabel
- * @property {string} shippingModeDetail
- * @property {number} centralizeFixedCosts
+   * @property {string} shippingModeLabel
+   * @property {string} shippingModeDetail
+   * @property {number} centralizeFixedCosts
    * @property {number} totalCosts
    * @property {number} netProfit
    * @property {number} netMarginPercent
- * @property {number} roiPercent
+   * @property {number} roiPercent
    */
 
   /**
@@ -92,7 +92,7 @@
         shippingEstimatedCost: null,
         shippingRealCost: null,
       },
-    };
+    }
   }
 
   /**
@@ -112,11 +112,11 @@
       freeShippingMinPrice: 79,
       freeShippingSubsidyPercent: 50,
       defaultShippingCost: 12,
-    };
+    }
   }
 
   globalThis.BranchHunterTypes = {
     createEmptyMarketplaceData,
     createDefaultOperationCosts,
-  };
-})();
+  }
+})()

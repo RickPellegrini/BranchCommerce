@@ -11,8 +11,7 @@ export async function requireAuthenticatedAppUserId() {
 export async function getCurrentUserEmail() {
   const user = await currentUser()
   return (
-    user?.emailAddresses.find(
-      (emailAddress) => emailAddress.id === user.primaryEmailAddressId,
-    )?.emailAddress ?? null
+    user?.emailAddresses.find((emailAddress) => emailAddress.id === user.primaryEmailAddressId)
+      ?.emailAddress ?? null
   )
 }

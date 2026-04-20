@@ -1,14 +1,47 @@
 import type { MlAttribute } from "@/features/product-analysis/domain/types"
 
 const STOPWORDS = new Set([
-  "a", "o", "e", "de", "da", "do", "das", "dos", "em", "na", "no",
-  "um", "uma", "para", "por", "com", "se", "que", "ou", "ao",
-  "pelo", "pela", "mais", "como", "ser", "ter", "muito", "so",
-  "kit", "pç", "pcs", "und", "uni", "c",
+  "a",
+  "o",
+  "e",
+  "de",
+  "da",
+  "do",
+  "das",
+  "dos",
+  "em",
+  "na",
+  "no",
+  "um",
+  "uma",
+  "para",
+  "por",
+  "com",
+  "se",
+  "que",
+  "ou",
+  "ao",
+  "pelo",
+  "pela",
+  "mais",
+  "como",
+  "ser",
+  "ter",
+  "muito",
+  "so",
+  "kit",
+  "pç",
+  "pcs",
+  "und",
+  "uni",
+  "c",
 ])
 
 export function removeStopwords(text: string): string {
-  return text.split(/\s+/).filter((w) => w.length > 1 && !STOPWORDS.has(w)).join(" ")
+  return text
+    .split(/\s+/)
+    .filter((w) => w.length > 1 && !STOPWORDS.has(w))
+    .join(" ")
 }
 
 export function normalizeTitle(title: string): string {
@@ -29,11 +62,18 @@ export function extractBrand(attrs: MlAttribute[]): string | null {
 }
 
 export function extractModel(attrs: MlAttribute[]): string | null {
-  return findAttr(attrs, "MODEL") ?? findAttr(attrs, "LINE") ?? findAttr(attrs, "ALPHANUMERIC_MODEL")
+  return (
+    findAttr(attrs, "MODEL") ?? findAttr(attrs, "LINE") ?? findAttr(attrs, "ALPHANUMERIC_MODEL")
+  )
 }
 
 export function extractGtin(attrs: MlAttribute[]): string | null {
-  return findAttr(attrs, "GTIN") ?? findAttr(attrs, "EAN") ?? findAttr(attrs, "UPC") ?? findAttr(attrs, "ISBN")
+  return (
+    findAttr(attrs, "GTIN") ??
+    findAttr(attrs, "EAN") ??
+    findAttr(attrs, "UPC") ??
+    findAttr(attrs, "ISBN")
+  )
 }
 
 export function extractVoltage(attrs: MlAttribute[]): string | null {
@@ -41,7 +81,9 @@ export function extractVoltage(attrs: MlAttribute[]): string | null {
 }
 
 export function extractCapacity(attrs: MlAttribute[]): string | null {
-  return findAttr(attrs, "CAPACITY") ?? findAttr(attrs, "TOTAL_CAPACITY") ?? findAttr(attrs, "WEIGHT")
+  return (
+    findAttr(attrs, "CAPACITY") ?? findAttr(attrs, "TOTAL_CAPACITY") ?? findAttr(attrs, "WEIGHT")
+  )
 }
 
 export function extractColor(attrs: MlAttribute[]): string | null {

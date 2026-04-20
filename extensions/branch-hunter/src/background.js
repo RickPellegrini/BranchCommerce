@@ -20,7 +20,9 @@ async function fetchWithRetry(url, opts = {}, maxRetries = 3) {
 
       if (res.status === 429) {
         const delay = Math.min(2000 * Math.pow(2, attempt), 10000)
-        console.warn(`[BH-fetch] 429 on ${url.slice(0, 80)}... retry ${attempt + 1}/${maxRetries} in ${delay}ms`)
+        console.warn(
+          `[BH-fetch] 429 on ${url.slice(0, 80)}... retry ${attempt + 1}/${maxRetries} in ${delay}ms`,
+        )
         if (attempt < maxRetries) {
           await sleep(delay)
           continue
@@ -180,7 +182,9 @@ async function scrapeItemPage(itemId) {
       return result
     }
 
-    console.log(`[BH-scraper] ${itemId}: ${html.length} chars, redirected to ${finalUrl.slice(0, 80)}`)
+    console.log(
+      `[BH-scraper] ${itemId}: ${html.length} chars, redirected to ${finalUrl.slice(0, 80)}`,
+    )
 
     // Stock
     Object.assign(result, extractStock(html))
@@ -229,16 +233,16 @@ async function handleScrapeCompetitors(payload) {
   const t0 = Date.now()
 
   // Phase 1: Scrape individual item pages (stock + sold + startTime)
-  console.log(`[BH-scraper] scraping ${itemIds.length} items (concurrency=${CONCURRENCY}, delay=${BATCH_DELAY}ms)`)
+  console.log(
+    `[BH-scraper] scraping ${itemIds.length} items (concurrency=${CONCURRENCY}, delay=${BATCH_DELAY}ms)`,
+  )
   const stockMap = {}
   const batches = chunk(itemIds, CONCURRENCY)
 
   for (let i = 0; i < batches.length; i++) {
     if (i > 0) await sleep(BATCH_DELAY)
 
-    const settled = await Promise.allSettled(
-      batches[i].map((id) => scrapeItemPage(id)),
-    )
+    const settled = await Promise.allSettled(batches[i].map((id) => scrapeItemPage(id)))
     for (const r of settled) {
       if (r.status === "fulfilled") {
         stockMap[r.value.itemId] = r.value
@@ -248,12 +252,12 @@ async function handleScrapeCompetitors(payload) {
 
   // Phase 2: Buy box winner from catalog page
   await sleep(1000)
-  const buyBoxWinner = catalogProductId
-    ? await scrapeBuyBoxWinner(catalogProductId)
-    : null
+  const buyBoxWinner = catalogProductId ? await scrapeBuyBoxWinner(catalogProductId) : null
 
   const stockHits = Object.values(stockMap).filter((r) => r.availableQuantity != null).length
-  const soldHits = Object.values(stockMap).filter((r) => r.soldQuantity != null && r.soldQuantity > 0).length
+  const soldHits = Object.values(stockMap).filter(
+    (r) => r.soldQuantity != null && r.soldQuantity > 0,
+  ).length
   console.log(
     `[BH-scraper] done: stock=${stockHits}/${itemIds.length}, sold=${soldHits}/${itemIds.length}, winner=${buyBoxWinner || "none"}, ${Date.now() - t0}ms`,
   )

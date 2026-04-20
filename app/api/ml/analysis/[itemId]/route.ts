@@ -39,17 +39,13 @@ export async function GET(_req: Request, { params }: { params: Promise<{ itemId:
       console.error(`  body:     ${err.bodyText.slice(0, 500)}`)
       console.log(`${"=".repeat(60)}\n`)
 
-      return jsonError(
-        `Erro Mercado Livre (${err.mlStatus})`,
-        err.mlStatus,
-        {
-          source: "mercadolivre_api",
-          authMode: err.authMode,
-          mlStatus: err.mlStatus,
-          endpoint: err.endpoint,
-          mlResponse: err.toJSON().body,
-        },
-      )
+      return jsonError(`Erro Mercado Livre (${err.mlStatus})`, err.mlStatus, {
+        source: "mercadolivre_api",
+        authMode: err.authMode,
+        mlStatus: err.mlStatus,
+        endpoint: err.endpoint,
+        mlResponse: err.toJSON().body,
+      })
     }
 
     const msg = err instanceof Error ? err.message : String(err)

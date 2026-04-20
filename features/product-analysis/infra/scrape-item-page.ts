@@ -133,14 +133,14 @@ export async function scrapeCompetitorPages(
 
   const promises = itemIds.map((id) =>
     scrapeItemPage(id)
-      .then((r) => { target.set(r.itemId, r) })
+      .then((r) => {
+        target.set(r.itemId, r)
+      })
       .catch(() => {}),
   )
 
   const allDone = Promise.allSettled(promises)
-  const timeout = new Promise<void>((resolve) =>
-    setTimeout(resolve, BATCH_TIMEOUT_MS),
-  )
+  const timeout = new Promise<void>((resolve) => setTimeout(resolve, BATCH_TIMEOUT_MS))
 
   await Promise.race([allDone, timeout])
 

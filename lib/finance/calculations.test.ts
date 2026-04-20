@@ -15,7 +15,9 @@ import {
   summarizeTransactions,
 } from "./calculations"
 
-function tx(overrides: Partial<FinancialTransaction> & { kind: "income" | "expense" }): FinancialTransaction {
+function tx(
+  overrides: Partial<FinancialTransaction> & { kind: "income" | "expense" },
+): FinancialTransaction {
   return {
     id: "t1",
     amount: 100,
@@ -310,9 +312,7 @@ describe("calculateProductChampions", () => {
 
   it("filters out products with profit <= 0", () => {
     const lossProducts = [{ id: "p1", name: "Loss", unitCost: 100, sellingPrice: 50 }]
-    const movements = [
-      { productId: "p1", type: "sale" as const, quantity: 1, date: "2025-06-01" },
-    ]
+    const movements = [{ productId: "p1", type: "sale" as const, quantity: 1, date: "2025-06-01" }]
     const result = calculateProductChampions(lossProducts, movements)
     expect(result).toHaveLength(0)
   })
@@ -359,9 +359,7 @@ describe("forecastFinancialTrend", () => {
   it("returns requested months ahead", () => {
     const now = new Date()
     const currentMonth = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`
-    const transactions = [
-      tx({ kind: "income", amount: 1000, date: `${currentMonth}-01` }),
-    ]
+    const transactions = [tx({ kind: "income", amount: 1000, date: `${currentMonth}-01` })]
     const result = forecastFinancialTrend(transactions, 3, 1)
     expect(result).toHaveLength(3)
   })

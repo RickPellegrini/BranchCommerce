@@ -1,0 +1,12 @@
+.next
+out
+build
+coverage
+node_modules
+.vercel
+package-lock.json
+pnpm-lock.yaml
+yarn.lock
+convex/_generated
+*.min.js
+extensions/branch-hunter/node_modules
