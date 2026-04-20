@@ -5718,7 +5718,9 @@ export function FinancialDashboard() {
                                 </TableCell>
                                 <TableCell>
                                   <Badge
-                                    variant={transaction.kind === "income" ? "default" : "secondary"}
+                                    variant={
+                                      transaction.kind === "income" ? "default" : "secondary"
+                                    }
                                   >
                                     {transaction.kind === "income" ? "Entrada" : "Despesa"}
                                   </Badge>

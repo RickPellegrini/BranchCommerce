@@ -1,0 +1,17 @@
+---
+description: Executar Prettier nos ficheiros TS/JS/TSX/JSX alterados antes de concluir
+globs: "**/*.ts,**/*.tsx,**/*.js,**/*.jsx"
+alwaysApply: false
+---
+
+# Prettier após editar TypeScript ou JavaScript
+
+Sempre que **criar ou modificar** ficheiros `.ts`, `.tsx`, `.js` ou `.jsx`, executar no terminal do projeto **antes de finalizar a tarefa**:
+
+```bash
+npx prettier --write <caminho/do/ficheiro>
+```
+
+- Um ficheiro por vez ou vários caminhos na mesma invocação.
+- Se alteraste vários ficheiros destes tipos, corre Prettier em **todos** eles.
+- Não é necessário aplicar Prettier a ficheiros que não tenham sido tocados.
