@@ -6,10 +6,11 @@ import { X, ChevronRight, Package } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Textarea } from "@/components/ui/textarea"
+import { KanbanStageIcon } from "./column-icons"
 import {
+  type KanbanColumnId,
   type KanbanProduct,
   type KanbanMovement,
-  type KanbanStatus,
   KANBAN_COLUMNS,
   getUrgency,
   urgencyColor,
@@ -21,7 +22,7 @@ interface ProductDetailModalProps {
   product: KanbanProduct
   movements: KanbanMovement[]
   onClose: () => void
-  onMoveTo: (status: KanbanStatus, note?: string, estimatedArrival?: string) => Promise<void>
+  onMoveTo: (target: KanbanColumnId, note?: string, estimatedArrival?: string) => Promise<void>
   onSaveEdits: (updates: Partial<KanbanProduct>) => Promise<void>
 }
 
@@ -188,9 +189,11 @@ export function ProductDetailModal({
                   disabled={saving}
                   size="sm"
                   variant="outline"
+                  className="gap-1.5"
                 >
-                  Mover para {nextCol.emoji} {nextCol.label}
-                  <ChevronRight className="ml-1 h-4 w-4" />
+                  <KanbanStageIcon stageId={nextCol.id} className="h-3.5 w-3.5" />
+                  Mover para {nextCol.label}
+                  <ChevronRight className="ml-0.5 h-4 w-4 opacity-70" />
                 </Button>
               )}
             </div>

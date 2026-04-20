@@ -30,22 +30,31 @@ export interface KanbanMovement {
 export const KANBAN_COLUMNS: Array<{
   id: KanbanStatus
   label: string
-  emoji: string
-  color: string
   droppable?: boolean
 }> = [
-  { id: "planned", label: "Planejado", emoji: "📋", color: "#60a5fa" },
-  { id: "buying", label: "Comprando", emoji: "🛒", color: "#fbbf24" },
-  { id: "in_transit", label: "Em Trânsito", emoji: "🚚", color: "#fb923c" },
-  { id: "in_stock", label: "No Estoque", emoji: "✅", color: "#4ade80" },
+  { id: "planned", label: "Planejado" },
+  { id: "buying", label: "Comprando" },
+  { id: "in_transit", label: "Em trânsito" },
+  { id: "in_stock", label: "No estoque" },
 ]
 
 export const EM_FALTA_COLUMN = {
   id: "em_falta" as const,
-  label: "Em Falta",
-  emoji: "🔴",
-  color: "#f87171",
-  droppable: false,
+  label: "Em falta",
+  droppable: true as const,
+}
+
+/** Coluna visual do card no quadro (inclui Em falta, que depende de quantidade + status). */
+export type KanbanColumnId = KanbanStatus | "em_falta"
+
+export function getKanbanColumnId(product: KanbanProduct): KanbanColumnId {
+  if (product.quantity === 0 && product.kanbanStatus === "in_stock") {
+    return "em_falta"
+  }
+  if (product.kanbanStatus === "in_stock" && product.quantity > 0) {
+    return "in_stock"
+  }
+  return product.kanbanStatus
 }
 
 export function getUrgency(product: KanbanProduct): UrgencyLevel {

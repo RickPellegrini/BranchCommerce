@@ -94,6 +94,12 @@ import type {
 import { cn } from "@/lib/utils"
 import { AnalysisModal } from "@/features/product-analysis/components/AnalysisModal"
 import { HunterAnalysisPage } from "@/features/product-analysis/components/HunterAnalysisPage"
+import { KanbanBoard } from "@/components/estoque/KanbanBoard"
+import type {
+  KanbanColumnId,
+  KanbanProduct,
+  KanbanStatus,
+} from "@/components/estoque/types"
 
 /**
  * Valor fixo só quando a API de saldo está indisponível: referência de garantia.
@@ -119,6 +125,9 @@ type StockProduct = {
   minStock: number
   unitCost: number
   sellingPrice?: number
+  kanbanStatus?: KanbanStatus
+  kanbanNote?: string
+  estimatedArrival?: string
 }
 
 type StockMovement = {
@@ -1492,6 +1501,7 @@ export function FinancialDashboard() {
   const deleteTransaction = useMutation(api.finance.deleteTransaction)
   const addProduct = useMutation(api.stock.addProduct)
   const updateProduct = useMutation(api.stock.updateProduct)
+  const applyKanbanMoveMutation = useMutation(api.stock.applyKanbanMove)
   const deleteProduct = useMutation(api.stock.deleteProduct)
   const addMovement = useMutation(api.stock.addMovement)
   const syncStockFromMercadoLivre = useMutation(api.stock.syncFromMercadoLivre)
@@ -1631,8 +1641,31 @@ export function FinancialDashboard() {
         minStock: item.minStock,
         unitCost: item.unitCost,
         sellingPrice: item.sellingPrice,
+        kanbanStatus: item.kanbanStatus,
+        kanbanNote: item.kanbanNote,
+        estimatedArrival: item.estimatedArrival,
       })),
     [stockData?.products],
+  )
+
+  const kanbanProducts = useMemo<KanbanProduct[]>(
+    () =>
+      products.map((p) => ({
+        id: p.id,
+        name: p.name,
+        sku: p.sku,
+        mlItemId: p.mlItemId,
+        imageUrl: p.imageUrl,
+        category: p.category,
+        quantity: p.quantity,
+        minStock: p.minStock,
+        unitCost: p.unitCost,
+        sellingPrice: p.sellingPrice,
+        kanbanStatus: p.kanbanStatus ?? (p.quantity > 0 ? "in_stock" : "planned"),
+        kanbanNote: p.kanbanNote,
+        estimatedArrival: p.estimatedArrival,
+      })),
+    [products],
   )
 
   const movements = useMemo<StockMovement[]>(
@@ -2572,6 +2605,19 @@ export function FinancialDashboard() {
     }
 
     try {
+      const current = products.find((pr) => pr.id === editingProductId)
+      let resolvedKanban =
+        current?.kanbanStatus ?? (quantity > 0 ? "in_stock" : "planned")
+      if (current && current.quantity > 0 && quantity === 0) {
+        resolvedKanban = "in_stock"
+      }
+      if (current && current.quantity > 0 && quantity === 0) {
+        await applyKanbanMoveMutation({
+          userId,
+          productId: editingProductId,
+          target: "em_falta",
+        })
+      }
       await updateProduct({
         userId,
         productId: editingProductId,
@@ -2582,6 +2628,9 @@ export function FinancialDashboard() {
         minStock,
         unitCost,
         sellingPrice,
+        kanbanStatus: resolvedKanban,
+        kanbanNote: current?.kanbanNote,
+        estimatedArrival: current?.estimatedArrival,
       })
       setEditingProductId(null)
       setProductFeedback({ type: "success", message: "Produto atualizado com sucesso." })
@@ -2615,6 +2664,83 @@ export function FinancialDashboard() {
         message: error instanceof Error ? error.message : "Nao foi possivel remover o produto.",
       })
     }
+  }
+
+  const handleKanbanUpdateStatus = async (
+    productId: string,
+    target: KanbanColumnId,
+    note?: string,
+    estimatedArrival?: string,
+  ) => {
+    if (!userId) return
+    try {
+      await applyKanbanMoveMutation({
+        userId,
+        productId: productId as Id<"stockProducts">,
+        target,
+        ...(note !== undefined && { kanbanNote: note }),
+        ...(estimatedArrival !== undefined && { estimatedArrival }),
+      })
+    } catch (error) {
+      setProductFeedback({
+        type: "error",
+        message:
+          error instanceof Error ? error.message : "Nao foi possivel atualizar o quadro Kanban.",
+      })
+    }
+  }
+
+  const handleKanbanSaveEdits = async (productId: string, updates: Partial<KanbanProduct>) => {
+    if (!userId) return
+    const p = products.find((x) => x.id === productId)
+    if (!p) return
+    const nextQty = updates.quantity ?? p.quantity
+    let resolvedKanban =
+      updates.kanbanStatus ??
+      p.kanbanStatus ??
+      (nextQty > 0 ? "in_stock" : "planned")
+    if (p.quantity > 0 && nextQty === 0) {
+      resolvedKanban = "in_stock"
+    }
+    try {
+      if (p.quantity > 0 && nextQty === 0) {
+        await applyKanbanMoveMutation({
+          userId,
+          productId: p.id as Id<"stockProducts">,
+          target: "em_falta",
+          ...(updates.kanbanNote !== undefined && { kanbanNote: updates.kanbanNote }),
+          ...(updates.estimatedArrival !== undefined && {
+            estimatedArrival: updates.estimatedArrival,
+          }),
+        })
+      }
+      await updateProduct({
+        userId,
+        productId: p.id as Id<"stockProducts">,
+        name: p.name,
+        sku: p.sku,
+        category: p.category,
+        quantity: nextQty,
+        minStock: updates.minStock ?? p.minStock,
+        unitCost: p.unitCost,
+        sellingPrice: p.sellingPrice,
+        kanbanStatus: resolvedKanban,
+        kanbanNote: updates.kanbanNote !== undefined ? updates.kanbanNote : p.kanbanNote,
+        estimatedArrival:
+          updates.estimatedArrival !== undefined ? updates.estimatedArrival : p.estimatedArrival,
+      })
+      setProductFeedback({ type: "success", message: "Produto atualizado com sucesso." })
+    } catch (error) {
+      setProductFeedback({
+        type: "error",
+        message: error instanceof Error ? error.message : "Nao foi possivel salvar o produto.",
+      })
+    }
+  }
+
+  const handleKanbanDelete = async (productId: string) => {
+    const p = products.find((x) => x.id === productId)
+    if (p) await removeProduct(p)
   }
 
   const saveMovement = async () => {
@@ -5604,192 +5730,31 @@ export function FinancialDashboard() {
             <StockLevelLegend />
             {activeStockSection === "overview" && (
               <section className="space-y-4">
-                <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
-                  <SummaryCard title="Produtos cadastrados" value={stockSummary.totalProducts} format="number" />
-                  <SummaryCard title="Unidades em estoque" value={stockSummary.totalUnits} format="number" />
-                  <SummaryCard title="Abaixo do minimo" value={stockSummary.lowStockCount} format="number" />
-                  <SummaryCard title="Valor em estoque" value={stockSummary.stockValue} />
-                </div>
-                <Card>
-                  <CardHeader><CardTitle>Produtos criticos</CardTitle></CardHeader>
-                  <CardContent>
-                    <Table>
-                      <TableHeader>
-                        <TableRow><TableHead>Produto</TableHead><TableHead>SKU</TableHead><TableHead>Atual</TableHead><TableHead>Minimo</TableHead></TableRow>
-                      </TableHeader>
-                      <TableBody>
-                        {products.filter((product) => product.quantity <= product.minStock).map((product) => (
-                          <TableRow key={product.id}>
-                            <TableCell>
-                              <div className="flex items-center gap-2">
-                                <div className="h-8 w-8 overflow-hidden rounded border bg-muted">
-                                  {product.imageUrl ? (
-                                    <img
-                                      src={product.imageUrl}
-                                      alt={product.name}
-                                      className="h-full w-full object-cover"
-                                      loading="lazy"
-                                    />
-                                  ) : null}
-                                </div>
-                                <span>{product.name}</span>
-                              </div>
-                            </TableCell>
-                            <TableCell>{product.sku}</TableCell>
-                            <TableCell>
-                              <StockQuantityIndicator quantity={product.quantity} />
-                            </TableCell>
-                            <TableCell>{product.minStock}</TableCell>
-                          </TableRow>
-                        ))}
-                      </TableBody>
-                    </Table>
-                  </CardContent>
-                </Card>
-                <Card>
-                  <CardHeader>
-                    <CardTitle>Produtos em estoque</CardTitle>
-                    <CardDescription>Edite ou exclua itens individualmente.</CardDescription>
-                  </CardHeader>
-                  <CardContent className="space-y-4">
-                    {productFeedback && (
-                      <p
-                        className={cn(
-                          "text-sm",
-                          productFeedback.type === "success" ? "text-primary" : "text-destructive",
-                        )}
-                      >
-                        {productFeedback.message}
-                      </p>
+                {productFeedback && (
+                  <p
+                    className={cn(
+                      "text-sm",
+                      productFeedback.type === "success" ? "text-primary" : "text-destructive",
                     )}
-                    {editingProductId && (
-                      <div className="grid gap-3 rounded-none border border-border p-3 md:grid-cols-2">
-                        <Input
-                          placeholder="Nome do produto"
-                          value={productEditForm.name}
-                          onChange={(event) =>
-                            setProductEditForm((prev) => ({ ...prev, name: event.target.value }))
-                          }
-                        />
-                        <Input
-                          placeholder="SKU"
-                          value={productEditForm.sku}
-                          onChange={(event) =>
-                            setProductEditForm((prev) => ({ ...prev, sku: event.target.value }))
-                          }
-                        />
-                        <Input
-                          placeholder="Categoria"
-                          value={productEditForm.category}
-                          onChange={(event) =>
-                            setProductEditForm((prev) => ({ ...prev, category: event.target.value }))
-                          }
-                        />
-                        <Input
-                          type="number"
-                          placeholder="Quantidade"
-                          value={productEditForm.quantity}
-                          onChange={(event) =>
-                            setProductEditForm((prev) => ({ ...prev, quantity: event.target.value }))
-                          }
-                        />
-                        <Input
-                          type="number"
-                          placeholder="Estoque minimo"
-                          value={productEditForm.minStock}
-                          onChange={(event) =>
-                            setProductEditForm((prev) => ({ ...prev, minStock: event.target.value }))
-                          }
-                        />
-                        <Input
-                          type="number"
-                          placeholder="Custo unitario"
-                          value={productEditForm.unitCost}
-                          onChange={(event) =>
-                            setProductEditForm((prev) => ({ ...prev, unitCost: event.target.value }))
-                          }
-                        />
-                        <Input
-                          type="number"
-                          placeholder="Preco de venda (opcional)"
-                          className="md:col-span-2"
-                          value={productEditForm.sellingPrice}
-                          onChange={(event) =>
-                            setProductEditForm((prev) => ({ ...prev, sellingPrice: event.target.value }))
-                          }
-                        />
-                        <div className="flex gap-2 md:col-span-2">
-                          <Button onClick={saveProductEdit}>Salvar alteracoes</Button>
-                          <Button variant="outline" onClick={() => setEditingProductId(null)}>
-                            Cancelar
-                          </Button>
-                        </div>
-                      </div>
-                    )}
-                    <Table>
-                      <TableHeader>
-                        <TableRow>
-                          <TableHead>Produto</TableHead>
-                          <TableHead>SKU</TableHead>
-                          <TableHead>Categoria</TableHead>
-                          <TableHead>Qtd</TableHead>
-                          <TableHead>Minimo</TableHead>
-                          <TableHead className="text-right">Acoes</TableHead>
-                        </TableRow>
-                      </TableHeader>
-                      <TableBody>
-                        {products.map((product) => (
-                          <TableRow key={product.id}>
-                            <TableCell>
-                              <div className="flex items-center gap-2">
-                                <div className="h-9 w-9 overflow-hidden rounded border bg-muted">
-                                  {product.imageUrl ? (
-                                    <img
-                                      src={product.imageUrl}
-                                      alt={product.name}
-                                      className="h-full w-full object-cover"
-                                      loading="lazy"
-                                    />
-                                  ) : null}
-                                </div>
-                                <div className="space-y-0.5">
-                                  <p>{product.name}</p>
-                                  {product.mlItemId && (
-                                    <p className="text-xs text-muted-foreground">ML: {product.mlItemId}</p>
-                                  )}
-                                </div>
-                              </div>
-                            </TableCell>
-                            <TableCell>{product.sku}</TableCell>
-                            <TableCell>{product.category}</TableCell>
-                            <TableCell>
-                              <StockQuantityIndicator quantity={product.quantity} />
-                            </TableCell>
-                            <TableCell>{product.minStock}</TableCell>
-                            <TableCell className="text-right">
-                              <div className="flex justify-end gap-2">
-                                <Button
-                                  size="sm"
-                                  variant="outline"
-                                  onClick={() => startEditProduct(product)}
-                                >
-                                  Editar
-                                </Button>
-                                <Button
-                                  size="sm"
-                                  variant="destructive"
-                                  onClick={() => void removeProduct(product)}
-                                >
-                                  Excluir
-                                </Button>
-                              </div>
-                            </TableCell>
-                          </TableRow>
-                        ))}
-                      </TableBody>
-                    </Table>
-                  </CardContent>
-                </Card>
+                  >
+                    {productFeedback.message}
+                  </p>
+                )}
+                <KanbanBoard
+                  products={kanbanProducts}
+                  movements={movements.map((m) => ({
+                    id: m.id,
+                    productId: m.productId,
+                    type: m.type,
+                    quantity: m.quantity,
+                    date: m.date,
+                    note: m.note,
+                  }))}
+                  stockSummary={stockSummary}
+                  onUpdateKanbanStatus={handleKanbanUpdateStatus}
+                  onSaveProductEdits={handleKanbanSaveEdits}
+                  onDeleteProduct={handleKanbanDelete}
+                />
               </section>
             )}
 

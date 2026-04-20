@@ -21,12 +21,13 @@ import {
 import { Card, CardContent } from "@/components/ui/card"
 import { cn } from "@/lib/utils"
 import {
+  type KanbanColumnId,
   type KanbanProduct,
   type KanbanMovement,
-  type KanbanStatus,
   type UrgencyLevel,
   KANBAN_COLUMNS,
   EM_FALTA_COLUMN,
+  getKanbanColumnId,
   getUrgency,
   formatCurrencyBRL,
 } from "./types"
@@ -45,11 +46,10 @@ interface StockSummary {
 interface KanbanBoardProps {
   products: KanbanProduct[]
   movements: KanbanMovement[]
-  userId: string
   stockSummary: StockSummary
   onUpdateKanbanStatus: (
     productId: string,
-    status: KanbanStatus,
+    target: KanbanColumnId,
     note?: string,
     estimatedArrival?: string,
   ) => Promise<void>
@@ -106,10 +106,11 @@ export function KanbanBoard({
     const { active, over } = event
     setActiveId(null)
     if (!over) return
-    const newStatus = over.id as KanbanStatus
+    const target = over.id as KanbanColumnId
     const product = products.find((p) => p.id === active.id)
-    if (!product || product.kanbanStatus === newStatus) return
-    void onUpdateKanbanStatus(product.id, newStatus)
+    if (!product) return
+    if (getKanbanColumnId(product) === target) return
+    void onUpdateKanbanStatus(product.id, target)
   }
 
   return (
@@ -149,17 +150,17 @@ export function KanbanBoard({
       <DndContext sensors={sensors} onDragStart={handleDragStart} onDragEnd={handleDragEnd}>
         <div className="-mx-1 overflow-x-auto rounded-xl">
         <div className="flex min-w-max gap-4 px-1 pb-4 pt-1">
-          {/* Em Falta — coluna computada, não droppable */}
+          {/* Em falta: quantidade 0 + status físico "no estoque" (sem pipeline) */}
           <KanbanColumn
             id={EM_FALTA_COLUMN.id}
             label={EM_FALTA_COLUMN.label}
-            emoji={EM_FALTA_COLUMN.emoji}
-            color={EM_FALTA_COLUMN.color}
-            droppable={false}
-            products={filteredProducts.filter((p) => p.quantity === 0)}
+            droppable={EM_FALTA_COLUMN.droppable}
+            products={filteredProducts.filter(
+              (p) => p.quantity === 0 && p.kanbanStatus === "in_stock",
+            )}
             onCardDetails={setSelectedProduct}
-            onCardMoveTo={(product, status) =>
-              void onUpdateKanbanStatus(product.id, status)
+            onCardMoveTo={(product, columnTarget) =>
+              void onUpdateKanbanStatus(product.id, columnTarget)
             }
             onCardDelete={(product) => void onDeleteProduct(product.id)}
           />
@@ -168,14 +169,15 @@ export function KanbanBoard({
               key={col.id}
               id={col.id}
               label={col.label}
-              emoji={col.emoji}
-              color={col.color}
-              products={filteredProducts.filter(
-                (p) => p.kanbanStatus === col.id && p.quantity > 0,
-              )}
+              products={filteredProducts.filter((p) => {
+                if (col.id === "in_stock") {
+                  return p.kanbanStatus === "in_stock" && p.quantity > 0
+                }
+                return p.kanbanStatus === col.id
+              })}
               onCardDetails={setSelectedProduct}
-              onCardMoveTo={(product, status) =>
-                void onUpdateKanbanStatus(product.id, status)
+              onCardMoveTo={(product, columnTarget) =>
+                void onUpdateKanbanStatus(product.id, columnTarget)
               }
               onCardDelete={(product) => void onDeleteProduct(product.id)}
             />
@@ -202,8 +204,8 @@ export function KanbanBoard({
           product={selectedProduct}
           movements={movements}
           onClose={() => setSelectedProduct(null)}
-          onMoveTo={async (status, note, arrival) => {
-            await onUpdateKanbanStatus(selectedProduct.id, status, note, arrival)
+          onMoveTo={async (target, note, arrival) => {
+            await onUpdateKanbanStatus(selectedProduct.id, target, note, arrival)
             setSelectedProduct(null)
           }}
           onSaveEdits={async (updates) => {

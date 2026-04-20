@@ -3,26 +3,23 @@
 import { useDroppable } from "@dnd-kit/core"
 import { Package } from "lucide-react"
 import { cn } from "@/lib/utils"
-import type { KanbanProduct, KanbanStatus } from "./types"
+import { KanbanStageIcon, kanbanStageStyle } from "./column-icons"
+import type { KanbanColumnId, KanbanProduct } from "./types"
 import { ProductCard } from "./ProductCard"
 
 interface KanbanColumnProps {
   id: string
   label: string
-  emoji: string
-  color: string
   products: KanbanProduct[]
   droppable?: boolean
   onCardDetails: (product: KanbanProduct) => void
-  onCardMoveTo: (product: KanbanProduct, status: KanbanStatus) => void
+  onCardMoveTo: (product: KanbanProduct, target: KanbanColumnId) => void
   onCardDelete: (product: KanbanProduct) => void
 }
 
 export function KanbanColumn({
   id,
   label,
-  emoji,
-  color,
   products,
   droppable = true,
   onCardDetails,
@@ -30,26 +27,28 @@ export function KanbanColumn({
   onCardDelete,
 }: KanbanColumnProps) {
   const { setNodeRef, isOver } = useDroppable({ id, disabled: !droppable })
+  const stage = kanbanStageStyle(id)
 
   return (
-    <div className="flex w-[272px] flex-shrink-0 flex-col">
+    <div className="flex w-[272px] shrink-0 flex-col">
       {/* Column header */}
       <div
-        className="mb-3 flex items-center justify-between rounded-xl px-3 py-2"
-        style={{
-          backgroundColor: `${color}20`,
-          borderLeft: `3px solid ${color}`,
-        }}
+        className={cn(
+          "mb-3 flex items-center justify-between rounded-lg border border-border bg-card/70 px-3 py-2.5 shadow-sm border-l-4",
+          stage.border,
+        )}
       >
-        <div className="flex items-center gap-2">
-          <span>{emoji}</span>
-          <span className="text-sm font-semibold" style={{ color }}>
+        <div className="flex min-w-0 items-center gap-2">
+          <KanbanStageIcon stageId={id} className={stage.icon} aria-hidden />
+          <span className="truncate text-sm font-semibold leading-tight text-foreground">
             {label}
           </span>
         </div>
         <span
-          className="rounded-full px-2 py-0.5 text-xs font-medium"
-          style={{ backgroundColor: `${color}30`, color }}
+          className={cn(
+            "shrink-0 rounded-full px-2 py-0.5 text-xs font-medium tabular-nums",
+            stage.badge,
+          )}
         >
           {products.length}
         </span>

@@ -2,6 +2,13 @@ import { v } from "convex/values";
 
 import { mutation, query } from "./_generated/server";
 
+const kanbanStatusValidator = v.union(
+  v.literal("planned"),
+  v.literal("buying"),
+  v.literal("in_transit"),
+  v.literal("in_stock"),
+);
+
 export const getDashboardData = query({
   args: {
     userId: v.string(),
@@ -74,6 +81,7 @@ export const addProduct = mutation({
       unitCost: args.unitCost,
       unitCostSource: "manual",
       sellingPrice: args.sellingPrice,
+      kanbanStatus: args.quantity > 0 ? "in_stock" : "planned",
       createdAt: now,
       updatedAt: now,
     });
@@ -105,6 +113,9 @@ export const updateProduct = mutation({
     minStock: v.number(),
     unitCost: v.number(),
     sellingPrice: v.optional(v.number()),
+    kanbanStatus: v.optional(kanbanStatusValidator),
+    kanbanNote: v.optional(v.string()),
+    estimatedArrival: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
     const product = await ctx.db.get(args.productId);
@@ -145,7 +156,123 @@ export const updateProduct = mutation({
       unitCost: args.unitCost,
       unitCostSource: "manual",
       sellingPrice: args.sellingPrice,
+      ...(args.kanbanStatus !== undefined && { kanbanStatus: args.kanbanStatus }),
+      ...(args.kanbanNote !== undefined && { kanbanNote: args.kanbanNote }),
+      ...(args.estimatedArrival !== undefined && { estimatedArrival: args.estimatedArrival }),
       updatedAt: Date.now(),
+    });
+  },
+});
+
+export const updateProductKanban = mutation({
+  args: {
+    userId: v.string(),
+    productId: v.id("stockProducts"),
+    kanbanStatus: kanbanStatusValidator,
+    kanbanNote: v.optional(v.string()),
+    estimatedArrival: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => {
+    const product = await ctx.db.get(args.productId);
+    if (!product || product.userId !== args.userId) {
+      throw new Error("Produto nao encontrado.");
+    }
+
+    await ctx.db.patch(args.productId, {
+      kanbanStatus: args.kanbanStatus,
+      updatedAt: Date.now(),
+      ...(args.kanbanNote !== undefined && { kanbanNote: args.kanbanNote }),
+      ...(args.estimatedArrival !== undefined && { estimatedArrival: args.estimatedArrival }),
+    });
+  },
+});
+
+const kanbanMoveTargetValidator = v.union(
+  v.literal("em_falta"),
+  kanbanStatusValidator,
+);
+
+/**
+ * Move no Kanban com persistência correta: ir para "Em falta" zera quantidade,
+ * registra movimento de saída e mantém status coerente com o estoque.
+ */
+export const applyKanbanMove = mutation({
+  args: {
+    userId: v.string(),
+    productId: v.id("stockProducts"),
+    target: kanbanMoveTargetValidator,
+    kanbanNote: v.optional(v.string()),
+    estimatedArrival: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => {
+    const product = await ctx.db.get(args.productId);
+    if (!product || product.userId !== args.userId) {
+      throw new Error("Produto nao encontrado.");
+    }
+
+    const now = Date.now();
+    const today = new Date().toISOString().slice(0, 10);
+
+    const notePatch =
+      args.kanbanNote !== undefined ? { kanbanNote: args.kanbanNote } : {};
+    const arrivalPatch =
+      args.estimatedArrival !== undefined
+        ? { estimatedArrival: args.estimatedArrival }
+        : {};
+
+    if (args.target === "em_falta") {
+      const prevQty = product.quantity;
+      if (prevQty === 0 && product.kanbanStatus === "in_stock") {
+        await ctx.db.patch(args.productId, {
+          ...notePatch,
+          ...arrivalPatch,
+          updatedAt: now,
+        });
+        return;
+      }
+
+      await ctx.db.patch(args.productId, {
+        quantity: 0,
+        kanbanStatus: "in_stock",
+        ...notePatch,
+        ...arrivalPatch,
+        updatedAt: now,
+      });
+
+      if (prevQty > 0) {
+        await ctx.db.insert("stockMovements", {
+          userId: args.userId,
+          productId: args.productId,
+          type: "out",
+          quantity: prevQty,
+          date: today,
+          note: "Saida via Kanban (movido para Em falta)",
+          createdAt: now,
+        });
+      }
+      return;
+    }
+
+    if (args.target === "in_stock") {
+      if (product.quantity <= 0) {
+        throw new Error(
+          "Sem unidades em estoque. Ajuste a quantidade no produto antes de colocar em No estoque.",
+        );
+      }
+      await ctx.db.patch(args.productId, {
+        kanbanStatus: "in_stock",
+        ...notePatch,
+        ...arrivalPatch,
+        updatedAt: now,
+      });
+      return;
+    }
+
+    await ctx.db.patch(args.productId, {
+      kanbanStatus: args.target,
+      ...notePatch,
+      ...arrivalPatch,
+      updatedAt: now,
     });
   },
 });
@@ -249,6 +376,7 @@ export const syncFromMercadoLivre = mutation({
           imageUrl: listing.thumbnail,
           quantity: nextQuantity,
           sellingPrice: listing.price,
+          kanbanStatus: "in_stock",
           updatedAt: now,
         });
 
@@ -279,6 +407,7 @@ export const syncFromMercadoLivre = mutation({
         minStock: 0,
         unitCost: 0,
         sellingPrice: listing.price,
+        kanbanStatus: "in_stock",
         createdAt: now,
         updatedAt: now,
       });

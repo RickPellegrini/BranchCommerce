@@ -5,10 +5,13 @@ import { CSS } from "@dnd-kit/utilities"
 import { MoreVertical, Package } from "lucide-react"
 import { DropdownMenu } from "radix-ui"
 import { cn } from "@/lib/utils"
+import { KanbanStageIcon } from "./column-icons"
 import {
+  type KanbanColumnId,
   type KanbanProduct,
-  type KanbanStatus,
+  EM_FALTA_COLUMN,
   KANBAN_COLUMNS,
+  getKanbanColumnId,
   getUrgency,
   urgencyColor,
   urgencyBorderClass,
@@ -18,7 +21,7 @@ interface ProductCardProps {
   product: KanbanProduct
   isDragging?: boolean
   onDetails: () => void
-  onMoveTo: (status: KanbanStatus) => void
+  onMoveTo: (target: KanbanColumnId) => void
   onDelete: () => void
 }
 
@@ -77,8 +80,8 @@ export function ProductCard({
             <p title={product.name} className="truncate text-sm font-medium leading-tight">
               {product.name}
             </p>
-            {product.quantity === 0 && (
-              <span className="flex-shrink-0 rounded bg-red-500/20 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-red-400">
+            {product.quantity === 0 && product.kanbanStatus === "in_stock" && (
+              <span className="shrink-0 rounded bg-red-500/20 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-red-400">
                 Em falta
               </span>
             )}
@@ -109,13 +112,35 @@ export function ProductCard({
                 Ver detalhes
               </DropdownMenu.Item>
               <DropdownMenu.Separator className="my-1 h-px bg-border" />
-              {KANBAN_COLUMNS.filter((col) => col.id !== product.kanbanStatus).map((col) => (
+              {product.quantity > 0 && getKanbanColumnId(product) !== EM_FALTA_COLUMN.id && (
+                <DropdownMenu.Item
+                  className="cursor-pointer rounded px-2 py-1.5 text-sm outline-none hover:bg-muted"
+                  onClick={() => onMoveTo(EM_FALTA_COLUMN.id)}
+                >
+                  <span className="flex items-center gap-2">
+                    <KanbanStageIcon stageId={EM_FALTA_COLUMN.id} className="h-3.5 w-3.5 opacity-80" />
+                    <span>
+                      Mover para <span className="font-medium">{EM_FALTA_COLUMN.label}</span>
+                    </span>
+                  </span>
+                </DropdownMenu.Item>
+              )}
+              {KANBAN_COLUMNS.filter((col) => {
+                if (col.id === getKanbanColumnId(product)) return false
+                if (col.id === "in_stock" && product.quantity <= 0) return false
+                return true
+              }).map((col) => (
                 <DropdownMenu.Item
                   key={col.id}
                   className="cursor-pointer rounded px-2 py-1.5 text-sm outline-none hover:bg-muted"
                   onClick={() => onMoveTo(col.id)}
                 >
-                  Mover para {col.emoji} {col.label}
+                  <span className="flex items-center gap-2">
+                    <KanbanStageIcon stageId={col.id} className="h-3.5 w-3.5 opacity-80" />
+                    <span>
+                      Mover para <span className="font-medium">{col.label}</span>
+                    </span>
+                  </span>
                 </DropdownMenu.Item>
               ))}
               <DropdownMenu.Separator className="my-1 h-px bg-border" />

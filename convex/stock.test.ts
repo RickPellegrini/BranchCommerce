@@ -210,6 +210,61 @@ describe("stock", () => {
     })
   })
 
+  // ── applyKanbanMove ─────────────────────────────────────────────
+
+  describe("applyKanbanMove", () => {
+    it("move to em_falta zeros stock and records out movement", async () => {
+      const t = convexTest(schema, modules)
+      const id = await setupProduct(t)
+      await t.mutation(api.stock.applyKanbanMove, {
+        userId: "user1",
+        productId: id,
+        target: "em_falta",
+      })
+      const data = await t.query(api.stock.getDashboardData, { userId: "user1" })
+      expect(data.products[0].quantity).toBe(0)
+      expect(data.products[0].kanbanStatus).toBe("in_stock")
+      const outs = data.movements.filter((m) => m.type === "out")
+      expect(outs).toHaveLength(1)
+      expect(outs[0].quantity).toBe(10)
+    })
+
+    it("rejects in_stock target when quantity is zero", async () => {
+      const t = convexTest(schema, modules)
+      await t.mutation(api.stock.addProduct, {
+        userId: "user1",
+        name: "Empty",
+        sku: "EMP",
+        category: "Test",
+        quantity: 0,
+        minStock: 0,
+        unitCost: 0,
+      })
+      const data = await t.query(api.stock.getDashboardData, { userId: "user1" })
+      const id = data.products[0]._id
+      await expect(
+        t.mutation(api.stock.applyKanbanMove, {
+          userId: "user1",
+          productId: id,
+          target: "in_stock",
+        }),
+      ).rejects.toThrow("Sem unidades em estoque")
+    })
+
+    it("pipeline move only updates kanban when qty unchanged", async () => {
+      const t = convexTest(schema, modules)
+      const id = await setupProduct(t)
+      await t.mutation(api.stock.applyKanbanMove, {
+        userId: "user1",
+        productId: id,
+        target: "buying",
+      })
+      const data = await t.query(api.stock.getDashboardData, { userId: "user1" })
+      expect(data.products[0].quantity).toBe(10)
+      expect(data.products[0].kanbanStatus).toBe("buying")
+    })
+  })
+
   // ── deleteProduct ─────────────────────────────────────────────────
 
   describe("deleteProduct", () => {

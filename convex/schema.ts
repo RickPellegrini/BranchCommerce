@@ -61,6 +61,16 @@ export default defineSchema({
     unitCost: v.number(),
     unitCostSource: v.optional(v.union(v.literal("manual"), v.literal("extension"))),
     sellingPrice: v.optional(v.number()),
+    kanbanStatus: v.optional(
+      v.union(
+        v.literal("planned"),
+        v.literal("buying"),
+        v.literal("in_transit"),
+        v.literal("in_stock"),
+      ),
+    ),
+    estimatedArrival: v.optional(v.string()),
+    kanbanNote: v.optional(v.string()),
     createdAt: v.number(),
     updatedAt: v.number(),
   })
