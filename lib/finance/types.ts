@@ -17,6 +17,13 @@ export type FinancialCategory = {
   kind: CategoryKind
 }
 
+/** Comprovante anexado a um lançamento (sessão local; ver API em `AnexosLancamentoModal`). */
+export type AnexoLancamento = {
+  id: string
+  file: File
+  uploadedAt: number
+}
+
 export type FinancialTransaction = {
   id: string
   kind: CategoryKind

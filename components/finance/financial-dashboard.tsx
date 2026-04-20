@@ -43,6 +43,7 @@ import {
   Trophy,
   TrendingDown,
   Wallet,
+  Paperclip,
 } from "lucide-react"
 import Image from "next/image"
 import { ThemeToggle } from "@/components/theme-toggle"
@@ -83,6 +84,7 @@ import {
   summarizeTransactions,
 } from "@/lib/finance/calculations"
 import type {
+  AnexoLancamento,
   ExpenseType,
   FinancialCategory,
   FinancialPeriod,
@@ -90,10 +92,16 @@ import type {
   TransactionPeriodicity,
   TransactionFilters,
 } from "@/lib/finance/types"
+import {
+  AnexosCountBadge,
+  AnexosLancamentoModal,
+  LancamentoFormAnexos,
+} from "@/components/finance/anexos-lancamento-modal"
 import { cn } from "@/lib/utils"
 import { AnalysisModal } from "@/features/product-analysis/components/AnalysisModal"
 import { HunterAnalysisPage } from "@/features/product-analysis/components/HunterAnalysisPage"
 import { KanbanBoard } from "@/components/estoque/KanbanBoard"
+import { StockFeedbackAlert } from "@/components/estoque/stock-feedback-alert"
 import type { KanbanColumnId, KanbanProduct, KanbanStatus } from "@/components/estoque/types"
 
 /**
@@ -1309,6 +1317,14 @@ export function FinancialDashboard() {
   >("all")
   const [historyStartDate, setHistoryStartDate] = useState("")
   const [historyEndDate, setHistoryEndDate] = useState("")
+  const [anexosByLancamentoId, setAnexosByLancamentoId] = useState<
+    Record<string, AnexoLancamento[]>
+  >({})
+  const [anexosModalLancamento, setAnexosModalLancamento] = useState<{
+    id: string
+    description: string
+  } | null>(null)
+  const [launchFormAnexos, setLaunchFormAnexos] = useState<AnexoLancamento[]>([])
   const [dreMonth, setDreMonth] = useState(new Date().getMonth() + 1)
   const [dreYear, setDreYear] = useState(new Date().getFullYear())
   const [dreIncludeMovements, setDreIncludeMovements] = useState(true)
@@ -2426,7 +2442,7 @@ export function FinancialDashboard() {
     setLaunchSaving(true)
     setLaunchFeedback(null)
     try {
-      await addTransaction({
+      const newTxId = await addTransaction({
         userId,
         kind: launchForm.kind,
         amount: Number(launchForm.amount),
@@ -2437,6 +2453,15 @@ export function FinancialDashboard() {
         expenseType: launchForm.kind === "expense" ? launchForm.expenseType : undefined,
         periodicity: launchForm.periodicity,
       })
+      const comprovantesDoFormulario = launchFormAnexos
+      const idKey = String(newTxId)
+      if (comprovantesDoFormulario.length > 0) {
+        setAnexosByLancamentoId((prev) => ({
+          ...prev,
+          [idKey]: [...(prev[idKey] ?? []), ...comprovantesDoFormulario],
+        }))
+      }
+      setLaunchFormAnexos([])
       setLaunchForm((previous) => ({
         ...previous,
         amount: "",
@@ -2447,7 +2472,10 @@ export function FinancialDashboard() {
       }))
       setLaunchFeedback({
         type: "success",
-        message: "Lancamento salvo com sucesso no financeiro.",
+        message:
+          comprovantesDoFormulario.length > 0
+            ? "Lancamento salvo com sucesso no financeiro (comprovantes anexados)."
+            : "Lancamento salvo com sucesso no financeiro.",
       })
     } catch (error) {
       setLaunchFeedback({
@@ -4982,7 +5010,16 @@ export function FinancialDashboard() {
                     Registrar lancamento
                   </CardTitle>
                   <CardDescription>
-                    Lance despesas da empresa ou entradas de capital com tipo e periodicidade.
+                    Lance despesas da empresa ou entradas de capital com tipo e periodicidade. Use a
+                    area de comprovantes abaixo ao registrar o custo; em{" "}
+                    <button
+                      type="button"
+                      className="font-medium text-primary underline-offset-2 hover:underline"
+                      onClick={() => setActiveFinanceSection("history")}
+                    >
+                      Historico
+                    </button>{" "}
+                    voce ainda pode abrir o modal de anexos por linha.
                   </CardDescription>
                 </CardHeader>
                 <CardContent className="grid gap-3 md:grid-cols-2">
@@ -5159,6 +5196,11 @@ export function FinancialDashboard() {
                       </SelectContent>
                     </Select>
                   </div>
+                  <LancamentoFormAnexos
+                    anexos={launchFormAnexos}
+                    onAnexosChange={setLaunchFormAnexos}
+                    disabled={launchSaving}
+                  />
                   <Button
                     className="md:col-span-2 gap-2 bg-primary hover:bg-primary/90"
                     onClick={saveLaunch}
@@ -5658,74 +5700,128 @@ export function FinancialDashboard() {
                             <TableHead>Origem</TableHead>
                             <TableHead>Periodicidade</TableHead>
                             <TableHead className="text-right">Valor</TableHead>
+                            <TableHead className="w-[140px]">Anexos</TableHead>
                             <TableHead>Acoes</TableHead>
                           </TableRow>
                         </TableHeader>
                         <TableBody>
-                          {historyTransactions.map((transaction) => (
-                            <TableRow key={transaction.id}>
-                              <TableCell>{formatDate(transaction.date)}</TableCell>
-                              <TableCell className="max-w-[240px] truncate">
-                                {transaction.description}
-                              </TableCell>
-                              <TableCell>
-                                {categoryMap.get(transaction.categoryId)?.name ?? "Sem categoria"}
-                              </TableCell>
-                              <TableCell>
-                                <Badge
-                                  variant={transaction.kind === "income" ? "default" : "secondary"}
+                          {historyTransactions.map((transaction) => {
+                            const anexoCount = anexosByLancamentoId[transaction.id]?.length ?? 0
+                            return (
+                              <TableRow key={transaction.id}>
+                                <TableCell>{formatDate(transaction.date)}</TableCell>
+                                <TableCell className="max-w-[240px] truncate">
+                                  {transaction.description}
+                                </TableCell>
+                                <TableCell>
+                                  {categoryMap.get(transaction.categoryId)?.name ?? "Sem categoria"}
+                                </TableCell>
+                                <TableCell>
+                                  <Badge
+                                    variant={transaction.kind === "income" ? "default" : "secondary"}
+                                  >
+                                    {transaction.kind === "income" ? "Entrada" : "Despesa"}
+                                  </Badge>
+                                </TableCell>
+                                <TableCell className="text-xs text-muted-foreground">
+                                  {transaction.origin || "-"}
+                                </TableCell>
+                                <TableCell>
+                                  <Badge variant="outline">
+                                    {periodicityLabel(transaction.periodicity)}
+                                  </Badge>
+                                </TableCell>
+                                <TableCell
+                                  className={cn(
+                                    "text-right font-semibold",
+                                    transaction.kind === "income"
+                                      ? "text-emerald-700 dark:text-emerald-400"
+                                      : "text-destructive",
+                                  )}
                                 >
-                                  {transaction.kind === "income" ? "Entrada" : "Despesa"}
-                                </Badge>
-                              </TableCell>
-                              <TableCell className="text-xs text-muted-foreground">
-                                {transaction.origin || "-"}
-                              </TableCell>
-                              <TableCell>
-                                <Badge variant="outline">
-                                  {periodicityLabel(transaction.periodicity)}
-                                </Badge>
-                              </TableCell>
-                              <TableCell
-                                className={cn(
-                                  "text-right font-semibold",
-                                  transaction.kind === "income"
-                                    ? "text-emerald-700 dark:text-emerald-400"
-                                    : "text-destructive",
-                                )}
-                              >
-                                {transaction.kind === "income" ? "+" : "-"}
-                                {formatCurrency(transaction.amount)}
-                              </TableCell>
-                              <TableCell>
-                                {transaction.origin === "Venda online" ? (
-                                  <Badge variant="secondary">Editar no estoque</Badge>
-                                ) : (
-                                  <div className="flex gap-2">
-                                    <Button
-                                      size="sm"
-                                      variant="outline"
-                                      onClick={() => startEditTransaction(transaction)}
-                                    >
-                                      Editar
-                                    </Button>
-                                    <Button
-                                      size="sm"
-                                      variant="destructive"
-                                      onClick={() => void removeTransaction(transaction)}
-                                    >
-                                      Excluir
-                                    </Button>
-                                  </div>
-                                )}
-                              </TableCell>
-                            </TableRow>
-                          ))}
+                                  {transaction.kind === "income" ? "+" : "-"}
+                                  {formatCurrency(transaction.amount)}
+                                </TableCell>
+                                <TableCell>
+                                  <Button
+                                    type="button"
+                                    variant={anexoCount > 0 ? "secondary" : "outline"}
+                                    size="sm"
+                                    className="h-8 max-w-full gap-1.5 px-2"
+                                    onClick={() =>
+                                      setAnexosModalLancamento({
+                                        id: transaction.id,
+                                        description: transaction.description,
+                                      })
+                                    }
+                                  >
+                                    <Paperclip
+                                      className={cn(
+                                        "size-3.5 shrink-0",
+                                        anexoCount === 0 && "text-muted-foreground",
+                                      )}
+                                      aria-hidden
+                                    />
+                                    {anexoCount > 0 ? (
+                                      <>
+                                        <AnexosCountBadge count={anexoCount} />
+                                        <span className="sr-only">{anexoCount} anexos</span>
+                                      </>
+                                    ) : (
+                                      <span className="text-xs text-muted-foreground">Anexar</span>
+                                    )}
+                                  </Button>
+                                </TableCell>
+                                <TableCell>
+                                  {transaction.origin === "Venda online" ? (
+                                    <Badge variant="secondary">Editar no estoque</Badge>
+                                  ) : (
+                                    <div className="flex gap-2">
+                                      <Button
+                                        size="sm"
+                                        variant="outline"
+                                        onClick={() => startEditTransaction(transaction)}
+                                      >
+                                        Editar
+                                      </Button>
+                                      <Button
+                                        size="sm"
+                                        variant="destructive"
+                                        onClick={() => void removeTransaction(transaction)}
+                                      >
+                                        Excluir
+                                      </Button>
+                                    </div>
+                                  )}
+                                </TableCell>
+                              </TableRow>
+                            )
+                          })}
                         </TableBody>
                       </Table>
                     )}
                   </CardContent>
                 </Card>
+
+                <AnexosLancamentoModal
+                  open={anexosModalLancamento !== null}
+                  onOpenChange={(next) => {
+                    if (!next) setAnexosModalLancamento(null)
+                  }}
+                  lancamentoDescription={anexosModalLancamento?.description ?? ""}
+                  anexos={
+                    anexosModalLancamento
+                      ? (anexosByLancamentoId[anexosModalLancamento.id] ?? [])
+                      : []
+                  }
+                  onAnexosChange={(next) => {
+                    if (!anexosModalLancamento) return
+                    setAnexosByLancamentoId((prev) => ({
+                      ...prev,
+                      [anexosModalLancamento.id]: next,
+                    }))
+                  }}
+                />
               </section>
             )}
 
@@ -6018,14 +6114,10 @@ export function FinancialDashboard() {
             {activeStockSection === "overview" && (
               <section className="space-y-4">
                 {productFeedback && (
-                  <p
-                    className={cn(
-                      "text-sm",
-                      productFeedback.type === "success" ? "text-primary" : "text-destructive",
-                    )}
-                  >
-                    {productFeedback.message}
-                  </p>
+                  <StockFeedbackAlert
+                    type={productFeedback.type}
+                    message={productFeedback.message}
+                  />
                 )}
                 <KanbanBoard
                   products={kanbanProducts}
@@ -6067,16 +6159,10 @@ export function FinancialDashboard() {
                 </div>
 
                 {productFeedback && (
-                  <p
-                    className={cn(
-                      "text-sm",
-                      productFeedback.type === "success"
-                        ? "text-emerald-700 dark:text-emerald-400"
-                        : "text-destructive",
-                    )}
-                  >
-                    {productFeedback.message}
-                  </p>
+                  <StockFeedbackAlert
+                    type={productFeedback.type}
+                    message={productFeedback.message}
+                  />
                 )}
 
                 <Card className="border-border/80 shadow-sm">
