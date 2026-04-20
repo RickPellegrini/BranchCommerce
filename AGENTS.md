@@ -6,6 +6,10 @@ This version has breaking changes — APIs, conventions, and file structure may 
 
 <!-- END:nextjs-agent-rules -->
 
+## Formatação (Prettier)
+
+Ao criar ou alterar ficheiros `.ts`, `.tsx`, `.js` ou `.jsx`, executar `npx prettier --write` nesses ficheiros antes de concluir o trabalho (regra detalhada em `.cursor/rules/prettier-after-edits.mdc`).
+
 <!-- convex-ai-start -->
 
 This project uses [Convex](https://convex.dev) as its backend.
