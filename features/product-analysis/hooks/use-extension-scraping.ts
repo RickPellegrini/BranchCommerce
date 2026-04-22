@@ -16,6 +16,12 @@ export type ScrapeResult = {
   buyBoxWinner: string | null
 }
 
+/** Background scrapes em lotes (delay 1.5s entre lotes); 15s estoura com muitos anuncios. */
+function extensionScrapeTimeoutMs(itemCount: number): number {
+  if (itemCount <= 0) return 15_000
+  return Math.min(180_000, 18_000 + itemCount * 5_500)
+}
+
 function requestViaBridge(
   itemIds: string[],
   catalogProductId: string | null,
@@ -91,7 +97,11 @@ export function useExtensionScraping() {
     setScraping(true)
     setResult(null)
     try {
-      const data = await requestViaBridge(itemIds, catalogProductId, 15_000)
+      const data = await requestViaBridge(
+        itemIds,
+        catalogProductId,
+        extensionScrapeTimeoutMs(itemIds.length),
+      )
       console.log("[extension-scraping] result:", data)
       if (mountedRef.current) setResult(data)
     } catch (err) {

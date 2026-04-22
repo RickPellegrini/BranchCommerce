@@ -1,4 +1,5 @@
 import { jsonError, jsonOk } from "@/lib/mercadolivre/http"
+import { normalizeMercadoLibreItemId } from "@/lib/mercadolivre/item-id"
 import { fetchMlApi, requestMlApi } from "@/lib/mercadolivre/storage"
 import { requireMlConnection } from "@/lib/mercadolivre/server"
 import { searchUserItemsIncludingPaused } from "@/lib/mercadolivre/user-items-search"
@@ -13,6 +14,8 @@ type MlListingDetail = {
   available_quantity: number
   status: string
   catalog_product_id?: string
+  /** false = par classico sincronizado (nao competir na grade de buy box deste hub) */
+  catalog_listing?: boolean
   thumbnail?: string
   secure_thumbnail?: string
   seller_id?: number
@@ -66,7 +69,10 @@ async function loadSellerListings(accessToken: string, mlUserId: string, limit =
     Math.min(limit, 50),
     0,
   )
-  const ids = payload.results ?? []
+  const ids = [...new Set((payload.results ?? []).map(normalizeMercadoLibreItemId))].slice(
+    0,
+    Math.min(limit, 50),
+  )
   if (ids.length === 0) return []
 
   const details: Array<{ body?: MlListingDetail }> = []
@@ -82,13 +88,20 @@ async function loadSellerListings(accessToken: string, mlUserId: string, limit =
     }
   }
 
-  return details
+  const enriched = details
     .map((row) => row.body)
     .filter((row): row is MlListingDetail => Boolean(row))
     .map((row) => ({
       ...row,
+      id: normalizeMercadoLibreItemId(row.id),
       thumbnail: row.secure_thumbnail ?? row.thumbnail,
     }))
+
+  const uniqueById = new Map<string, MlListingDetail>()
+  for (const row of enriched) {
+    if (!uniqueById.has(row.id)) uniqueById.set(row.id, row)
+  }
+  return [...uniqueById.values()]
 }
 
 async function handleGet(url: URL) {
@@ -99,7 +112,9 @@ async function handleGet(url: URL) {
 
   if (action === "competition") {
     const listings = await loadSellerListings(accessToken, connection.mlUserId, 50)
-    const catalogListings = listings.filter((listing) => Boolean(listing.catalog_product_id))
+    const catalogListings = listings.filter(
+      (listing) => Boolean(listing.catalog_product_id) && listing.catalog_listing !== false,
+    )
 
     const competitionData = await Promise.all(
       catalogListings.map(async (listing) => {

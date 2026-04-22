@@ -33,6 +33,7 @@ import { CatalogOverview } from "./CatalogOverview"
 import { CompetitorTable } from "./CompetitorTable"
 import type { CompetitorEntry } from "@/features/product-analysis/domain/types"
 import { useExtensionScraping } from "@/features/product-analysis/hooks/use-extension-scraping"
+import { getScrapedRowForItem } from "@/features/product-analysis/utils/ml-item-id"
 
 function parseMlId(input: string): string | null {
   const trimmed = input.trim()
@@ -304,7 +305,7 @@ function AnalysisResults({
   const competitors = useMemo<CompetitorEntry[]>(() => {
     if (!scrapeResult) return rawCompetitors
     return rawCompetitors.map((c) => {
-      const s = scrapeResult.stockData[c.itemId]
+      const s = getScrapedRowForItem(scrapeResult.stockData, c.itemId)
       if (!s) return c
       return {
         ...c,

@@ -129,7 +129,7 @@ type FinanceSection =
   | "history"
   | "cashflow"
 type StockSection = "overview" | "products" | "history"
-type MlSection = "listings" | "orders" | "metrics"
+type MlSection = "catalogo" | "anuncios" | "orders" | "metrics"
 type MlSidebarGroup = "anuncios" | "pedidos" | "metricas"
 type HunterSection =
   | "padrao"
@@ -186,8 +186,17 @@ type MlListing = {
   status: "active" | "paused" | "closed" | string
   sku?: string
   catalogProductId?: string | null
+  /** true = vitrine catalogo ML; false = anuncio classico (par sincronizado); null = API sem campo */
+  catalogListing?: boolean | null
   permalink?: string
   thumbnail?: string
+}
+
+/** Classico = `catalog_listing:false`. Sem flag, cai no heuristic antigo (sem catalog_product_id). */
+function isMlClassicListingRow(l: MlListing): boolean {
+  if (l.catalogListing === true) return false
+  if (l.catalogListing === false) return true
+  return l.catalogProductId == null
 }
 
 type MlOrder = {
@@ -1183,7 +1192,7 @@ export function FinancialDashboard() {
   const [activeModule, setActiveModule] = useState<ModuleKey>("home")
   const [activeFinanceSection, setActiveFinanceSection] = useState<FinanceSection>("overview")
   const [activeStockSection, setActiveStockSection] = useState<StockSection>("overview")
-  const [activeMlSection, setActiveMlSection] = useState<MlSection>("listings")
+  const [activeMlSection, setActiveMlSection] = useState<MlSection>("catalogo")
   const [activeMlSidebarGroup, setActiveMlSidebarGroup] = useState<MlSidebarGroup>("anuncios")
   const [activeHunterSection, setActiveHunterSection] = useState<HunterSection>("analise-anuncio")
   const [period, setPeriod] = useState<FinancialPeriod>("month")
@@ -1283,6 +1292,7 @@ export function FinancialDashboard() {
   const [mlLoading, setMlLoading] = useState(false)
   const [mlDisconnecting, setMlDisconnecting] = useState(false)
   const [mlListingsCount, setMlListingsCount] = useState<number | null>(null)
+  const [mlPlainListings, setMlPlainListings] = useState<MlListing[]>([])
   const [mlListingsLoading, setMlListingsLoading] = useState(false)
   const [mlOrdersCount, setMlOrdersCount] = useState<number | null>(null)
   const [mlOrders, setMlOrders] = useState<MlOrder[]>([])
@@ -1296,8 +1306,8 @@ export function FinancialDashboard() {
   const [mlOrdersOnlyNoSku, setMlOrdersOnlyNoSku] = useState(false)
 
   /** Evita loop infinito de fetch quando a API devolve lista vazia (length === 0 re-disparava o effect). */
-  const mlListingsSectionBootstrapped = useRef(false)
-  const mlCatalogSectionBootstrapped = useRef(false)
+  const mlCatalogTabBootstrapped = useRef(false)
+  const mlAnunciosTabBootstrapped = useRef(false)
   const mlOrdersSectionBootstrapped = useRef(false)
   const [mlMetrics, setMlMetrics] = useState<{
     listingsTotal: number
@@ -2287,6 +2297,12 @@ export function FinancialDashboard() {
     return rows
   }, [mlCatalogCompetitionRows, mlCatalogSearchTerm, mlCatalogSortBy, mlCatalogStatusFilter])
 
+  /** Anuncios tradicionais ML (`catalog_listing` false), par do anuncio de vitrine de catalogo. */
+  const mlNormalListingsFiltered = useMemo(
+    () => mlPlainListings.filter(isMlClassicListingRow),
+    [mlPlainListings],
+  )
+
   const exportCatalogCompetitionCsv = () => {
     const header = [
       "item_id",
@@ -3168,6 +3184,7 @@ export function FinancialDashboard() {
 
       setMlConnectionStatus({ connected: false })
       setMlListingsCount(0)
+      setMlPlainListings([])
       setMlOrders([])
       setMlOrdersCount(0)
       setMlMetrics(null)
@@ -3190,7 +3207,8 @@ export function FinancialDashboard() {
     }
   }
 
-  const loadMlListings = async () => {
+  /** `withRows`: preenche a lista para a aba Anuncios; senao so atualiza o total do hub. */
+  const loadMlListings = async (withRows: boolean) => {
     setMlError(null)
     setMlListingsLoading(true)
     try {
@@ -3199,7 +3217,9 @@ export function FinancialDashboard() {
       if (!response.ok || !payload.ok) {
         throw new Error(payload.error ?? "Falha ao buscar anuncios.")
       }
+      const listings = (payload.data.listings ?? []) as MlListing[]
       setMlListingsCount(payload.data.total ?? 0)
+      if (withRows) setMlPlainListings(listings)
     } catch (error) {
       setMlError(error instanceof Error ? error.message : "Erro ao buscar anuncios.")
     } finally {
@@ -3407,30 +3427,36 @@ export function FinancialDashboard() {
 
   useEffect(() => {
     if (!mlConnectionStatus?.connected) {
-      mlListingsSectionBootstrapped.current = false
-      mlCatalogSectionBootstrapped.current = false
+      mlCatalogTabBootstrapped.current = false
+      mlAnunciosTabBootstrapped.current = false
       mlOrdersSectionBootstrapped.current = false
     }
     if (activeModule !== "mercadolivre" || !mlConnectionStatus?.connected) {
       return
     }
 
-    if (activeMlSection !== "listings") {
-      mlListingsSectionBootstrapped.current = false
-      mlCatalogSectionBootstrapped.current = false
+    if (activeMlSection !== "catalogo") {
+      mlCatalogTabBootstrapped.current = false
+    }
+    if (activeMlSection !== "anuncios") {
+      mlAnunciosTabBootstrapped.current = false
     }
     if (activeMlSection !== "orders") {
       mlOrdersSectionBootstrapped.current = false
     }
 
-    if (activeMlSection === "listings") {
-      if (!mlListingsSectionBootstrapped.current && !mlListingsLoading) {
-        mlListingsSectionBootstrapped.current = true
-        void loadMlListings()
-      }
-      if (!mlCatalogSectionBootstrapped.current && !mlCatalogCompetitionLoading) {
-        mlCatalogSectionBootstrapped.current = true
+    if (activeMlSection === "catalogo") {
+      if (!mlCatalogTabBootstrapped.current && !mlListingsLoading) {
+        mlCatalogTabBootstrapped.current = true
+        void loadMlListings(false)
         void loadMlCatalogCompetition()
+      }
+      return
+    }
+    if (activeMlSection === "anuncios") {
+      if (!mlAnunciosTabBootstrapped.current && !mlListingsLoading) {
+        mlAnunciosTabBootstrapped.current = true
+        void loadMlListings(true)
       }
       return
     }
@@ -3456,7 +3482,7 @@ export function FinancialDashboard() {
   ])
 
   useEffect(() => {
-    if (activeMlSidebarGroup === "anuncios") setActiveMlSection("listings")
+    if (activeMlSidebarGroup === "anuncios") setActiveMlSection("catalogo")
     if (activeMlSidebarGroup === "pedidos") setActiveMlSection("orders")
     if (activeMlSidebarGroup === "metricas") setActiveMlSection("metrics")
   }, [activeMlSidebarGroup])
@@ -3649,13 +3675,22 @@ export function FinancialDashboard() {
               onClick={() => setActiveMlSidebarGroup("anuncios")}
             />
             {activeMlSidebarGroup === "anuncios" && (
-              <Button
-                variant={activeMlSection === "listings" ? "secondary" : "ghost"}
-                className="ml-7 justify-start"
-                onClick={() => setActiveMlSection("listings")}
-              >
-                Catalogos
-              </Button>
+              <>
+                <Button
+                  variant={activeMlSection === "catalogo" ? "secondary" : "ghost"}
+                  className="ml-7 justify-start"
+                  onClick={() => setActiveMlSection("catalogo")}
+                >
+                  Catalogo
+                </Button>
+                <Button
+                  variant={activeMlSection === "anuncios" ? "secondary" : "ghost"}
+                  className="ml-7 justify-start"
+                  onClick={() => setActiveMlSection("anuncios")}
+                >
+                  Anuncios
+                </Button>
+              </>
             )}
             <SidebarButton
               icon={ReceiptText}
@@ -7570,14 +7605,15 @@ export function FinancialDashboard() {
                   </CardContent>
                 </Card>
 
-                {activeMlSection === "listings" && (
+                {activeMlSection === "catalogo" && (
                   <Card>
                     <CardHeader>
-                      <CardTitle>Catalogos</CardTitle>
+                      <CardTitle>Catalogo ML</CardTitle>
                       <CardDescription>
-                        Inclui anuncios de catalogo ativos e pausados; ordem padrao prioriza
-                        ganhando e deixa pausados por ultimo. Itens sem catalog_product_id ou alem
-                        dos primeiros 50 IDs da busca ML nao entram.
+                        Somente publicacoes na vitrine de catalogo ML (
+                        <span className="font-mono">catalog_listing</span> diferente de false):
+                        competicao de buy box. O anuncio classico sincronizado aparece na sub-aba
+                        Anuncios.
                       </CardDescription>
                     </CardHeader>
                     <CardContent className="space-y-4">
@@ -7813,6 +7849,132 @@ export function FinancialDashboard() {
                               </Card>
                             )
                           })}
+                        </div>
+                      )}
+                    </CardContent>
+                  </Card>
+                )}
+
+                {activeMlSection === "anuncios" && (
+                  <Card>
+                    <CardHeader>
+                      <CardTitle>Anuncios</CardTitle>
+                      <CardDescription>
+                        Publicacoes em modo classico no ML (
+                        <span className="font-mono">catalog_listing: false</span>
+                        ), incluindo o par sincronizado com a vitrine de catalogo. A competicao de
+                        buy box fica na sub-aba Catalogo.
+                      </CardDescription>
+                    </CardHeader>
+                    <CardContent className="space-y-4">
+                      <div className="flex flex-wrap gap-2">
+                        <Button variant="outline" onClick={() => void loadMlListings(true)}>
+                          Recarregar lista
+                        </Button>
+                        <span className="text-sm text-muted-foreground self-center">
+                          {mlPlainListings.length > 0
+                            ? `${mlNormalListingsFiltered.length} classicos (de ${mlPlainListings.length} nesta pagina)`
+                            : null}
+                        </span>
+                      </div>
+
+                      {mlListingsLoading ? (
+                        <p className="text-sm text-muted-foreground">Carregando anuncios...</p>
+                      ) : mlNormalListingsFiltered.length === 0 ? (
+                        <div className="space-y-2 text-sm text-muted-foreground">
+                          <p>
+                            Nenhum anuncio classico nesta pagina (todos com vitrine de catalogo).
+                          </p>
+                          <p className="text-xs leading-relaxed">
+                            No Mercado Livre o mesmo produto pode ter dois anuncios: vitrine de
+                            catalogo (concorrencia) e classico sincronizado. So o classico aparece
+                            aqui; o de buy box esta em Catalogo.
+                          </p>
+                        </div>
+                      ) : (
+                        <div className="space-y-2">
+                          {mlNormalListingsFiltered.map((listing) => (
+                            <Card key={listing.id} className="rounded-none border">
+                              <CardContent className="pt-4">
+                                <div className="flex flex-wrap items-start justify-between gap-3">
+                                  <div className="flex items-start gap-3 min-w-0">
+                                    <div className="h-12 w-12 shrink-0 overflow-hidden rounded border bg-muted">
+                                      {listing.thumbnail ? (
+                                        <img
+                                          src={listing.thumbnail}
+                                          alt={listing.title}
+                                          className="h-full w-full object-cover"
+                                          loading="lazy"
+                                        />
+                                      ) : (
+                                        <div className="flex h-full w-full items-center justify-center text-[10px] text-muted-foreground">
+                                          —
+                                        </div>
+                                      )}
+                                    </div>
+                                    <div className="min-w-0">
+                                      <p className="font-medium line-clamp-2">{listing.title}</p>
+                                      <p className="text-xs font-mono text-muted-foreground">
+                                        {listing.id}
+                                      </p>
+                                      {listing.sku ? (
+                                        <p className="text-xs text-muted-foreground">
+                                          SKU: {listing.sku}
+                                        </p>
+                                      ) : null}
+                                      {listing.catalogProductId ? (
+                                        <p className="text-xs text-muted-foreground">
+                                          Par de catalogo ML:{" "}
+                                          <span className="font-mono">
+                                            {listing.catalogProductId}
+                                          </span>
+                                        </p>
+                                      ) : null}
+                                    </div>
+                                  </div>
+                                  <div className="flex flex-wrap items-center gap-1.5 shrink-0">
+                                    <Badge variant="secondary" className="text-[10px] font-normal">
+                                      Classico
+                                    </Badge>
+                                    <Badge variant="outline">{listing.status}</Badge>
+                                  </div>
+                                </div>
+                                <div className="mt-3 grid gap-3 text-sm sm:grid-cols-4">
+                                  <div>
+                                    <p className="text-muted-foreground">Preco</p>
+                                    <p className="font-semibold">{formatCurrency(listing.price)}</p>
+                                  </div>
+                                  <div>
+                                    <p className="text-muted-foreground">Estoque</p>
+                                    <p className="font-semibold">{listing.available_quantity}</p>
+                                  </div>
+                                  <div>
+                                    <p className="text-muted-foreground">Vendidos</p>
+                                    <p className="font-semibold">{listing.sold_quantity}</p>
+                                  </div>
+                                  <div className="flex flex-wrap items-end gap-2 justify-end sm:justify-start">
+                                    {listing.permalink ? (
+                                      <a
+                                        href={listing.permalink}
+                                        target="_blank"
+                                        rel="noopener noreferrer"
+                                        className="text-xs font-medium text-blue-600 dark:text-blue-400 hover:underline"
+                                      >
+                                        Ver no ML
+                                      </a>
+                                    ) : null}
+                                    <Button
+                                      size="sm"
+                                      variant="outline"
+                                      onClick={() => openAnalysis(listing.id)}
+                                    >
+                                      Abrir analise
+                                    </Button>
+                                  </div>
+                                </div>
+                              </CardContent>
+                            </Card>
+                          ))}
                         </div>
                       )}
                     </CardContent>

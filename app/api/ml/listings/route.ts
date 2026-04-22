@@ -1,4 +1,5 @@
 import { jsonError, jsonOk } from "@/lib/mercadolivre/http"
+import { normalizeMercadoLibreItemId } from "@/lib/mercadolivre/item-id"
 import { fetchMlApi } from "@/lib/mercadolivre/storage"
 import { requireMlConnection } from "@/lib/mercadolivre/server"
 import { searchUserItemsIncludingPaused } from "@/lib/mercadolivre/user-items-search"
@@ -12,6 +13,8 @@ type MlListingDetail = {
   status: string
   seller_custom_field?: string
   catalog_product_id?: string
+  /** true = publicacao na vitrine de catalogo (buy box); false = anuncio classico sincronizado */
+  catalog_listing?: boolean
   permalink?: string
   thumbnail?: string
   secure_thumbnail?: string
@@ -40,15 +43,22 @@ export async function GET(request: Request) {
         }>
       >(`/items?ids=${ids}`, connection.accessToken)
 
-      listings = rawDetails
+      const mapped = rawDetails
         .map((item) => item.body)
         .filter((item): item is MlListingDetail => Boolean(item))
         .map((item) => ({
           ...item,
+          id: normalizeMercadoLibreItemId(item.id),
           thumbnail: item.secure_thumbnail ?? item.thumbnail,
           sku: item.seller_custom_field ?? undefined,
           catalogProductId: item.catalog_product_id ?? null,
+          catalogListing: item.catalog_listing === undefined ? null : Boolean(item.catalog_listing),
         }))
+      const byId = new Map<string, (typeof mapped)[0]>()
+      for (const row of mapped) {
+        if (!byId.has(row.id)) byId.set(row.id, row)
+      }
+      listings = [...byId.values()]
     }
 
     return jsonOk({

@@ -56,6 +56,14 @@ describe("extractStock", () => {
     const result = extractStock(html)
     expect(result).toEqual({ availableQuantity: 3, stockIsMinimum: false })
   })
+
+  it("when itemId is passed, ignores available_quantity before that item block", () => {
+    const html = `"available_quantity": 99` + `"id":"MLB-460551780"` + `"available_quantity": 4`
+    expect(extractStock(html, "MLB460551780")).toEqual({
+      availableQuantity: 4,
+      stockIsMinimum: false,
+    })
+  })
 })
 
 // ─── extractStartTime ────────────────────────────────────────────────

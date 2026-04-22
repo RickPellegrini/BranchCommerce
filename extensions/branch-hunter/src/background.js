@@ -42,40 +42,60 @@ async function fetchWithRetry(url, opts = {}, maxRetries = 3) {
 
 // ─── Stock extraction ────────────────────────────────────────────────
 
-function extractStock(html) {
-  const descMatch = html.match(/"description"\s*:\s*"\(\+(\d+)\s*dispon[^"]*\)"/)
+function mlItemIdLookupKeys(itemId) {
+  const m = itemId.match(/^(MLB)-?(\d+)$/i)
+  if (!m) return [itemId]
+  const digits = m[2]
+  return [...new Set([itemId, `MLB${digits}`, `MLB-${digits}`, itemId.replace(/-/g, "")])]
+}
+
+/** Prioriza JSON do anuncio principal (evita available_quantity de recomendacoes). */
+function scopeHtmlToPrimaryItem(html, itemId) {
+  for (const variant of mlItemIdLookupKeys(itemId)) {
+    const anchor = `"id":"${variant}"`
+    const idx = html.indexOf(anchor)
+    if (idx !== -1) {
+      return html.slice(idx, Math.min(html.length, idx + 40000))
+    }
+  }
+  return html
+}
+
+function extractStock(html, itemId) {
+  const slice = itemId ? scopeHtmlToPrimaryItem(html, itemId) : html
+  const descMatch = slice.match(/"description"\s*:\s*"\(\+(\d+)\s*dispon[^"]*\)"/)
   if (descMatch) {
     return { availableQuantity: parseInt(descMatch[1], 10) + 1, stockIsMinimum: false }
   }
 
-  const subtitleMatch = html.match(
+  const subtitleMatch = slice.match(
     /quantity_selector[\s\S]*?"input"\s*:\s*\{[\s\S]*?"subtitles"\s*:\s*\[[\s\S]*?\+?(\d+)\s*dispon/,
   )
   if (subtitleMatch) {
     return { availableQuantity: parseInt(subtitleMatch[1], 10) + 1, stockIsMinimum: false }
   }
 
-  const selectorBlock = html.match(
+  const selectorBlock = slice.match(
     /quantity_selector"\s*:\s*\{[\s\S]*?"available_quantity"\s*:\s*(\d+)[\s\S]*?"rows"\s*:\s*(\d+)/,
   )
   if (selectorBlock) {
     const dropdownMax = parseInt(selectorBlock[1], 10)
     const rows = parseInt(selectorBlock[2], 10)
-    const hasInputMode = /"input"\s*:\s*\{/.test(html)
+    const hasInputMode = /"input"\s*:\s*\{/.test(slice)
     const capped = dropdownMax >= rows && rows > 0
     return { availableQuantity: dropdownMax, stockIsMinimum: capped && hasInputMode }
   }
 
-  const aqMatch = html.match(/"available_quantity"\s*:\s*(\d+)/)
+  const aqMatch = slice.match(/"available_quantity"\s*:\s*(\d+)/)
   if (aqMatch) {
     return { availableQuantity: parseInt(aqMatch[1], 10), stockIsMinimum: false }
   }
 
-  if (/"text"\s*:\s*"Último disponível!"/.test(html)) {
+  if (/"text"\s*:\s*"Último disponível!"/.test(slice)) {
     return { availableQuantity: 1, stockIsMinimum: false }
   }
 
-  const dispMatch = html.match(/"text"\s*:\s*"(\d+)\s*disponíve/)
+  const dispMatch = slice.match(/"text"\s*:\s*"(\d+)\s*disponíve/)
   if (dispMatch) {
     return { availableQuantity: parseInt(dispMatch[1], 10), stockIsMinimum: false }
   }
@@ -187,7 +207,7 @@ async function scrapeItemPage(itemId) {
     )
 
     // Stock
-    Object.assign(result, extractStock(html))
+    Object.assign(result, extractStock(html, itemId))
 
     // Sold
     const sold = extractSoldFromItemPage(html, itemId)
@@ -245,7 +265,10 @@ async function handleScrapeCompetitors(payload) {
     const settled = await Promise.allSettled(batches[i].map((id) => scrapeItemPage(id)))
     for (const r of settled) {
       if (r.status === "fulfilled") {
-        stockMap[r.value.itemId] = r.value
+        const v = r.value
+        for (const key of mlItemIdLookupKeys(v.itemId)) {
+          stockMap[key] = v
+        }
       }
     }
   }

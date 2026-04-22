@@ -1,4 +1,5 @@
 import { throttledMlFetch } from "@/lib/rate-limit/ml-throttle"
+import { mlItemIdLookupKeys } from "@/features/product-analysis/utils/ml-item-id"
 
 export type ScrapedItemResult = {
   itemId: string
@@ -17,43 +18,62 @@ const SCRAPE_HEADERS: Record<string, string> = {
 
 // ─── Stock extraction from initialState JSON embedded in HTML ────────
 
-export function extractStock(html: string): {
+/** Reduz HTML ao bloco do anuncio (evita pegar available_quantity de vitrines/recomendacoes). */
+function scopeHtmlToPrimaryItem(html: string, itemId: string): string {
+  const keys = mlItemIdLookupKeys(itemId)
+  for (const variant of keys) {
+    const anchor = `"id":"${variant}"`
+    const idx = html.indexOf(anchor)
+    if (idx !== -1) {
+      return html.slice(idx, Math.min(html.length, idx + 40_000))
+    }
+  }
+  return html
+}
+
+export function extractStock(
+  html: string,
+  /** Se informado, a busca evita o primeiro available_quantity global (ex.: outro item na pagina). */
+  itemId?: string,
+): {
   availableQuantity: number | null
   stockIsMinimum: boolean
 } {
-  const descMatch = html.match(/"description"\s*:\s*"\(\+(\d+)\s*dispon[^"]*\)"/)
+  const slice = itemId ? scopeHtmlToPrimaryItem(html, itemId) : html
+
+  const descMatch = slice.match(/"description"\s*:\s*"\(\+(\d+)\s*dispon[^"]*\)"/)
   if (descMatch) {
     return { availableQuantity: parseInt(descMatch[1], 10) + 1, stockIsMinimum: false }
   }
 
-  const subtitleMatch = html.match(
+  const subtitleMatch = slice.match(
     /quantity_selector[\s\S]*?"input"\s*:\s*\{[\s\S]*?"subtitles"\s*:\s*\[[\s\S]*?\+?(\d+)\s*dispon/,
   )
   if (subtitleMatch) {
     return { availableQuantity: parseInt(subtitleMatch[1], 10) + 1, stockIsMinimum: false }
   }
 
-  const selectorBlock = html.match(
+  const selectorBlock = slice.match(
     /quantity_selector"\s*:\s*\{[\s\S]*?"available_quantity"\s*:\s*(\d+)[\s\S]*?"rows"\s*:\s*(\d+)/,
   )
   if (selectorBlock) {
     const dropdownMax = parseInt(selectorBlock[1], 10)
     const rows = parseInt(selectorBlock[2], 10)
-    const hasInputMode = /"input"\s*:\s*\{/.test(html)
+    const hasInputMode = /"input"\s*:\s*\{/.test(slice)
     const capped = dropdownMax >= rows && rows > 0
     return { availableQuantity: dropdownMax, stockIsMinimum: capped && hasInputMode }
   }
 
-  const aqMatch = html.match(/"available_quantity"\s*:\s*(\d+)/)
+  const aqMatch = slice.match(/"available_quantity"\s*:\s*(\d+)/)
   if (aqMatch) {
     return { availableQuantity: parseInt(aqMatch[1], 10), stockIsMinimum: false }
   }
 
-  if (/"text"\s*:\s*"Último disponível!"/.test(html)) {
+  if (/"text"\s*:\s*"Último disponível!"/.test(slice)) {
     return { availableQuantity: 1, stockIsMinimum: false }
   }
 
-  const dispMatch = html.match(/"text"\s*:\s*"(\d+)\s*disponíve/)
+  const dispMatch = slice.match(/"text"\s*:\s*"(\d+)\s*disponíve/)
   if (dispMatch) {
     return { availableQuantity: parseInt(dispMatch[1], 10), stockIsMinimum: false }
   }
@@ -108,7 +128,7 @@ export async function scrapeItemPage(itemId: string): Promise<ScrapedItemResult>
   const html = await throttledMlFetch(() => fetchPage(url))
   if (!html) return result
 
-  const stock = extractStock(html)
+  const stock = extractStock(html, itemId)
   result.availableQuantity = stock.availableQuantity
   result.stockIsMinimum = stock.stockIsMinimum
   result.startTime = extractStartTime(html)
