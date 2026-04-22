@@ -41,15 +41,18 @@ export type AnexosLancamentoModalProps = {
   anexos: AnexoLancamento[]
   /** Substitui a lista inteira de anexos do lançamento (estado controlado no pai). */
   onAnexosChange: (next: AnexoLancamento[]) => void
+  /** Quando definido, envia ficheiros ao Convex File Storage e regista em `transactionAttachments`. */
+  persistToTransaction?: {
+    uploadFiles: (files: File[]) => Promise<void>
+    deleteAttachment: (attachmentId: string) => Promise<void>
+  }
 }
 
 /**
  * Modal para gerenciar comprovantes anexados a um lançamento.
  *
- * Persistência: hoje usa apenas estado em memória no componente pai.
- * Para integrar com backend, substituir `onAnexosChange` por chamadas a
- * `POST /lancamentos/:id/anexos`, `GET /lanchamentos/:id/anexos`, `DELETE ...`
- * e armazenar URLs/ids retornados em vez de `File` puro.
+ * Com `persistToTransaction`, cada ficheiro é enviado ao Convex e aparece no
+ * histórico assim que a query `getDashboardData` atualizar.
  */
 export function AnexosLancamentoModal({
   open,
@@ -57,6 +60,7 @@ export function AnexosLancamentoModal({
   lancamentoDescription,
   anexos,
   onAnexosChange,
+  persistToTransaction,
 }: AnexosLancamentoModalProps) {
   const inputId = useId()
   const inputRef = useRef<HTMLInputElement>(null)
@@ -83,19 +87,24 @@ export function AnexosLancamentoModal({
 
       setIsUploading(true)
       try {
-        // Simula latência de rede; remover quando houver upload real ao servidor.
-        await new Promise((r) => setTimeout(r, 400))
-        onAnexosChange([...anexos, ...ok])
+        if (persistToTransaction) {
+          await persistToTransaction.uploadFiles(ok.map((a) => a.file).filter(Boolean) as File[])
+        } else {
+          await new Promise((r) => setTimeout(r, 400))
+          onAnexosChange([...anexos, ...ok])
+        }
         setSuccess(
           ok.length === 1
             ? "Arquivo anexado com sucesso."
             : `${ok.length} arquivos anexados com sucesso.`,
         )
+      } catch (e) {
+        setError(e instanceof Error ? e.message : "Falha ao enviar anexos.")
       } finally {
         setIsUploading(false)
       }
     },
-    [anexos, onAnexosChange],
+    [anexos, onAnexosChange, persistToTransaction],
   )
 
   const onInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -110,8 +119,22 @@ export function AnexosLancamentoModal({
     if (e.dataTransfer.files?.length) void runValidatedAdd(Array.from(e.dataTransfer.files))
   }
 
-  const onRemove = (id: string) => {
+  const onRemove = async (id: string) => {
     if (!window.confirm("Excluir este anexo?")) return
+    const row = anexos.find((a) => a.id === id)
+    if (row?.convexAttachmentId && persistToTransaction) {
+      setIsUploading(true)
+      setError(null)
+      try {
+        await persistToTransaction.deleteAttachment(row.convexAttachmentId)
+        setSuccess("Anexo removido.")
+      } catch (e) {
+        setError(e instanceof Error ? e.message : "Nao foi possivel excluir o anexo.")
+      } finally {
+        setIsUploading(false)
+      }
+      return
+    }
     onAnexosChange(anexos.filter((a) => a.id !== id))
     setSuccess("Anexo removido.")
   }
@@ -287,8 +310,8 @@ export function AnexosLancamentoModal({
                           size="icon"
                           className="size-8 text-destructive hover:text-destructive"
                           title="Excluir"
-                          onClick={() => onRemove(a.id)}
-                          disabled={!!a.convexAttachmentId}
+                          onClick={() => void onRemove(a.id)}
+                          disabled={isUploading}
                         >
                           <Trash2 className="size-4" />
                         </Button>

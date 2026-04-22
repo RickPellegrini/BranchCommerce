@@ -1248,6 +1248,7 @@ export function FinancialDashboard() {
     estimatedArrival: "",
     observations: "",
   })
+  const [showManualStockForm, setShowManualStockForm] = useState(false)
   const [editingProductId, setEditingProductId] = useState<Id<"stockProducts"> | null>(null)
   const [productEditForm, setProductEditForm] = useState({
     name: "",
@@ -1565,6 +1566,7 @@ export function FinancialDashboard() {
   const addExpenseWithPayment = useMutation(api.finance.addExpenseWithPayment)
   const generateAttachmentUploadUrl = useMutation(api.finance.generateAttachmentUploadUrl)
   const registerTransactionAttachment = useMutation(api.finance.registerTransactionAttachment)
+  const deleteTransactionAttachment = useMutation(api.finance.deleteTransactionAttachment)
   const markInstallmentPaidMutation = useMutation(api.finance.markInstallmentPaid)
   const startReturnForTransactionMutation = useMutation(api.finance.startReturnForTransaction)
 
@@ -2937,7 +2939,13 @@ export function FinancialDashboard() {
   }
 
   const handleToggleProductHidden = async (productId: string, hidden: boolean) => {
-    if (!userId) return
+    if (!userId) {
+      setProductFeedback({
+        type: "error",
+        message: "Sessao nao carregada. Recarregue a pagina e tente novamente.",
+      })
+      return
+    }
     try {
       await setProductKanbanHidden({
         userId,
@@ -2954,6 +2962,27 @@ export function FinancialDashboard() {
       })
     }
   }
+
+  const uploadFilesToExistingTransaction = useCallback(
+    async (transactionId: string, files: File[]) => {
+      if (!userId) throw new Error("Sessao nao carregada.")
+      for (const file of files) {
+        const postUrl = await generateAttachmentUploadUrl({ userId })
+        const res = await fetch(postUrl, { method: "POST", body: file })
+        const body = (await res.json()) as { storageId?: string }
+        if (!body.storageId) throw new Error("Falha no upload do comprovante.")
+        await registerTransactionAttachment({
+          userId,
+          transactionId: transactionId as Id<"transactions">,
+          storageId: body.storageId,
+          fileName: file.name,
+          byteSize: file.size,
+          mimeType: file.type || "application/octet-stream",
+        })
+      }
+    },
+    [userId, generateAttachmentUploadUrl, registerTransactionAttachment],
+  )
 
   const submitReturn = async () => {
     if (!userId || !returnModal) return
@@ -3030,6 +3059,7 @@ export function FinancialDashboard() {
         estimatedArrival: "",
         observations: "",
       })
+      setShowManualStockForm(false)
       setProductFeedback({ type: "success", message: "Entrada manual registrada no estoque." })
     } catch (error) {
       setProductFeedback({
@@ -6030,8 +6060,10 @@ export function FinancialDashboard() {
                         </TableHeader>
                         <TableBody>
                           {historyTransactions.map((transaction) => {
-                            const anexoCount = anexosByLancamentoId[transaction.id]?.length ?? 0
-                            const firstThumb = anexosByLancamentoId[transaction.id]?.find(
+                            const anexoList = anexosByLancamentoId[transaction.id] ?? []
+                            const anexoCount =
+                              attachmentCountByTransaction[transaction.id] ?? anexoList.length
+                            const firstThumb = anexoList.find(
                               (a) =>
                                 a.remoteUrl &&
                                 (a.mimeType?.startsWith("image/") ||
@@ -6342,6 +6374,19 @@ export function FinancialDashboard() {
                       [anexosModalLancamento.id]: next,
                     }))
                   }}
+                  persistToTransaction={
+                    userId && anexosModalLancamento
+                      ? {
+                          uploadFiles: (files) =>
+                            uploadFilesToExistingTransaction(anexosModalLancamento.id, files),
+                          deleteAttachment: (attachmentId) =>
+                            deleteTransactionAttachment({
+                              userId,
+                              attachmentId: attachmentId as Id<"transactionAttachments">,
+                            }),
+                        }
+                      : undefined
+                  }
                 />
               </section>
             )}
@@ -6640,116 +6685,139 @@ export function FinancialDashboard() {
                     message={productFeedback.message}
                   />
                 )}
-                <Card className="border-border/80 shadow-sm">
-                  <CardHeader>
-                    <CardTitle className="text-base">Entrada manual (fornecedor)</CardTitle>
-                    <CardDescription>
-                      Cria produto com etapa no Kanban conforme a localizacao. Dedup: mesmo nome +
-                      fornecedor + data.
-                    </CardDescription>
-                  </CardHeader>
-                  <CardContent className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-                    <div className="space-y-1 sm:col-span-2">
-                      <label className="text-xs text-muted-foreground">Nome do produto</label>
-                      <Input
-                        value={manualStockForm.name}
-                        onChange={(e) =>
-                          setManualStockForm((p) => ({ ...p, name: e.target.value }))
-                        }
-                      />
-                    </div>
-                    <div className="space-y-1">
-                      <label className="text-xs text-muted-foreground">Quantidade</label>
-                      <Input
-                        type="number"
-                        min={0}
-                        value={manualStockForm.quantity}
-                        onChange={(e) =>
-                          setManualStockForm((p) => ({ ...p, quantity: e.target.value }))
-                        }
-                      />
-                    </div>
-                    <div className="space-y-1">
-                      <label className="text-xs text-muted-foreground">Custo unitario</label>
-                      <Input
-                        type="number"
-                        min={0}
-                        step="0.01"
-                        value={manualStockForm.unitCost}
-                        onChange={(e) =>
-                          setManualStockForm((p) => ({ ...p, unitCost: e.target.value }))
-                        }
-                      />
-                    </div>
-                    <div className="space-y-1 sm:col-span-2">
-                      <label className="text-xs text-muted-foreground">Fornecedor</label>
-                      <Input
-                        value={manualStockForm.supplier}
-                        onChange={(e) =>
-                          setManualStockForm((p) => ({ ...p, supplier: e.target.value }))
-                        }
-                      />
-                    </div>
-                    <div className="space-y-1">
-                      <label className="text-xs text-muted-foreground">Data (dedup)</label>
-                      <BrDateInput
-                        value={manualStockForm.manualEntryDate}
-                        onValueChange={(v) =>
-                          setManualStockForm((p) => ({ ...p, manualEntryDate: v }))
-                        }
-                      />
-                    </div>
-                    <div className="space-y-1 sm:col-span-2">
-                      <label className="text-xs text-muted-foreground">Local / etapa</label>
-                      <Select
-                        value={manualStockForm.location}
-                        onValueChange={(value) =>
-                          setManualStockForm((p) => ({
-                            ...p,
-                            location: value as (typeof manualStockForm)["location"],
-                          }))
-                        }
+                {!showManualStockForm ? (
+                  <div className="flex justify-end">
+                    <Button type="button" onClick={() => setShowManualStockForm(true)}>
+                      Adicionar ao estoque / Kanban
+                    </Button>
+                  </div>
+                ) : null}
+                {showManualStockForm ? (
+                  <Card className="border-border/80 shadow-sm">
+                    <CardHeader className="flex flex-row flex-wrap items-start justify-between gap-2 space-y-0">
+                      <div>
+                        <CardTitle className="text-base">Entrada manual (fornecedor)</CardTitle>
+                        <CardDescription>
+                          Cria produto com etapa no Kanban conforme a localizacao. Dedup: mesmo nome
+                          + fornecedor + data.
+                        </CardDescription>
+                      </div>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        onClick={() => setShowManualStockForm(false)}
                       >
-                        <SelectTrigger>
-                          <SelectValue />
-                        </SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="in_stock_physical">Estoque fisico</SelectItem>
-                          <SelectItem value="in_transit">Em transito</SelectItem>
-                          <SelectItem value="awaiting_delivery">Aguardando entrega</SelectItem>
-                          <SelectItem value="returned_supplier">Devolvido ao fornecedor</SelectItem>
-                        </SelectContent>
-                      </Select>
-                    </div>
-                    {manualStockForm.location === "in_transit" ? (
+                        Fechar
+                      </Button>
+                    </CardHeader>
+                    <CardContent className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
                       <div className="space-y-1 sm:col-span-2">
-                        <label className="text-xs text-muted-foreground">Previsao de chegada</label>
-                        <BrDateInput
-                          value={manualStockForm.estimatedArrival}
-                          onValueChange={(v) =>
-                            setManualStockForm((p) => ({ ...p, estimatedArrival: v }))
+                        <label className="text-xs text-muted-foreground">Nome do produto</label>
+                        <Input
+                          value={manualStockForm.name}
+                          onChange={(e) =>
+                            setManualStockForm((p) => ({ ...p, name: e.target.value }))
                           }
                         />
                       </div>
-                    ) : null}
-                    <div className="space-y-1 sm:col-span-3">
-                      <label className="text-xs text-muted-foreground">Observacoes</label>
-                      <Input
-                        value={manualStockForm.observations}
-                        onChange={(e) =>
-                          setManualStockForm((p) => ({ ...p, observations: e.target.value }))
-                        }
-                      />
-                    </div>
-                    <Button
-                      type="button"
-                      className="sm:col-span-2"
-                      onClick={saveManualInboundStock}
-                    >
-                      Adicionar ao estoque / Kanban
-                    </Button>
-                  </CardContent>
-                </Card>
+                      <div className="space-y-1">
+                        <label className="text-xs text-muted-foreground">Quantidade</label>
+                        <Input
+                          type="number"
+                          min={0}
+                          value={manualStockForm.quantity}
+                          onChange={(e) =>
+                            setManualStockForm((p) => ({ ...p, quantity: e.target.value }))
+                          }
+                        />
+                      </div>
+                      <div className="space-y-1">
+                        <label className="text-xs text-muted-foreground">Custo unitario</label>
+                        <Input
+                          type="number"
+                          min={0}
+                          step="0.01"
+                          value={manualStockForm.unitCost}
+                          onChange={(e) =>
+                            setManualStockForm((p) => ({ ...p, unitCost: e.target.value }))
+                          }
+                        />
+                      </div>
+                      <div className="space-y-1 sm:col-span-2">
+                        <label className="text-xs text-muted-foreground">Fornecedor</label>
+                        <Input
+                          value={manualStockForm.supplier}
+                          onChange={(e) =>
+                            setManualStockForm((p) => ({ ...p, supplier: e.target.value }))
+                          }
+                        />
+                      </div>
+                      <div className="space-y-1">
+                        <label className="text-xs text-muted-foreground">Data (dedup)</label>
+                        <BrDateInput
+                          value={manualStockForm.manualEntryDate}
+                          onValueChange={(v) =>
+                            setManualStockForm((p) => ({ ...p, manualEntryDate: v }))
+                          }
+                        />
+                      </div>
+                      <div className="space-y-1 sm:col-span-2">
+                        <label className="text-xs text-muted-foreground">Local / etapa</label>
+                        <Select
+                          value={manualStockForm.location}
+                          onValueChange={(value) =>
+                            setManualStockForm((p) => ({
+                              ...p,
+                              location: value as (typeof manualStockForm)["location"],
+                            }))
+                          }
+                        >
+                          <SelectTrigger>
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="in_stock_physical">Estoque fisico</SelectItem>
+                            <SelectItem value="in_transit">Em transito</SelectItem>
+                            <SelectItem value="awaiting_delivery">Aguardando entrega</SelectItem>
+                            <SelectItem value="returned_supplier">
+                              Devolvido ao fornecedor
+                            </SelectItem>
+                          </SelectContent>
+                        </Select>
+                      </div>
+                      {manualStockForm.location === "in_transit" ? (
+                        <div className="space-y-1 sm:col-span-2">
+                          <label className="text-xs text-muted-foreground">
+                            Previsao de chegada
+                          </label>
+                          <BrDateInput
+                            value={manualStockForm.estimatedArrival}
+                            onValueChange={(v) =>
+                              setManualStockForm((p) => ({ ...p, estimatedArrival: v }))
+                            }
+                          />
+                        </div>
+                      ) : null}
+                      <div className="space-y-1 sm:col-span-3">
+                        <label className="text-xs text-muted-foreground">Observacoes</label>
+                        <Input
+                          value={manualStockForm.observations}
+                          onChange={(e) =>
+                            setManualStockForm((p) => ({ ...p, observations: e.target.value }))
+                          }
+                        />
+                      </div>
+                      <Button
+                        type="button"
+                        className="sm:col-span-2"
+                        onClick={saveManualInboundStock}
+                      >
+                        Adicionar ao estoque / Kanban
+                      </Button>
+                    </CardContent>
+                  </Card>
+                ) : null}
                 <KanbanBoard
                   products={kanbanProducts}
                   movements={movements.map((m) => ({
