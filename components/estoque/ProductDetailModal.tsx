@@ -18,9 +18,19 @@ import {
   MOVEMENT_LABELS,
 } from "./types"
 
+export type ProductKanbanEventRow = {
+  id: string
+  productId: string
+  fromStatus: string
+  toStatus: string
+  note?: string
+  createdAt: number
+}
+
 interface ProductDetailModalProps {
   product: KanbanProduct
   movements: KanbanMovement[]
+  kanbanEvents?: ProductKanbanEventRow[]
   onClose: () => void
   onMoveTo: (target: KanbanColumnId, note?: string, estimatedArrival?: string) => Promise<void>
   onSaveEdits: (updates: Partial<KanbanProduct>) => Promise<void>
@@ -29,6 +39,7 @@ interface ProductDetailModalProps {
 export function ProductDetailModal({
   product,
   movements,
+  kanbanEvents = [],
   onClose,
   onMoveTo,
   onSaveEdits,
@@ -158,7 +169,9 @@ export function ProductDetailModal({
                   onChange={(e) => setEditMinStock(e.target.value)}
                 />
               </div>
-              {(product.kanbanStatus === "buying" || product.kanbanStatus === "in_transit") && (
+              {(product.kanbanStatus === "buying" ||
+                product.kanbanStatus === "in_transit" ||
+                product.kanbanStatus === "awaiting_inspection") && (
                 <div className="space-y-1">
                   <label className="text-xs text-muted-foreground">Chegada estimada</label>
                   <Input
@@ -198,6 +211,29 @@ export function ProductDetailModal({
                 </Button>
               )}
             </div>
+
+            {kanbanEvents.length > 0 && (
+              <div>
+                <h4 className="mb-3 text-sm font-medium">Histórico de etapas (Kanban)</h4>
+                <div className="space-y-2.5">
+                  {kanbanEvents.map((ev) => (
+                    <div key={ev.id} className="flex items-start gap-3 text-sm">
+                      <div className="mt-1.5 h-2 w-2 flex-shrink-0 rounded-full bg-primary/60" />
+                      <div>
+                        <span className="font-medium">
+                          {ev.fromStatus} → {ev.toStatus}
+                        </span>
+                        <span className="text-xs text-muted-foreground">
+                          {" "}
+                          · {new Date(ev.createdAt).toLocaleString("pt-BR")}
+                        </span>
+                        {ev.note && <p className="text-xs text-muted-foreground">{ev.note}</p>}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
 
             {/* Movement timeline */}
             {productMovements.length > 0 && (

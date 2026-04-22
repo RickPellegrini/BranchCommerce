@@ -25,6 +25,15 @@ function downloadBlob(file: File) {
   URL.revokeObjectURL(url)
 }
 
+function openRemote(url: string, fileName: string) {
+  const a = document.createElement("a")
+  a.href = url
+  a.target = "_blank"
+  a.rel = "noopener noreferrer"
+  a.download = fileName
+  a.click()
+}
+
 export type AnexosLancamentoModalProps = {
   open: boolean
   onOpenChange: (open: boolean) => void
@@ -201,7 +210,7 @@ export function AnexosLancamentoModal({
               </button>
             </p>
             <p className="text-xs text-muted-foreground">
-              PDF, JPG, PNG, JPEG ou WebP · máx. 10 MB por arquivo
+              PDF, JPG, PNG, JPEG ou WebP · máx. 5 MB por arquivo
             </p>
             <Button
               type="button"
@@ -228,45 +237,65 @@ export function AnexosLancamentoModal({
               </p>
             ) : (
               <ul className="space-y-2">
-                {anexos.map((a) => (
-                  <li
-                    key={a.id}
-                    className="flex flex-wrap items-center gap-2 rounded-none border border-border bg-muted/30 px-3 py-2 text-sm"
-                  >
-                    <Paperclip className="size-4 shrink-0 text-muted-foreground" />
-                    <span className="min-w-0 flex-1 truncate font-medium" title={a.file.name}>
-                      {a.file.name}
-                    </span>
-                    <span className="text-xs text-muted-foreground">
-                      {formatAnexoFileSize(a.file.size)}
-                    </span>
-                    <span className="text-xs text-muted-foreground">
-                      {formatAnexoDateTime(a.uploadedAt)}
-                    </span>
-                    <div className="ml-auto flex items-center gap-1">
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        size="icon"
-                        className="size-8"
-                        title="Download"
-                        onClick={() => downloadBlob(a.file)}
-                      >
-                        <Download className="size-4" />
-                      </Button>
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        size="icon"
-                        className="size-8 text-destructive hover:text-destructive"
-                        title="Excluir"
-                        onClick={() => onRemove(a.id)}
-                      >
-                        <Trash2 className="size-4" />
-                      </Button>
-                    </div>
-                  </li>
-                ))}
+                {anexos.map((a) => {
+                  const displayName = a.file?.name ?? a.fileName ?? "Arquivo"
+                  const sizeBytes = a.file?.size ?? a.byteSize ?? 0
+                  const thumb =
+                    a.remoteUrl &&
+                    (a.mimeType?.startsWith("image/") ||
+                      /\.(jpe?g|png|webp)$/i.test(displayName)) ? (
+                      <img
+                        src={a.remoteUrl}
+                        alt=""
+                        className="size-10 shrink-0 rounded border object-cover"
+                      />
+                    ) : (
+                      <Paperclip className="size-4 shrink-0 text-muted-foreground" />
+                    )
+                  return (
+                    <li
+                      key={a.id}
+                      className="flex flex-wrap items-center gap-2 rounded-none border border-border bg-muted/30 px-3 py-2 text-sm"
+                    >
+                      {thumb}
+                      <span className="min-w-0 flex-1 truncate font-medium" title={displayName}>
+                        {displayName}
+                      </span>
+                      <span className="text-xs text-muted-foreground">
+                        {formatAnexoFileSize(sizeBytes)}
+                      </span>
+                      <span className="text-xs text-muted-foreground">
+                        {formatAnexoDateTime(a.uploadedAt)}
+                      </span>
+                      <div className="ml-auto flex items-center gap-1">
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="icon"
+                          className="size-8"
+                          title="Abrir / baixar"
+                          onClick={() => {
+                            if (a.file) downloadBlob(a.file)
+                            else if (a.remoteUrl) openRemote(a.remoteUrl, displayName)
+                          }}
+                        >
+                          <Download className="size-4" />
+                        </Button>
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="icon"
+                          className="size-8 text-destructive hover:text-destructive"
+                          title="Excluir"
+                          onClick={() => onRemove(a.id)}
+                          disabled={!!a.convexAttachmentId}
+                        >
+                          <Trash2 className="size-4" />
+                        </Button>
+                      </div>
+                    </li>
+                  )
+                })}
               </ul>
             )}
           </div>
@@ -318,7 +347,7 @@ export function LancamentoFormAnexos({
       </div>
       <p className="text-xs text-muted-foreground">
         Anexe antes de salvar; os arquivos ficam ligados ao lançamento criado. PDF, JPG, PNG ou WebP
-        · máx. 10 MB cada.
+        · máx. 5 MB cada.
       </p>
 
       {error && (
@@ -382,29 +411,31 @@ export function LancamentoFormAnexos({
 
       {anexos.length > 0 && (
         <ul className="space-y-2">
-          {anexos.map((a) => (
-            <li
-              key={a.id}
-              className="flex flex-wrap items-center gap-2 rounded-none border border-border bg-card px-3 py-2 text-sm"
-            >
-              <span className="min-w-0 flex-1 truncate font-medium" title={a.file.name}>
-                {a.file.name}
-              </span>
-              <span className="text-xs text-muted-foreground">
-                {formatAnexoFileSize(a.file.size)}
-              </span>
-              <Button
-                type="button"
-                variant="ghost"
-                size="sm"
-                className="h-7 text-destructive hover:text-destructive"
-                onClick={() => remove(a.id)}
-                disabled={disabled}
+          {anexos.map((a) =>
+            a.file ? (
+              <li
+                key={a.id}
+                className="flex flex-wrap items-center gap-2 rounded-none border border-border bg-card px-3 py-2 text-sm"
               >
-                Remover
-              </Button>
-            </li>
-          ))}
+                <span className="min-w-0 flex-1 truncate font-medium" title={a.file.name}>
+                  {a.file.name}
+                </span>
+                <span className="text-xs text-muted-foreground">
+                  {formatAnexoFileSize(a.file.size)}
+                </span>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  className="h-7 text-destructive hover:text-destructive"
+                  onClick={() => remove(a.id)}
+                  disabled={disabled}
+                >
+                  Remover
+                </Button>
+              </li>
+            ) : null,
+          )}
         </ul>
       )}
     </div>

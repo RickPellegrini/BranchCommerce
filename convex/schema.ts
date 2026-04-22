@@ -1,6 +1,10 @@
 import { defineSchema, defineTable } from "convex/server"
 import { v } from "convex/values"
 
+const paymentMethodValidator = v.union(v.literal("pix"), v.literal("debit"), v.literal("credit"))
+
+const payStatusValidator = v.union(v.literal("none"), v.literal("pending"), v.literal("paid"))
+
 export default defineSchema({
   categories: defineTable({
     userId: v.string(),
@@ -30,10 +34,19 @@ export default defineSchema({
       ),
     ),
     createdAt: v.number(),
+    paymentMethod: v.optional(paymentMethodValidator),
+    installmentPlanId: v.optional(v.string()),
+    installmentIndex: v.optional(v.number()),
+    installmentCount: v.optional(v.number()),
+    payStatus: v.optional(payStatusValidator),
+    /** Vincula estorno/devolução ao lançamento de despesa original */
+    linkedSourceTransactionId: v.optional(v.id("transactions")),
   })
     .index("by_user", ["userId"])
     .index("by_user_date", ["userId", "date"])
-    .index("by_user_category", ["userId", "categoryId"]),
+    .index("by_user_category", ["userId", "categoryId"])
+    .index("by_user_plan_index", ["userId", "installmentPlanId", "installmentIndex"])
+    .index("by_linked_source", ["linkedSourceTransactionId"]),
 
   bills: defineTable({
     userId: v.string(),
@@ -66,18 +79,27 @@ export default defineSchema({
         v.literal("planned"),
         v.literal("buying"),
         v.literal("in_transit"),
+        v.literal("awaiting_inspection"),
+        v.literal("returned"),
+        v.literal("completed"),
         v.literal("in_stock"),
       ),
     ),
     estimatedArrival: v.optional(v.string()),
     kanbanNote: v.optional(v.string()),
+    kanbanHidden: v.optional(v.boolean()),
+    supplier: v.optional(v.string()),
+    manualEntryDate: v.optional(v.string()),
+    /** Chave composta para dedupe de entrada manual (nome+fornecedor+data) */
+    manualDedupeKey: v.optional(v.string()),
     createdAt: v.number(),
     updatedAt: v.number(),
   })
     .index("by_user", ["userId"])
     .index("by_user_sku", ["userId", "sku"])
     .index("by_user_ml_item", ["userId", "mlItemId"])
-    .index("by_ml_item", ["mlItemId"]),
+    .index("by_ml_item", ["mlItemId"])
+    .index("by_user_manual_dedupe", ["userId", "manualDedupeKey"]),
 
   stockMovements: defineTable({
     userId: v.string(),
@@ -91,6 +113,53 @@ export default defineSchema({
   })
     .index("by_user", ["userId"])
     .index("by_user_product", ["userId", "productId"]),
+
+  /** Log de mudanças de etapa no Kanban por produto */
+  productKanbanEvents: defineTable({
+    userId: v.string(),
+    productId: v.id("stockProducts"),
+    fromStatus: v.string(),
+    toStatus: v.string(),
+    note: v.optional(v.string()),
+    createdAt: v.number(),
+  })
+    .index("by_user", ["userId"])
+    .index("by_user_product", ["userId", "productId"]),
+
+  /** Metadados de ficheiros no Convex Storage, por lançamento */
+  transactionAttachments: defineTable({
+    userId: v.string(),
+    transactionId: v.id("transactions"),
+    storageId: v.string(),
+    fileName: v.string(),
+    byteSize: v.number(),
+    mimeType: v.string(),
+    dedupeKey: v.string(),
+    createdAt: v.number(),
+  })
+    .index("by_user", ["userId"])
+    .index("by_transaction", ["transactionId"])
+    .index("by_dedupe_key", ["dedupeKey"]),
+
+  /** Devolução iniciada a partir de um lançamento (uma por lançamento origem) */
+  transactionReturns: defineTable({
+    userId: v.string(),
+    sourceTransactionId: v.id("transactions"),
+    reason: v.union(
+      v.literal("defect"),
+      v.literal("wrong_item"),
+      v.literal("regret"),
+      v.literal("other"),
+    ),
+    note: v.string(),
+    proofStorageId: v.optional(v.string()),
+    creditTransactionId: v.id("transactions"),
+    productId: v.optional(v.id("stockProducts")),
+    createdAt: v.number(),
+  })
+    .index("by_user", ["userId"])
+    .index("by_source_transaction", ["userId", "sourceTransactionId"])
+    .index("by_credit_transaction", ["creditTransactionId"]),
 
   mercadoLivreAccounts: defineTable({
     appUserId: v.string(),

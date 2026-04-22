@@ -1,6 +1,6 @@
 import type { AnexoLancamento } from "@/lib/finance/types"
 
-export const MAX_ANEXO_BYTES = 10 * 1024 * 1024
+export const MAX_ANEXO_BYTES = 5 * 1024 * 1024
 export const ANEXO_ACCEPT_ATTR =
   ".pdf,.jpg,.jpeg,.png,.webp,application/pdf,image/jpeg,image/png,image/webp"
 
@@ -38,7 +38,7 @@ export function buildAnexosFromFiles(files: File[]): { ok: AnexoLancamento[]; er
     if (file.size > MAX_ANEXO_BYTES) {
       return {
         ok: [],
-        error: `Arquivo muito grande: "${file.name}" (máx. 10 MB).`,
+        error: `Arquivo muito grande: "${file.name}" (máx. 5 MB).`,
       }
     }
     if (!isAcceptedAnexoFile(file)) {

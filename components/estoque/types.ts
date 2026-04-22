@@ -1,4 +1,11 @@
-export type KanbanStatus = "planned" | "buying" | "in_transit" | "in_stock"
+export type KanbanStatus =
+  | "planned"
+  | "buying"
+  | "in_transit"
+  | "awaiting_inspection"
+  | "returned"
+  | "completed"
+  | "in_stock"
 
 export type UrgencyLevel = "critical" | "low" | "ok"
 
@@ -16,6 +23,8 @@ export interface KanbanProduct {
   kanbanStatus: KanbanStatus
   estimatedArrival?: string
   kanbanNote?: string
+  kanbanHidden?: boolean
+  supplier?: string
 }
 
 export interface KanbanMovement {
@@ -35,6 +44,9 @@ export const KANBAN_COLUMNS: Array<{
   { id: "planned", label: "Planejado" },
   { id: "buying", label: "Comprando" },
   { id: "in_transit", label: "Em trânsito" },
+  { id: "awaiting_inspection", label: "Aguardando conferência" },
+  { id: "returned", label: "Devolvido" },
+  { id: "completed", label: "Concluído" },
   { id: "in_stock", label: "No estoque" },
 ]
 

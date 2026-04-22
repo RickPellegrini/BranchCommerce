@@ -2,7 +2,7 @@
 
 import { useDraggable } from "@dnd-kit/core"
 import { CSS } from "@dnd-kit/utilities"
-import { MoreVertical, Package } from "lucide-react"
+import { Eye, EyeOff, MoreVertical, Package } from "lucide-react"
 import { DropdownMenu } from "radix-ui"
 import { cn } from "@/lib/utils"
 import { KanbanStageIcon } from "./column-icons"
@@ -23,6 +23,7 @@ interface ProductCardProps {
   onDetails: () => void
   onMoveTo: (target: KanbanColumnId) => void
   onDelete: () => void
+  onToggleHidden?: () => void
 }
 
 export function ProductCard({
@@ -31,6 +32,7 @@ export function ProductCard({
   onDetails,
   onMoveTo,
   onDelete,
+  onToggleHidden,
 }: ProductCardProps) {
   const { attributes, listeners, setNodeRef, transform } = useDraggable({
     id: product.id,
@@ -89,6 +91,24 @@ export function ProductCard({
           <p className="mt-0.5 truncate text-xs text-muted-foreground">{product.sku}</p>
         </div>
 
+        {onToggleHidden ? (
+          <button
+            type="button"
+            className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground"
+            title={product.kanbanHidden ? "Mostrar no quadro" : "Ocultar do quadro"}
+            onClick={(e) => {
+              e.stopPropagation()
+              onToggleHidden()
+            }}
+          >
+            {product.kanbanHidden ? (
+              <Eye className="h-4 w-4" aria-hidden />
+            ) : (
+              <EyeOff className="h-4 w-4" aria-hidden />
+            )}
+          </button>
+        ) : null}
+
         {/* 3-dot menu */}
         <DropdownMenu.Root>
           <DropdownMenu.Trigger asChild>
@@ -109,7 +129,7 @@ export function ProductCard({
                 className="cursor-pointer rounded px-2 py-1.5 text-sm outline-none hover:bg-muted"
                 onClick={onDetails}
               >
-                Ver detalhes
+                Ver detalhes / atualizar status
               </DropdownMenu.Item>
               <DropdownMenu.Separator className="my-1 h-px bg-border" />
               {product.quantity > 0 && getKanbanColumnId(product) !== EM_FALTA_COLUMN.id && (
@@ -176,7 +196,9 @@ export function ProductCard({
 
       {/* Estimated arrival */}
       {product.estimatedArrival &&
-        (product.kanbanStatus === "buying" || product.kanbanStatus === "in_transit") && (
+        (product.kanbanStatus === "buying" ||
+          product.kanbanStatus === "in_transit" ||
+          product.kanbanStatus === "awaiting_inspection") && (
           <p className="mt-1.5 text-xs text-muted-foreground">
             🗓 {new Date(product.estimatedArrival + "T00:00:00").toLocaleDateString("pt-BR")}
           </p>
