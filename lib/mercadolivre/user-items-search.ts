@@ -1,3 +1,4 @@
+import { normalizeMercadoLibreItemId } from "@/lib/mercadolivre/item-id"
 import { fetchMlApi } from "@/lib/mercadolivre/storage"
 
 export type MlItemsSearchResponse = {
@@ -21,10 +22,20 @@ export async function searchUserItemsIncludingPaused(
   offset: number,
 ): Promise<MlItemsSearchResponse> {
   if (offset > 0) {
-    return fetchMlApi<MlItemsSearchResponse>(
+    const page = await fetchMlApi<MlItemsSearchResponse>(
       `/users/${mlUserId}/items/search?limit=${limit}&offset=${offset}`,
       accessToken,
     )
+    const seen = new Set<string>()
+    const deduped: string[] = []
+    for (const id of page.results ?? []) {
+      const n = normalizeMercadoLibreItemId(id)
+      if (!seen.has(n)) {
+        seen.add(n)
+        deduped.push(n)
+      }
+    }
+    return { ...page, results: deduped }
   }
 
   const capped = Math.min(Math.max(limit, 1), 50)
@@ -42,15 +53,17 @@ export async function searchUserItemsIncludingPaused(
   const seen = new Set<string>()
   const merged: string[] = []
   for (const id of active.results ?? []) {
-    if (!seen.has(id)) {
-      seen.add(id)
-      merged.push(id)
+    const k = normalizeMercadoLibreItemId(id)
+    if (!seen.has(k)) {
+      seen.add(k)
+      merged.push(k)
     }
   }
   for (const id of paused.results ?? []) {
-    if (!seen.has(id)) {
-      seen.add(id)
-      merged.push(id)
+    const k = normalizeMercadoLibreItemId(id)
+    if (!seen.has(k)) {
+      seen.add(k)
+      merged.push(k)
     }
   }
 

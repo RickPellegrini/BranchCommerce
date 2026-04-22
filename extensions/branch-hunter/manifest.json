@@ -12,7 +12,11 @@
     "*://*.mercadolivre.com/*",
     "*://branchcommercehub.com/*",
     "*://branch-commerce.vercel.app/*",
-    "http://localhost:3000/*"
+    "*://*.vercel.app/*",
+    "http://localhost:3000/*",
+    "https://localhost:3000/*",
+    "http://127.0.0.1:3000/*",
+    "https://127.0.0.1:3000/*"
   ],
   "background": {
     "service_worker": "src/background.js"
@@ -31,7 +35,14 @@
       "run_at": "document_idle"
     },
     {
-      "matches": ["*://branchcommercehub.com/*", "http://localhost:3000/*"],
+      "matches": [
+        "*://branchcommercehub.com/*",
+        "*://*.vercel.app/*",
+        "http://localhost:3000/*",
+        "https://localhost:3000/*",
+        "http://127.0.0.1:3000/*",
+        "https://127.0.0.1:3000/*"
+      ],
       "js": ["src/bridge.js"],
       "run_at": "document_idle"
     }
