@@ -436,6 +436,21 @@ export const getAttachmentUrl = query({
   },
 })
 
+export const deleteTransactionAttachment = mutation({
+  args: {
+    userId: v.string(),
+    attachmentId: v.id("transactionAttachments"),
+  },
+  handler: async (ctx, args) => {
+    const row = await ctx.db.get(args.attachmentId)
+    if (!row || row.userId !== args.userId) {
+      throw new Error("Anexo nao encontrado.")
+    }
+    await ctx.storage.delete(row.storageId as Id<"_storage">)
+    await ctx.db.delete(args.attachmentId)
+  },
+})
+
 /** Compra/despesa com Pix, Debito ou Credito (parcelas). Dedupe por plano+indice. */
 export const addExpenseWithPayment = mutation({
   args: {
