@@ -372,7 +372,7 @@ export const generateAttachmentUploadUrl = mutation({
   args: {
     userId: v.string(),
   },
-  handler: async (ctx, _args) => {
+  handler: async (ctx) => {
     return await ctx.storage.generateUploadUrl()
   },
 })
