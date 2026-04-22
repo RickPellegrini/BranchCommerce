@@ -78,8 +78,9 @@ export const addProduct = mutation({
       throw new Error("SKU ja existe no estoque.")
     }
 
-    const normalizedMl =
-      args.mlItemId?.trim() ? normalizeMlItemIdForStock(args.mlItemId) : undefined
+    const normalizedMl = args.mlItemId?.trim()
+      ? normalizeMlItemIdForStock(args.mlItemId)
+      : undefined
     if (normalizedMl) {
       const dupMl = await ctx.db
         .query("stockProducts")
@@ -209,9 +210,7 @@ export const updateProduct = mutation({
       const nid = normalizeMlItemIdForStock(args.mlItemId)
       const dupMl = await ctx.db
         .query("stockProducts")
-        .withIndex("by_user_ml_item", (qb) =>
-          qb.eq("userId", args.userId).eq("mlItemId", nid),
-        )
+        .withIndex("by_user_ml_item", (qb) => qb.eq("userId", args.userId).eq("mlItemId", nid))
         .first()
       if (dupMl && dupMl._id !== args.productId) {
         throw new Error("Ja existe produto vinculado a este ID de anuncio ML.")
