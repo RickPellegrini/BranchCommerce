@@ -1,5 +1,7 @@
 "use client"
 
+import { Dialog } from "radix-ui"
+
 import { UserButton, useUser } from "@clerk/nextjs"
 import { useMutation, useQuery } from "convex/react"
 import {
@@ -89,9 +91,11 @@ import type {
   FinancialCategory,
   FinancialPeriod,
   FinancialTransaction,
+  PaymentMethod,
   TransactionPeriodicity,
   TransactionFilters,
 } from "@/lib/finance/types"
+import { exportTransactionsToCsv } from "@/lib/finance/export-csv"
 import {
   AnexosCountBadge,
   AnexosLancamentoModal,
@@ -101,6 +105,7 @@ import { cn } from "@/lib/utils"
 import { AnalysisModal } from "@/features/product-analysis/components/AnalysisModal"
 import { HunterAnalysisPage } from "@/features/product-analysis/components/HunterAnalysisPage"
 import { KanbanBoard } from "@/components/estoque/KanbanBoard"
+import type { ProductKanbanEventRow } from "@/components/estoque/ProductDetailModal"
 import { StockFeedbackAlert } from "@/components/estoque/stock-feedback-alert"
 import type { KanbanColumnId, KanbanProduct, KanbanStatus } from "@/components/estoque/types"
 
@@ -144,6 +149,8 @@ type StockProduct = {
   kanbanStatus?: KanbanStatus
   kanbanNote?: string
   estimatedArrival?: string
+  kanbanHidden?: boolean
+  supplier?: string
 }
 
 type StockMovement = {
@@ -1196,6 +1203,9 @@ export function FinancialDashboard() {
     origin: "",
     expenseType: "variable" as ExpenseType,
     periodicity: "one_time" as TransactionPeriodicity,
+    paymentMethod: "pix" as PaymentMethod,
+    installmentCount: "1",
+    firstChargeDate: today,
   })
   const [newCategory, setNewCategory] = useState({
     name: "",
@@ -1223,6 +1233,20 @@ export function FinancialDashboard() {
     minStock: "",
     unitCost: "",
     sellingPrice: "",
+  })
+  const [manualStockForm, setManualStockForm] = useState({
+    name: "",
+    quantity: "",
+    unitCost: "",
+    supplier: "",
+    manualEntryDate: today,
+    location: "in_stock_physical" as
+      | "in_stock_physical"
+      | "in_transit"
+      | "awaiting_delivery"
+      | "returned_supplier",
+    estimatedArrival: "",
+    observations: "",
   })
   const [editingProductId, setEditingProductId] = useState<Id<"stockProducts"> | null>(null)
   const [productEditForm, setProductEditForm] = useState({
@@ -1325,6 +1349,15 @@ export function FinancialDashboard() {
     description: string
   } | null>(null)
   const [launchFormAnexos, setLaunchFormAnexos] = useState<AnexoLancamento[]>([])
+  const [returnModal, setReturnModal] = useState<{
+    transaction: FinancialTransaction
+  } | null>(null)
+  const [returnForm, setReturnForm] = useState({
+    reason: "defect" as "defect" | "wrong_item" | "regret" | "other",
+    note: "",
+    productId: "" as Id<"stockProducts"> | "",
+    creditAmount: "",
+  })
   const [dreMonth, setDreMonth] = useState(new Date().getMonth() + 1)
   const [dreYear, setDreYear] = useState(new Date().getFullYear())
   const [dreIncludeMovements, setDreIncludeMovements] = useState(true)
@@ -1527,6 +1560,13 @@ export function FinancialDashboard() {
   const deleteProduct = useMutation(api.stock.deleteProduct)
   const addMovement = useMutation(api.stock.addMovement)
   const syncStockFromMercadoLivre = useMutation(api.stock.syncFromMercadoLivre)
+  const setProductKanbanHidden = useMutation(api.stock.setProductKanbanHidden)
+  const addManualStockEntryMutation = useMutation(api.stock.addManualStockEntry)
+  const addExpenseWithPayment = useMutation(api.finance.addExpenseWithPayment)
+  const generateAttachmentUploadUrl = useMutation(api.finance.generateAttachmentUploadUrl)
+  const registerTransactionAttachment = useMutation(api.finance.registerTransactionAttachment)
+  const markInstallmentPaidMutation = useMutation(api.finance.markInstallmentPaid)
+  const startReturnForTransactionMutation = useMutation(api.finance.startReturnForTransaction)
 
   useEffect(() => {
     if (!userId || isSetupDone) return
@@ -1649,6 +1689,12 @@ export function FinancialDashboard() {
         origin: item.origin,
         expenseType: item.expenseType,
         periodicity: item.periodicity,
+        paymentMethod: item.paymentMethod,
+        installmentPlanId: item.installmentPlanId,
+        installmentIndex: item.installmentIndex,
+        installmentCount: item.installmentCount,
+        payStatus: item.payStatus,
+        linkedSourceTransactionId: item.linkedSourceTransactionId,
       })),
     [financeData?.transactions],
   )
@@ -1669,6 +1715,8 @@ export function FinancialDashboard() {
         kanbanStatus: item.kanbanStatus,
         kanbanNote: item.kanbanNote,
         estimatedArrival: item.estimatedArrival,
+        kanbanHidden: item.kanbanHidden,
+        supplier: item.supplier,
       })),
     [stockData?.products],
   )
@@ -1689,9 +1737,41 @@ export function FinancialDashboard() {
         kanbanStatus: p.kanbanStatus ?? (p.quantity > 0 ? "in_stock" : "planned"),
         kanbanNote: p.kanbanNote,
         estimatedArrival: p.estimatedArrival,
+        kanbanHidden: p.kanbanHidden,
+        supplier: p.supplier,
       })),
     [products],
   )
+
+  const kanbanTimelineEvents = useMemo<ProductKanbanEventRow[]>(
+    () =>
+      (stockData?.kanbanEvents ?? []).map((e) => ({
+        id: e._id,
+        productId: e.productId,
+        fromStatus: e.fromStatus,
+        toStatus: e.toStatus,
+        note: e.note,
+        createdAt: e.createdAt,
+      })),
+    [stockData?.kanbanEvents],
+  )
+
+  const attachmentCountByTransaction = useMemo(() => {
+    const m: Record<string, number> = {}
+    for (const row of financeData?.transactionAttachments ?? []) {
+      const k = row.transactionId as string
+      m[k] = (m[k] ?? 0) + 1
+    }
+    return m
+  }, [financeData?.transactionAttachments])
+
+  const returnBySourceId = useMemo(() => {
+    const m = new Map<string, NonNullable<typeof financeData>["transactionReturns"][number]>()
+    for (const r of financeData?.transactionReturns ?? []) {
+      m.set(r.sourceTransactionId as string, r)
+    }
+    return m
+  }, [financeData?.transactionReturns])
 
   const movements = useMemo<StockMovement[]>(
     () =>
@@ -2439,28 +2519,69 @@ export function FinancialDashboard() {
       return
     }
 
+    const amount = Number(launchForm.amount)
+    if (!Number.isFinite(amount) || amount <= 0) {
+      setLaunchFeedback({ type: "error", message: "Informe um valor numerico valido." })
+      return
+    }
+
     setLaunchSaving(true)
     setLaunchFeedback(null)
     try {
-      const newTxId = await addTransaction({
-        userId,
-        kind: launchForm.kind,
-        amount: Number(launchForm.amount),
-        date: launchForm.date,
-        description: launchForm.description,
-        categoryId: launchForm.categoryId,
-        origin: launchForm.kind === "income" ? launchForm.origin || undefined : undefined,
-        expenseType: launchForm.kind === "expense" ? launchForm.expenseType : undefined,
-        periodicity: launchForm.periodicity,
-      })
-      const comprovantesDoFormulario = launchFormAnexos
-      const idKey = String(newTxId)
-      if (comprovantesDoFormulario.length > 0) {
-        setAnexosByLancamentoId((prev) => ({
-          ...prev,
-          [idKey]: [...(prev[idKey] ?? []), ...comprovantesDoFormulario],
-        }))
+      const pendingFiles = launchFormAnexos.filter((a) => a.file)
+      let targetIds: string[] = []
+
+      if (launchForm.kind === "expense") {
+        const result = await addExpenseWithPayment({
+          userId,
+          amount,
+          date: launchForm.date,
+          description: launchForm.description,
+          categoryId: launchForm.categoryId as Id<"categories">,
+          expenseType: launchForm.expenseType,
+          periodicity: launchForm.periodicity,
+          paymentMethod: launchForm.paymentMethod,
+          installmentCount:
+            launchForm.paymentMethod === "credit"
+              ? Math.min(24, Math.max(1, Number(launchForm.installmentCount) || 1))
+              : undefined,
+          firstChargeDate:
+            launchForm.paymentMethod === "credit" ? launchForm.firstChargeDate : undefined,
+        })
+        targetIds = result.transactionIds.map(String)
+      } else {
+        const newTxId = await addTransaction({
+          userId,
+          kind: "income",
+          amount,
+          date: launchForm.date,
+          description: launchForm.description,
+          categoryId: launchForm.categoryId as Id<"categories">,
+          origin: launchForm.origin || undefined,
+          periodicity: launchForm.periodicity,
+        })
+        targetIds = [String(newTxId)]
       }
+
+      const primaryTxId = targetIds[0] as Id<"transactions">
+      if (pendingFiles.length > 0 && primaryTxId) {
+        for (const anexo of pendingFiles) {
+          if (!anexo.file) continue
+          const postUrl = await generateAttachmentUploadUrl({ userId })
+          const res = await fetch(postUrl, { method: "POST", body: anexo.file })
+          const body = (await res.json()) as { storageId?: string }
+          if (!body.storageId) throw new Error("Falha no upload do comprovante.")
+          await registerTransactionAttachment({
+            userId,
+            transactionId: primaryTxId,
+            storageId: body.storageId,
+            fileName: anexo.file.name,
+            byteSize: anexo.file.size,
+            mimeType: anexo.file.type || "application/octet-stream",
+          })
+        }
+      }
+
       setLaunchFormAnexos([])
       setLaunchForm((previous) => ({
         ...previous,
@@ -2469,12 +2590,15 @@ export function FinancialDashboard() {
         origin: "",
         expenseType: "variable",
         periodicity: "one_time",
+        paymentMethod: "pix",
+        installmentCount: "1",
+        firstChargeDate: today,
       }))
       setLaunchFeedback({
         type: "success",
         message:
-          comprovantesDoFormulario.length > 0
-            ? "Lancamento salvo com sucesso no financeiro (comprovantes anexados)."
+          pendingFiles.length > 0
+            ? "Lancamento salvo no financeiro e comprovantes enviados ao Convex."
             : "Lancamento salvo com sucesso no financeiro.",
       })
     } catch (error) {
@@ -2811,6 +2935,136 @@ export function FinancialDashboard() {
     const p = products.find((x) => x.id === productId)
     if (p) await removeProduct(p)
   }
+
+  const handleToggleProductHidden = async (productId: string, hidden: boolean) => {
+    if (!userId) return
+    try {
+      await setProductKanbanHidden({
+        userId,
+        productId: productId as Id<"stockProducts">,
+        kanbanHidden: hidden,
+      })
+    } catch (error) {
+      setProductFeedback({
+        type: "error",
+        message:
+          error instanceof Error
+            ? error.message
+            : "Nao foi possivel atualizar visibilidade do card.",
+      })
+    }
+  }
+
+  const submitReturn = async () => {
+    if (!userId || !returnModal) return
+    const amt = Number(returnForm.creditAmount)
+    if (!Number.isFinite(amt) || amt <= 0) {
+      window.alert("Informe um valor de credito valido.")
+      return
+    }
+    if (!returnForm.note.trim()) {
+      window.alert("Preencha a observacao.")
+      return
+    }
+    const ok = window.confirm("Confirmar devolucao e gerar lancamento de credito?")
+    if (!ok) return
+    try {
+      await startReturnForTransactionMutation({
+        userId,
+        sourceTransactionId: returnModal.transaction.id as Id<"transactions">,
+        reason: returnForm.reason,
+        note: returnForm.note.trim(),
+        productId: returnForm.productId || undefined,
+        creditAmount: amt,
+      })
+      setReturnModal(null)
+      setReturnForm({
+        reason: "defect",
+        note: "",
+        productId: "",
+        creditAmount: "",
+      })
+      window.alert("Devolucao registrada. Produto movido para Devolvido quando vinculado.")
+    } catch (e) {
+      window.alert(e instanceof Error ? e.message : "Falha ao registrar devolucao.")
+    }
+  }
+
+  const saveManualInboundStock = async () => {
+    if (!userId) return
+    const qty = Number(manualStockForm.quantity)
+    const cost = Number(manualStockForm.unitCost)
+    if (!manualStockForm.name.trim() || !manualStockForm.supplier.trim()) {
+      setProductFeedback({
+        type: "error",
+        message: "Preencha nome do produto e fornecedor.",
+      })
+      return
+    }
+    if (!Number.isFinite(qty) || qty < 0 || !Number.isFinite(cost) || cost < 0) {
+      setProductFeedback({
+        type: "error",
+        message: "Quantidade e custo devem ser numeros validos.",
+      })
+      return
+    }
+    try {
+      await addManualStockEntryMutation({
+        userId,
+        name: manualStockForm.name.trim(),
+        quantity: qty,
+        unitCost: cost,
+        supplier: manualStockForm.supplier.trim(),
+        manualEntryDate: manualStockForm.manualEntryDate,
+        location: manualStockForm.location,
+        estimatedArrival: manualStockForm.estimatedArrival || undefined,
+        observations: manualStockForm.observations || undefined,
+      })
+      setManualStockForm({
+        name: "",
+        quantity: "",
+        unitCost: "",
+        supplier: "",
+        manualEntryDate: today,
+        location: "in_stock_physical",
+        estimatedArrival: "",
+        observations: "",
+      })
+      setProductFeedback({ type: "success", message: "Entrada manual registrada no estoque." })
+    } catch (error) {
+      setProductFeedback({
+        type: "error",
+        message: error instanceof Error ? error.message : "Nao foi possivel salvar entrada manual.",
+      })
+    }
+  }
+
+  useEffect(() => {
+    const rows = financeData?.transactionAttachments
+    if (!rows?.length) return
+    setAnexosByLancamentoId((prev) => {
+      const fromServer: Record<string, AnexoLancamento[]> = {}
+      for (const row of rows) {
+        const tid = row.transactionId as string
+        const entry: AnexoLancamento = {
+          id: row._id,
+          uploadedAt: row.createdAt,
+          fileName: row.fileName,
+          mimeType: row.mimeType,
+          byteSize: row.byteSize,
+          remoteUrl: row.url ?? undefined,
+          convexAttachmentId: row._id,
+        }
+        fromServer[tid] = [...(fromServer[tid] ?? []), entry]
+      }
+      const merged: Record<string, AnexoLancamento[]> = { ...fromServer }
+      for (const key of Object.keys(prev)) {
+        const pending = prev[key].filter((a) => a.file && !a.convexAttachmentId)
+        if (pending.length) merged[key] = [...(merged[key] ?? []), ...pending]
+      }
+      return merged
+    })
+  }, [financeData?.transactionAttachments])
 
   const saveMovement = async () => {
     if (!userId || !movementForm.productId || !movementForm.quantity) return
@@ -5196,6 +5450,64 @@ export function FinancialDashboard() {
                       </SelectContent>
                     </Select>
                   </div>
+                  {launchForm.kind === "expense" ? (
+                    <>
+                      <div className="space-y-1 md:col-span-2">
+                        <p className="inline-flex items-center gap-1 text-xs text-muted-foreground">
+                          <CreditCard className="size-3.5" />
+                          Forma de pagamento
+                        </p>
+                        <Select
+                          value={launchForm.paymentMethod}
+                          onValueChange={(value) =>
+                            setLaunchForm((prev) => ({
+                              ...prev,
+                              paymentMethod: value as PaymentMethod,
+                            }))
+                          }
+                        >
+                          <SelectTrigger className="w-full border-primary/20 bg-background">
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="pix">Pix</SelectItem>
+                            <SelectItem value="debit">Debito</SelectItem>
+                            <SelectItem value="credit">Credito (parcelas)</SelectItem>
+                          </SelectContent>
+                        </Select>
+                      </div>
+                      {launchForm.paymentMethod === "credit" ? (
+                        <>
+                          <div className="space-y-1">
+                            <p className="text-xs text-muted-foreground">Parcelas (1 a 24)</p>
+                            <Input
+                              type="number"
+                              min={1}
+                              max={24}
+                              className="border-primary/20 bg-background"
+                              value={launchForm.installmentCount}
+                              onChange={(event) =>
+                                setLaunchForm((prev) => ({
+                                  ...prev,
+                                  installmentCount: event.target.value,
+                                }))
+                              }
+                            />
+                          </div>
+                          <div className="space-y-1">
+                            <p className="text-xs text-muted-foreground">Primeira cobranca</p>
+                            <BrDateInput
+                              className="border-primary/20 bg-background"
+                              value={launchForm.firstChargeDate}
+                              onValueChange={(value) =>
+                                setLaunchForm((prev) => ({ ...prev, firstChargeDate: value }))
+                              }
+                            />
+                          </div>
+                        </>
+                      ) : null}
+                    </>
+                  ) : null}
                   <LancamentoFormAnexos
                     anexos={launchFormAnexos}
                     onAnexosChange={setLaunchFormAnexos}
@@ -5431,7 +5743,19 @@ export function FinancialDashboard() {
                         Gerencie receitas e despesas da empresa com acesso ao historico completo.
                       </CardDescription>
                     </div>
-                    <div className="flex gap-2">
+                    <div className="flex flex-wrap gap-2">
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        type="button"
+                        onClick={() =>
+                          exportTransactionsToCsv(historyTransactions, categoryMap, {
+                            attachmentCounts: attachmentCountByTransaction,
+                          })
+                        }
+                      >
+                        Exportar CSV
+                      </Button>
                       <Button variant="outline" size="sm">
                         Importar
                       </Button>
@@ -5707,11 +6031,59 @@ export function FinancialDashboard() {
                         <TableBody>
                           {historyTransactions.map((transaction) => {
                             const anexoCount = anexosByLancamentoId[transaction.id]?.length ?? 0
+                            const firstThumb = anexosByLancamentoId[transaction.id]?.find(
+                              (a) =>
+                                a.remoteUrl &&
+                                (a.mimeType?.startsWith("image/") ||
+                                  /\.(jpe?g|png|webp)$/i.test(a.fileName ?? "")),
+                            )
+                            const isOverdue =
+                              transaction.kind === "expense" &&
+                              transaction.payStatus === "pending" &&
+                              transaction.date < today
+                            const hasReturn = returnBySourceId.has(transaction.id)
                             return (
                               <TableRow key={transaction.id}>
                                 <TableCell>{formatDate(transaction.date)}</TableCell>
-                                <TableCell className="max-w-[240px] truncate">
-                                  {transaction.description}
+                                <TableCell className="max-w-[280px]">
+                                  <div className="truncate font-medium">
+                                    {transaction.description}
+                                  </div>
+                                  <div className="mt-1 flex flex-wrap gap-1">
+                                    {transaction.installmentIndex != null &&
+                                    transaction.installmentCount != null ? (
+                                      <Badge variant="outline" className="text-[10px]">
+                                        Parc. {transaction.installmentIndex}/
+                                        {transaction.installmentCount}
+                                      </Badge>
+                                    ) : null}
+                                    {transaction.paymentMethod ? (
+                                      <Badge variant="secondary" className="text-[10px] uppercase">
+                                        {transaction.paymentMethod}
+                                      </Badge>
+                                    ) : null}
+                                    {transaction.payStatus === "pending" ? (
+                                      <Badge
+                                        variant="outline"
+                                        className={cn(
+                                          "text-[10px]",
+                                          isOverdue && "border-amber-600 text-amber-700",
+                                        )}
+                                      >
+                                        {isOverdue ? "Atrasada" : "Pendente"}
+                                      </Badge>
+                                    ) : null}
+                                    {transaction.payStatus === "paid" ? (
+                                      <Badge variant="default" className="text-[10px]">
+                                        Pago
+                                      </Badge>
+                                    ) : null}
+                                    {hasReturn ? (
+                                      <Badge variant="destructive" className="text-[10px]">
+                                        Devolucao iniciada
+                                      </Badge>
+                                    ) : null}
+                                  </div>
                                 </TableCell>
                                 <TableCell>
                                   {categoryMap.get(transaction.categoryId)?.name ?? "Sem categoria"}
@@ -5745,40 +6117,87 @@ export function FinancialDashboard() {
                                   {formatCurrency(transaction.amount)}
                                 </TableCell>
                                 <TableCell>
-                                  <Button
-                                    type="button"
-                                    variant={anexoCount > 0 ? "secondary" : "outline"}
-                                    size="sm"
-                                    className="h-8 max-w-full gap-1.5 px-2"
-                                    onClick={() =>
-                                      setAnexosModalLancamento({
-                                        id: transaction.id,
-                                        description: transaction.description,
-                                      })
-                                    }
-                                  >
-                                    <Paperclip
-                                      className={cn(
-                                        "size-3.5 shrink-0",
-                                        anexoCount === 0 && "text-muted-foreground",
+                                  <div className="flex items-center gap-2">
+                                    {firstThumb?.remoteUrl ? (
+                                      <img
+                                        src={firstThumb.remoteUrl}
+                                        alt=""
+                                        className="size-9 shrink-0 rounded border object-cover"
+                                      />
+                                    ) : null}
+                                    <Button
+                                      type="button"
+                                      variant={anexoCount > 0 ? "secondary" : "outline"}
+                                      size="sm"
+                                      className="h-8 max-w-full gap-1.5 px-2"
+                                      onClick={() =>
+                                        setAnexosModalLancamento({
+                                          id: transaction.id,
+                                          description: transaction.description,
+                                        })
+                                      }
+                                    >
+                                      <Paperclip
+                                        className={cn(
+                                          "size-3.5 shrink-0",
+                                          anexoCount === 0 && "text-muted-foreground",
+                                        )}
+                                        aria-hidden
+                                      />
+                                      {anexoCount > 0 ? (
+                                        <>
+                                          <AnexosCountBadge count={anexoCount} />
+                                          <span className="sr-only">{anexoCount} anexos</span>
+                                        </>
+                                      ) : (
+                                        <span className="text-xs text-muted-foreground">
+                                          Anexar
+                                        </span>
                                       )}
-                                      aria-hidden
-                                    />
-                                    {anexoCount > 0 ? (
-                                      <>
-                                        <AnexosCountBadge count={anexoCount} />
-                                        <span className="sr-only">{anexoCount} anexos</span>
-                                      </>
-                                    ) : (
-                                      <span className="text-xs text-muted-foreground">Anexar</span>
-                                    )}
-                                  </Button>
+                                    </Button>
+                                  </div>
                                 </TableCell>
                                 <TableCell>
                                   {transaction.origin === "Venda online" ? (
                                     <Badge variant="secondary">Editar no estoque</Badge>
                                   ) : (
-                                    <div className="flex gap-2">
+                                    <div className="flex flex-wrap gap-2">
+                                      {transaction.kind === "expense" &&
+                                      transaction.payStatus === "pending" &&
+                                      transaction.installmentPlanId ? (
+                                        <Button
+                                          size="sm"
+                                          variant="secondary"
+                                          type="button"
+                                          onClick={() => {
+                                            if (!userId) return
+                                            void markInstallmentPaidMutation({
+                                              userId,
+                                              transactionId: transaction.id as Id<"transactions">,
+                                            })
+                                          }}
+                                        >
+                                          Marcar pago
+                                        </Button>
+                                      ) : null}
+                                      {transaction.kind === "expense" &&
+                                      !hasReturn &&
+                                      !transaction.linkedSourceTransactionId ? (
+                                        <Button
+                                          size="sm"
+                                          variant="outline"
+                                          type="button"
+                                          onClick={() => {
+                                            setReturnModal({ transaction })
+                                            setReturnForm((f) => ({
+                                              ...f,
+                                              creditAmount: String(transaction.amount),
+                                            }))
+                                          }}
+                                        >
+                                          Devolucao
+                                        </Button>
+                                      ) : null}
                                       <Button
                                         size="sm"
                                         variant="outline"
@@ -5804,6 +6223,106 @@ export function FinancialDashboard() {
                     )}
                   </CardContent>
                 </Card>
+
+                <Dialog.Root
+                  open={returnModal !== null}
+                  onOpenChange={(o) => {
+                    if (!o) setReturnModal(null)
+                  }}
+                >
+                  <Dialog.Portal>
+                    <Dialog.Overlay className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm" />
+                    <Dialog.Content className="fixed left-1/2 top-1/2 z-50 w-full max-w-md -translate-x-1/2 -translate-y-1/2 rounded-2xl border border-border bg-card p-6 shadow-xl">
+                      <Dialog.Title className="text-base font-semibold">
+                        Iniciar devolucao
+                      </Dialog.Title>
+                      <Dialog.Description className="mt-1 text-sm text-muted-foreground">
+                        {returnModal?.transaction.description}
+                      </Dialog.Description>
+                      <div className="mt-4 space-y-3">
+                        <div className="space-y-1">
+                          <label className="text-xs text-muted-foreground">Motivo</label>
+                          <Select
+                            value={returnForm.reason}
+                            onValueChange={(v) =>
+                              setReturnForm((f) => ({
+                                ...f,
+                                reason: v as (typeof returnForm)["reason"],
+                              }))
+                            }
+                          >
+                            <SelectTrigger>
+                              <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value="defect">Produto com defeito</SelectItem>
+                              <SelectItem value="wrong_item">Item errado</SelectItem>
+                              <SelectItem value="regret">Arrependimento</SelectItem>
+                              <SelectItem value="other">Outro</SelectItem>
+                            </SelectContent>
+                          </Select>
+                        </div>
+                        <div className="space-y-1">
+                          <label className="text-xs text-muted-foreground">Observacao</label>
+                          <Input
+                            value={returnForm.note}
+                            onChange={(e) => setReturnForm((f) => ({ ...f, note: e.target.value }))}
+                          />
+                        </div>
+                        <div className="space-y-1">
+                          <label className="text-xs text-muted-foreground">
+                            Valor do credito (R$)
+                          </label>
+                          <Input
+                            type="number"
+                            value={returnForm.creditAmount}
+                            onChange={(e) =>
+                              setReturnForm((f) => ({ ...f, creditAmount: e.target.value }))
+                            }
+                          />
+                        </div>
+                        <div className="space-y-1">
+                          <label className="text-xs text-muted-foreground">
+                            Produto (opcional — Kanban Devolvido)
+                          </label>
+                          <Select
+                            value={returnForm.productId || "__none__"}
+                            onValueChange={(v) =>
+                              setReturnForm((f) => ({
+                                ...f,
+                                productId: v === "__none__" ? "" : (v as Id<"stockProducts">),
+                              }))
+                            }
+                          >
+                            <SelectTrigger>
+                              <SelectValue placeholder="Nenhum" />
+                            </SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value="__none__">Nenhum</SelectItem>
+                              {products.map((p) => (
+                                <SelectItem key={p.id} value={p.id}>
+                                  {p.name} ({p.sku})
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                        </div>
+                        <div className="flex justify-end gap-2 pt-2">
+                          <Button
+                            type="button"
+                            variant="outline"
+                            onClick={() => setReturnModal(null)}
+                          >
+                            Cancelar
+                          </Button>
+                          <Button type="button" onClick={() => void submitReturn()}>
+                            Confirmar
+                          </Button>
+                        </div>
+                      </div>
+                    </Dialog.Content>
+                  </Dialog.Portal>
+                </Dialog.Root>
 
                 <AnexosLancamentoModal
                   open={anexosModalLancamento !== null}
@@ -6121,6 +6640,116 @@ export function FinancialDashboard() {
                     message={productFeedback.message}
                   />
                 )}
+                <Card className="border-border/80 shadow-sm">
+                  <CardHeader>
+                    <CardTitle className="text-base">Entrada manual (fornecedor)</CardTitle>
+                    <CardDescription>
+                      Cria produto com etapa no Kanban conforme a localizacao. Dedup: mesmo nome +
+                      fornecedor + data.
+                    </CardDescription>
+                  </CardHeader>
+                  <CardContent className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+                    <div className="space-y-1 sm:col-span-2">
+                      <label className="text-xs text-muted-foreground">Nome do produto</label>
+                      <Input
+                        value={manualStockForm.name}
+                        onChange={(e) =>
+                          setManualStockForm((p) => ({ ...p, name: e.target.value }))
+                        }
+                      />
+                    </div>
+                    <div className="space-y-1">
+                      <label className="text-xs text-muted-foreground">Quantidade</label>
+                      <Input
+                        type="number"
+                        min={0}
+                        value={manualStockForm.quantity}
+                        onChange={(e) =>
+                          setManualStockForm((p) => ({ ...p, quantity: e.target.value }))
+                        }
+                      />
+                    </div>
+                    <div className="space-y-1">
+                      <label className="text-xs text-muted-foreground">Custo unitario</label>
+                      <Input
+                        type="number"
+                        min={0}
+                        step="0.01"
+                        value={manualStockForm.unitCost}
+                        onChange={(e) =>
+                          setManualStockForm((p) => ({ ...p, unitCost: e.target.value }))
+                        }
+                      />
+                    </div>
+                    <div className="space-y-1 sm:col-span-2">
+                      <label className="text-xs text-muted-foreground">Fornecedor</label>
+                      <Input
+                        value={manualStockForm.supplier}
+                        onChange={(e) =>
+                          setManualStockForm((p) => ({ ...p, supplier: e.target.value }))
+                        }
+                      />
+                    </div>
+                    <div className="space-y-1">
+                      <label className="text-xs text-muted-foreground">Data (dedup)</label>
+                      <BrDateInput
+                        value={manualStockForm.manualEntryDate}
+                        onValueChange={(v) =>
+                          setManualStockForm((p) => ({ ...p, manualEntryDate: v }))
+                        }
+                      />
+                    </div>
+                    <div className="space-y-1 sm:col-span-2">
+                      <label className="text-xs text-muted-foreground">Local / etapa</label>
+                      <Select
+                        value={manualStockForm.location}
+                        onValueChange={(value) =>
+                          setManualStockForm((p) => ({
+                            ...p,
+                            location: value as (typeof manualStockForm)["location"],
+                          }))
+                        }
+                      >
+                        <SelectTrigger>
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="in_stock_physical">Estoque fisico</SelectItem>
+                          <SelectItem value="in_transit">Em transito</SelectItem>
+                          <SelectItem value="awaiting_delivery">Aguardando entrega</SelectItem>
+                          <SelectItem value="returned_supplier">Devolvido ao fornecedor</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    {manualStockForm.location === "in_transit" ? (
+                      <div className="space-y-1 sm:col-span-2">
+                        <label className="text-xs text-muted-foreground">Previsao de chegada</label>
+                        <BrDateInput
+                          value={manualStockForm.estimatedArrival}
+                          onValueChange={(v) =>
+                            setManualStockForm((p) => ({ ...p, estimatedArrival: v }))
+                          }
+                        />
+                      </div>
+                    ) : null}
+                    <div className="space-y-1 sm:col-span-3">
+                      <label className="text-xs text-muted-foreground">Observacoes</label>
+                      <Input
+                        value={manualStockForm.observations}
+                        onChange={(e) =>
+                          setManualStockForm((p) => ({ ...p, observations: e.target.value }))
+                        }
+                      />
+                    </div>
+                    <Button
+                      type="button"
+                      className="sm:col-span-2"
+                      onClick={saveManualInboundStock}
+                    >
+                      Adicionar ao estoque / Kanban
+                    </Button>
+                  </CardContent>
+                </Card>
                 <KanbanBoard
                   products={kanbanProducts}
                   movements={movements.map((m) => ({
@@ -6135,6 +6764,8 @@ export function FinancialDashboard() {
                   onUpdateKanbanStatus={handleKanbanUpdateStatus}
                   onSaveProductEdits={handleKanbanSaveEdits}
                   onDeleteProduct={handleKanbanDelete}
+                  onToggleProductHidden={handleToggleProductHidden}
+                  kanbanTimelineEvents={kanbanTimelineEvents}
                 />
               </section>
             )}

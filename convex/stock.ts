@@ -1,11 +1,17 @@
 import { v } from "convex/values"
 
-import { mutation, query } from "./_generated/server"
+import type { Id } from "./_generated/dataModel"
+import { mutation, query, type MutationCtx } from "./_generated/server"
+
+import { manualStockDedupeKey } from "./dedupeHelpers"
 
 const kanbanStatusValidator = v.union(
   v.literal("planned"),
   v.literal("buying"),
   v.literal("in_transit"),
+  v.literal("awaiting_inspection"),
+  v.literal("returned"),
+  v.literal("completed"),
   v.literal("in_stock"),
 )
 
@@ -24,7 +30,12 @@ export const getDashboardData = query({
       .withIndex("by_user", (queryBuilder) => queryBuilder.eq("userId", args.userId))
       .collect()
 
-    return { products, movements }
+    const kanbanEvents = await ctx.db
+      .query("productKanbanEvents")
+      .withIndex("by_user", (queryBuilder) => queryBuilder.eq("userId", args.userId))
+      .collect()
+
+    return { products, movements, kanbanEvents }
   },
 })
 
@@ -96,6 +107,26 @@ export const addProduct = mutation({
   },
 })
 
+async function logKanbanTransition(
+  ctx: MutationCtx,
+  args: {
+    userId: string
+    productId: Id<"stockProducts">
+    fromStatus: string
+    toStatus: string
+    note?: string
+  },
+) {
+  await ctx.db.insert("productKanbanEvents", {
+    userId: args.userId,
+    productId: args.productId,
+    fromStatus: args.fromStatus,
+    toStatus: args.toStatus,
+    note: args.note,
+    createdAt: Date.now(),
+  })
+}
+
 export const updateProduct = mutation({
   args: {
     userId: v.string(),
@@ -139,6 +170,17 @@ export const updateProduct = mutation({
       throw new Error("SKU ja existe no estoque.")
     }
 
+    const prevKanban = product.kanbanStatus ?? "planned"
+    if (args.kanbanStatus !== undefined && args.kanbanStatus !== prevKanban) {
+      await logKanbanTransition(ctx, {
+        userId: args.userId,
+        productId: args.productId,
+        fromStatus: prevKanban,
+        toStatus: args.kanbanStatus,
+        note: args.kanbanNote,
+      })
+    }
+
     await ctx.db.patch(args.productId, {
       name: normalizedName,
       sku: normalizedSku,
@@ -170,6 +212,17 @@ export const updateProductKanban = mutation({
       throw new Error("Produto nao encontrado.")
     }
 
+    const prev = product.kanbanStatus ?? "planned"
+    if (prev !== args.kanbanStatus) {
+      await logKanbanTransition(ctx, {
+        userId: args.userId,
+        productId: args.productId,
+        fromStatus: prev,
+        toStatus: args.kanbanStatus,
+        note: args.kanbanNote,
+      })
+    }
+
     await ctx.db.patch(args.productId, {
       kanbanStatus: args.kanbanStatus,
       updatedAt: Date.now(),
@@ -199,6 +252,7 @@ export const applyKanbanMove = mutation({
       throw new Error("Produto nao encontrado.")
     }
 
+    const prevKanban = product.kanbanStatus ?? "planned"
     const now = Date.now()
     const today = new Date().toISOString().slice(0, 10)
 
@@ -225,6 +279,14 @@ export const applyKanbanMove = mutation({
         updatedAt: now,
       })
 
+      await logKanbanTransition(ctx, {
+        userId: args.userId,
+        productId: args.productId,
+        fromStatus: prevKanban,
+        toStatus: "em_falta",
+        note: args.kanbanNote,
+      })
+
       if (prevQty > 0) {
         await ctx.db.insert("stockMovements", {
           userId: args.userId,
@@ -245,6 +307,15 @@ export const applyKanbanMove = mutation({
           "Sem unidades em estoque. Ajuste a quantidade no produto antes de colocar em No estoque.",
         )
       }
+      if (prevKanban !== "in_stock") {
+        await logKanbanTransition(ctx, {
+          userId: args.userId,
+          productId: args.productId,
+          fromStatus: prevKanban,
+          toStatus: "in_stock",
+          note: args.kanbanNote,
+        })
+      }
       await ctx.db.patch(args.productId, {
         kanbanStatus: "in_stock",
         ...notePatch,
@@ -254,12 +325,154 @@ export const applyKanbanMove = mutation({
       return
     }
 
+    if (prevKanban !== args.target) {
+      await logKanbanTransition(ctx, {
+        userId: args.userId,
+        productId: args.productId,
+        fromStatus: prevKanban,
+        toStatus: args.target,
+        note: args.kanbanNote,
+      })
+    }
+
     await ctx.db.patch(args.productId, {
       kanbanStatus: args.target,
       ...notePatch,
       ...arrivalPatch,
       updatedAt: now,
     })
+  },
+})
+
+const manualLocationValidator = v.union(
+  v.literal("in_stock_physical"),
+  v.literal("in_transit"),
+  v.literal("awaiting_delivery"),
+  v.literal("returned_supplier"),
+)
+
+export const setProductKanbanHidden = mutation({
+  args: {
+    userId: v.string(),
+    productId: v.id("stockProducts"),
+    kanbanHidden: v.boolean(),
+  },
+  handler: async (ctx, args) => {
+    const product = await ctx.db.get(args.productId)
+    if (!product || product.userId !== args.userId) {
+      throw new Error("Produto nao encontrado.")
+    }
+    await ctx.db.patch(args.productId, {
+      kanbanHidden: args.kanbanHidden,
+      updatedAt: Date.now(),
+    })
+  },
+})
+
+/**
+ * Entrada manual com mapeamento para coluna Kanban; dedupe silencioso por nome+fornecedor+data.
+ */
+export const addManualStockEntry = mutation({
+  args: {
+    userId: v.string(),
+    name: v.string(),
+    quantity: v.number(),
+    unitCost: v.number(),
+    supplier: v.string(),
+    manualEntryDate: v.string(),
+    location: manualLocationValidator,
+    estimatedArrival: v.optional(v.string()),
+    observations: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => {
+    const normalizedName = args.name.trim()
+    const supplier = args.supplier.trim()
+    if (!normalizedName || !supplier) {
+      throw new Error("Preencha nome e fornecedor.")
+    }
+    if (args.quantity < 0 || args.unitCost < 0) {
+      throw new Error("Quantidade e custo devem ser zero ou positivos.")
+    }
+
+    const dedupeKey = manualStockDedupeKey(
+      args.userId,
+      normalizedName,
+      supplier,
+      args.manualEntryDate,
+    )
+
+    const duplicate = await ctx.db
+      .query("stockProducts")
+      .withIndex("by_user_manual_dedupe", (q) =>
+        q.eq("userId", args.userId).eq("manualDedupeKey", dedupeKey),
+      )
+      .first()
+    if (duplicate) {
+      return duplicate._id
+    }
+
+    let kanbanStatus:
+      | "planned"
+      | "buying"
+      | "in_transit"
+      | "awaiting_inspection"
+      | "returned"
+      | "completed"
+      | "in_stock" = "planned"
+    if (args.location === "in_stock_physical") {
+      kanbanStatus = "in_stock"
+    } else if (args.location === "in_transit") {
+      kanbanStatus = "in_transit"
+    } else if (args.location === "awaiting_delivery") {
+      kanbanStatus = "awaiting_inspection"
+    } else if (args.location === "returned_supplier") {
+      kanbanStatus = "returned"
+    }
+
+    const now = Date.now()
+    const today = new Date().toISOString().slice(0, 10)
+    const sku = `MAN-${now.toString(36)}-${Math.random().toString(36).slice(2, 7)}`.toUpperCase()
+
+    const productId = await ctx.db.insert("stockProducts", {
+      userId: args.userId,
+      name: normalizedName,
+      sku,
+      category: "Entrada manual",
+      quantity: args.quantity,
+      minStock: 0,
+      unitCost: args.unitCost,
+      unitCostSource: "manual",
+      kanbanStatus,
+      estimatedArrival: args.estimatedArrival,
+      kanbanNote: args.observations,
+      supplier,
+      manualEntryDate: args.manualEntryDate,
+      manualDedupeKey: dedupeKey,
+      createdAt: now,
+      updatedAt: now,
+    })
+
+    await logKanbanTransition(ctx, {
+      userId: args.userId,
+      productId,
+      fromStatus: "novo",
+      toStatus: kanbanStatus,
+      note: args.observations,
+    })
+
+    if (args.quantity > 0) {
+      await ctx.db.insert("stockMovements", {
+        userId: args.userId,
+        productId,
+        type: "in",
+        quantity: args.quantity,
+        date: today,
+        note: `Entrada manual — ${supplier}`,
+        createdAt: now,
+      })
+    }
+
+    return productId
   },
 })
 
@@ -438,6 +651,16 @@ export const deleteProduct = mutation({
 
     for (const movement of movements) {
       await ctx.db.delete(movement._id)
+    }
+
+    const events = await ctx.db
+      .query("productKanbanEvents")
+      .withIndex("by_user_product", (q) =>
+        q.eq("userId", args.userId).eq("productId", args.productId),
+      )
+      .collect()
+    for (const ev of events) {
+      await ctx.db.delete(ev._id)
     }
 
     await ctx.db.delete(args.productId)

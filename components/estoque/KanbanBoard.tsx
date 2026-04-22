@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useMemo } from "react"
+import { useState, useMemo, useEffect } from "react"
 import {
   DndContext,
   type DragEndEvent,
@@ -12,6 +12,7 @@ import {
 } from "@dnd-kit/core"
 import { Package, BarChart2, AlertCircle, TrendingDown, Truck, ClipboardList } from "lucide-react"
 import { Card, CardContent } from "@/components/ui/card"
+import { Button } from "@/components/ui/button"
 import { cn } from "@/lib/utils"
 import {
   type KanbanColumnId,
@@ -27,7 +28,7 @@ import {
 import { KanbanColumn } from "./KanbanColumn"
 import { KanbanFilters } from "./KanbanFilters"
 import { ProductCard } from "./ProductCard"
-import { ProductDetailModal } from "./ProductDetailModal"
+import { ProductDetailModal, type ProductKanbanEventRow } from "./ProductDetailModal"
 
 interface StockSummary {
   totalProducts: number
@@ -35,6 +36,9 @@ interface StockSummary {
   lowStockCount: number
   stockValue: number
 }
+
+const LS_COLLAPSED = "branchcommerce.kanban.collapsed"
+const LS_SHOW_HIDDEN = "branchcommerce.kanban.showHidden"
 
 interface KanbanBoardProps {
   products: KanbanProduct[]
@@ -48,6 +52,8 @@ interface KanbanBoardProps {
   ) => Promise<void>
   onSaveProductEdits: (productId: string, updates: Partial<KanbanProduct>) => Promise<void>
   onDeleteProduct: (productId: string) => Promise<void>
+  onToggleProductHidden?: (productId: string, hidden: boolean) => Promise<void>
+  kanbanTimelineEvents?: ProductKanbanEventRow[]
 }
 
 export function KanbanBoard({
@@ -57,12 +63,43 @@ export function KanbanBoard({
   onUpdateKanbanStatus,
   onSaveProductEdits,
   onDeleteProduct,
+  onToggleProductHidden,
+  kanbanTimelineEvents = [],
 }: KanbanBoardProps) {
   const [activeId, setActiveId] = useState<string | null>(null)
   const [selectedProduct, setSelectedProduct] = useState<KanbanProduct | null>(null)
   const [search, setSearch] = useState("")
   const [urgencyFilter, setUrgencyFilter] = useState<"all" | UrgencyLevel>("all")
   const [categoryFilter, setCategoryFilter] = useState("all")
+  const [showHidden, setShowHidden] = useState(false)
+  const [collapsedByColumn, setCollapsedByColumn] = useState<Record<string, boolean>>({})
+
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem(LS_SHOW_HIDDEN)
+      if (raw === "1") setShowHidden(true)
+      const c = localStorage.getItem(LS_COLLAPSED)
+      if (c) setCollapsedByColumn(JSON.parse(c) as Record<string, boolean>)
+    } catch {
+      /* ignore */
+    }
+  }, [])
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(LS_SHOW_HIDDEN, showHidden ? "1" : "0")
+    } catch {
+      /* ignore */
+    }
+  }, [showHidden])
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(LS_COLLAPSED, JSON.stringify(collapsedByColumn))
+    } catch {
+      /* ignore */
+    }
+  }, [collapsedByColumn])
 
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 8 } }))
 
@@ -74,12 +111,13 @@ export function KanbanBoard({
   const filteredProducts = useMemo(() => {
     const q = search.toLowerCase()
     return products.filter((p) => {
+      if (!showHidden && p.kanbanHidden) return false
       if (q && !p.name.toLowerCase().includes(q) && !p.sku.toLowerCase().includes(q)) return false
       if (urgencyFilter !== "all" && getUrgency(p) !== urgencyFilter) return false
       if (categoryFilter !== "all" && p.category !== categoryFilter) return false
       return true
     })
-  }, [products, search, urgencyFilter, categoryFilter])
+  }, [products, search, urgencyFilter, categoryFilter, showHidden])
 
   const activeProduct = activeId ? products.find((p) => p.id === activeId) : null
   const inTransitCount = products.filter((p) => p.kanbanStatus === "in_transit").length
@@ -123,15 +161,26 @@ export function KanbanBoard({
       </div>
 
       {/* Filters */}
-      <KanbanFilters
-        search={search}
-        onSearch={setSearch}
-        urgency={urgencyFilter}
-        onUrgency={setUrgencyFilter}
-        category={categoryFilter}
-        onCategory={setCategoryFilter}
-        categories={categories}
-      />
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+        <KanbanFilters
+          search={search}
+          onSearch={setSearch}
+          urgency={urgencyFilter}
+          onUrgency={setUrgencyFilter}
+          category={categoryFilter}
+          onCategory={setCategoryFilter}
+          categories={categories}
+        />
+        <Button
+          type="button"
+          variant={showHidden ? "secondary" : "outline"}
+          size="sm"
+          className="shrink-0"
+          onClick={() => setShowHidden((v) => !v)}
+        >
+          {showHidden ? "Ocultar itens escondidos" : "Mostrar ocultos"}
+        </Button>
+      </div>
 
       {/* Boards */}
       <DndContext sensors={sensors} onDragStart={handleDragStart} onDragEnd={handleDragEnd}>
@@ -142,6 +191,13 @@ export function KanbanBoard({
               id={EM_FALTA_COLUMN.id}
               label={EM_FALTA_COLUMN.label}
               droppable={EM_FALTA_COLUMN.droppable}
+              collapsed={!!collapsedByColumn[EM_FALTA_COLUMN.id]}
+              onToggleCollapsed={() =>
+                setCollapsedByColumn((prev) => ({
+                  ...prev,
+                  [EM_FALTA_COLUMN.id]: !prev[EM_FALTA_COLUMN.id],
+                }))
+              }
               products={filteredProducts.filter(
                 (p) => p.quantity === 0 && p.kanbanStatus === "in_stock",
               )}
@@ -150,12 +206,24 @@ export function KanbanBoard({
                 void onUpdateKanbanStatus(product.id, columnTarget)
               }
               onCardDelete={(product) => void onDeleteProduct(product.id)}
+              onToggleCardHidden={
+                onToggleProductHidden
+                  ? (product) => void onToggleProductHidden(product.id, !product.kanbanHidden)
+                  : undefined
+              }
             />
             {KANBAN_COLUMNS.map((col) => (
               <KanbanColumn
                 key={col.id}
                 id={col.id}
                 label={col.label}
+                collapsed={!!collapsedByColumn[col.id]}
+                onToggleCollapsed={() =>
+                  setCollapsedByColumn((prev) => ({
+                    ...prev,
+                    [col.id]: !prev[col.id],
+                  }))
+                }
                 products={filteredProducts.filter((p) => {
                   if (col.id === "in_stock") {
                     return p.kanbanStatus === "in_stock" && p.quantity > 0
@@ -167,6 +235,11 @@ export function KanbanBoard({
                   void onUpdateKanbanStatus(product.id, columnTarget)
                 }
                 onCardDelete={(product) => void onDeleteProduct(product.id)}
+                onToggleCardHidden={
+                  onToggleProductHidden
+                    ? (product) => void onToggleProductHidden(product.id, !product.kanbanHidden)
+                    : undefined
+                }
               />
             ))}
           </div>
@@ -190,6 +263,7 @@ export function KanbanBoard({
         <ProductDetailModal
           product={selectedProduct}
           movements={movements}
+          kanbanEvents={kanbanTimelineEvents.filter((e) => e.productId === selectedProduct.id)}
           onClose={() => setSelectedProduct(null)}
           onMoveTo={async (target, note, arrival) => {
             await onUpdateKanbanStatus(selectedProduct.id, target, note, arrival)

@@ -1,5 +1,15 @@
 import type { LucideProps } from "lucide-react"
-import { ClipboardList, ListTodo, PackageCheck, PackageX, ShoppingCart, Truck } from "lucide-react"
+import {
+  ClipboardList,
+  CircleCheck,
+  ListTodo,
+  PackageCheck,
+  PackageX,
+  SearchCheck,
+  ShoppingCart,
+  Truck,
+  Undo2,
+} from "lucide-react"
 
 import { cn } from "@/lib/utils"
 
@@ -9,6 +19,9 @@ export const KANBAN_STAGE_ICONS = {
   planned: ListTodo,
   buying: ShoppingCart,
   in_transit: Truck,
+  awaiting_inspection: SearchCheck,
+  returned: Undo2,
+  completed: CircleCheck,
   in_stock: PackageCheck,
 } as const
 
@@ -44,6 +57,21 @@ export const KANBAN_STAGE_STYLE: Record<string, { border: string; icon: string; 
     border: "border-l-orange-500",
     icon: "text-orange-600 dark:text-orange-400",
     badge: "bg-orange-500/10 text-orange-900 dark:bg-orange-950/40 dark:text-orange-200",
+  },
+  awaiting_inspection: {
+    border: "border-l-violet-500",
+    icon: "text-violet-600 dark:text-violet-400",
+    badge: "bg-violet-500/10 text-violet-900 dark:bg-violet-950/40 dark:text-violet-200",
+  },
+  returned: {
+    border: "border-l-rose-500",
+    icon: "text-rose-600 dark:text-rose-400",
+    badge: "bg-rose-500/10 text-rose-900 dark:bg-rose-950/40 dark:text-rose-200",
+  },
+  completed: {
+    border: "border-l-teal-500",
+    icon: "text-teal-600 dark:text-teal-400",
+    badge: "bg-teal-500/10 text-teal-900 dark:bg-teal-950/40 dark:text-teal-200",
   },
   in_stock: {
     border: "border-l-emerald-500",

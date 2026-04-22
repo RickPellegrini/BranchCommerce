@@ -17,12 +17,20 @@ export type FinancialCategory = {
   kind: CategoryKind
 }
 
-/** Comprovante anexado a um lançamento (sessão local; ver API em `AnexosLancamentoModal`). */
+/** Comprovante anexado a um lançamento (local `File` ou já persistido no Convex). */
 export type AnexoLancamento = {
   id: string
-  file: File
+  file?: File
   uploadedAt: number
+  fileName?: string
+  mimeType?: string
+  byteSize?: number
+  remoteUrl?: string | null
+  convexAttachmentId?: string
 }
+
+export type PaymentMethod = "pix" | "debit" | "credit"
+export type PayStatus = "none" | "pending" | "paid"
 
 export type FinancialTransaction = {
   id: string
@@ -34,6 +42,12 @@ export type FinancialTransaction = {
   origin?: string
   expenseType?: ExpenseType
   periodicity?: TransactionPeriodicity
+  paymentMethod?: PaymentMethod
+  installmentPlanId?: string
+  installmentIndex?: number
+  installmentCount?: number
+  payStatus?: PayStatus
+  linkedSourceTransactionId?: string
 }
 
 export type FinancialBill = {

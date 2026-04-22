@@ -455,6 +455,7 @@ describe("finance", () => {
       expect(names).toContain("Investimentos")
       expect(names).toContain("Saques")
       expect(names).toContain("Operacional")
+      expect(names).toContain("Devolucoes e creditos")
     })
 
     it("is idempotent (does not duplicate categories)", async () => {
@@ -462,7 +463,7 @@ describe("finance", () => {
       await t.mutation(api.finance.ensureEcommerceSetup, { userId: "user1" })
       await t.mutation(api.finance.ensureEcommerceSetup, { userId: "user1" })
       const data = await t.query(api.finance.getDashboardData, { userId: "user1" })
-      expect(data.categories).toHaveLength(5)
+      expect(data.categories).toHaveLength(6)
     })
 
     it("does not overwrite existing categories with same name", async () => {
