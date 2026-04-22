@@ -16,6 +16,8 @@ import {
   urgencyColor,
   formatCurrencyBRL,
   MOVEMENT_LABELS,
+  getEffectiveKanbanStatusForUi,
+  isCompradoKanbanStatus,
 } from "./types"
 
 export type ProductKanbanEventRow = {
@@ -58,7 +60,8 @@ export function ProductDetailModal({
     .sort((a, b) => b.date.localeCompare(a.date))
     .slice(0, 10)
 
-  const currentColIdx = KANBAN_COLUMNS.findIndex((c) => c.id === product.kanbanStatus)
+  const effectiveStatus = getEffectiveKanbanStatusForUi(product)
+  const currentColIdx = KANBAN_COLUMNS.findIndex((c) => c.id === effectiveStatus)
   const nextCol = KANBAN_COLUMNS[currentColIdx + 1]
 
   async function handleSave() {
@@ -169,7 +172,7 @@ export function ProductDetailModal({
                   onChange={(e) => setEditMinStock(e.target.value)}
                 />
               </div>
-              {(product.kanbanStatus === "buying" ||
+              {(isCompradoKanbanStatus(product.kanbanStatus) ||
                 product.kanbanStatus === "in_transit" ||
                 product.kanbanStatus === "awaiting_inspection") && (
                 <div className="space-y-1">

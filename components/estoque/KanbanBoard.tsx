@@ -24,6 +24,7 @@ import {
   getKanbanColumnId,
   getUrgency,
   formatCurrencyBRL,
+  isCompradoKanbanStatus,
 } from "./types"
 import { KanbanColumn } from "./KanbanColumn"
 import { KanbanFilters } from "./KanbanFilters"
@@ -126,7 +127,7 @@ export function KanbanBoard({
 
   const activeProduct = activeId ? products.find((p) => p.id === activeId) : null
   const inTransitCount = products.filter((p) => p.kanbanStatus === "in_transit").length
-  const plannedCount = products.filter((p) => p.kanbanStatus === "planned").length
+  const compradoCount = products.filter((p) => isCompradoKanbanStatus(p.kanbanStatus)).length
 
   function handleDragStart(event: DragStartEvent) {
     setActiveId(event.active.id as string)
@@ -162,7 +163,7 @@ export function KanbanBoard({
           currency
         />
         <SummaryKpi icon={Truck} label="Em trânsito" value={inTransitCount} />
-        <SummaryKpi icon={ClipboardList} label="Aguardando compra" value={plannedCount} />
+        <SummaryKpi icon={ClipboardList} label="Comprado" value={compradoCount} />
       </div>
 
       {/* Filters */}
@@ -232,6 +233,9 @@ export function KanbanBoard({
                 products={filteredProducts.filter((p) => {
                   if (col.id === "in_stock") {
                     return p.kanbanStatus === "in_stock" && p.quantity > 0
+                  }
+                  if (col.id === "purchased") {
+                    return isCompradoKanbanStatus(p.kanbanStatus)
                   }
                   return p.kanbanStatus === col.id
                 })}

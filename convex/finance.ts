@@ -642,7 +642,7 @@ export const startReturnForTransaction = mutation({
     if (args.productId) {
       const product = await ctx.db.get(args.productId)
       if (product && product.userId === args.userId) {
-        const prev = product.kanbanStatus ?? "planned"
+        const prev = product.kanbanStatus ?? "purchased"
         await ctx.db.insert("productKanbanEvents", {
           userId: args.userId,
           productId: args.productId,
