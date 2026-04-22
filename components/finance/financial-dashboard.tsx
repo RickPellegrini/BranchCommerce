@@ -6379,11 +6379,12 @@ export function FinancialDashboard() {
                       ? {
                           uploadFiles: (files) =>
                             uploadFilesToExistingTransaction(anexosModalLancamento.id, files),
-                          deleteAttachment: (attachmentId) =>
-                            deleteTransactionAttachment({
+                          deleteAttachment: async (attachmentId: string): Promise<void> => {
+                            await deleteTransactionAttachment({
                               userId,
                               attachmentId: attachmentId as Id<"transactionAttachments">,
-                            }),
+                            })
+                          },
                         }
                       : undefined
                   }
