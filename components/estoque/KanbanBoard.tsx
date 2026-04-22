@@ -71,19 +71,24 @@ export function KanbanBoard({
   const [search, setSearch] = useState("")
   const [urgencyFilter, setUrgencyFilter] = useState<"all" | UrgencyLevel>("all")
   const [categoryFilter, setCategoryFilter] = useState("all")
-  const [showHidden, setShowHidden] = useState(false)
-  const [collapsedByColumn, setCollapsedByColumn] = useState<Record<string, boolean>>({})
-
-  useEffect(() => {
+  const [showHidden, setShowHidden] = useState(() => {
+    if (typeof window === "undefined") return false
     try {
-      const raw = localStorage.getItem(LS_SHOW_HIDDEN)
-      if (raw === "1") setShowHidden(true)
-      const c = localStorage.getItem(LS_COLLAPSED)
-      if (c) setCollapsedByColumn(JSON.parse(c) as Record<string, boolean>)
+      return localStorage.getItem(LS_SHOW_HIDDEN) === "1"
     } catch {
-      /* ignore */
+      return false
     }
-  }, [])
+  })
+  const [collapsedByColumn, setCollapsedByColumn] = useState<Record<string, boolean>>(() => {
+    if (typeof window === "undefined") return {}
+    try {
+      const c = localStorage.getItem(LS_COLLAPSED)
+      if (!c) return {}
+      return JSON.parse(c) as Record<string, boolean>
+    } catch {
+      return {}
+    }
+  })
 
   useEffect(() => {
     try {

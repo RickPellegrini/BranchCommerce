@@ -1,0 +1,19 @@
+---
+description: Executar ESLint antes de commit, push ou merge
+globs: "**/*.ts,**/*.tsx,**/*.js,**/*.jsx"
+alwaysApply: false
+---
+
+# ESLint antes de Git (commit / push / merge)
+
+Antes de **`git commit`**, **`git push`** ou **`git merge`** (ou de concluir uma tarefa que termine com esses passos), executar no terminal do projeto:
+
+```bash
+npx eslint . --max-warnings 0
+```
+
+- Corrigir **todos** os erros e avisos (o CI usa `--max-warnings 0`).
+- Se alteraste só alguns ficheiros, podes restringir: `npx eslint caminho/do/ficheiro.tsx --max-warnings 0`.
+- Depois de alterações TS/JS/TSX/JSX, manter também a regra **Prettier** em `.cursor/rules/prettier-after-edits.mdc`.
+
+Ordem sugerida antes de fechar a tarefa: **ESLint** → **Prettier** nos ficheiros tocados → commit.
