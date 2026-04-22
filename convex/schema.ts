@@ -76,6 +76,7 @@ export default defineSchema({
     sellingPrice: v.optional(v.number()),
     kanbanStatus: v.optional(
       v.union(
+        v.literal("purchased"),
         v.literal("planned"),
         v.literal("buying"),
         v.literal("in_transit"),

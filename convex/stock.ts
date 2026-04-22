@@ -6,6 +6,7 @@ import { mutation, query, type MutationCtx } from "./_generated/server"
 import { manualStockDedupeKey } from "./dedupeHelpers"
 
 const kanbanStatusValidator = v.union(
+  v.literal("purchased"),
   v.literal("planned"),
   v.literal("buying"),
   v.literal("in_transit"),
@@ -49,6 +50,8 @@ export const addProduct = mutation({
     minStock: v.number(),
     unitCost: v.number(),
     sellingPrice: v.optional(v.number()),
+    /** URL da foto (ex.: copiada de um item já sincronizado com ML). */
+    imageUrl: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
     const normalizedSku = args.sku.trim().toUpperCase()
@@ -86,7 +89,8 @@ export const addProduct = mutation({
       unitCost: args.unitCost,
       unitCostSource: "manual",
       sellingPrice: args.sellingPrice,
-      kanbanStatus: args.quantity > 0 ? "in_stock" : "planned",
+      ...(args.imageUrl?.trim() && { imageUrl: args.imageUrl.trim() }),
+      kanbanStatus: args.quantity > 0 ? "in_stock" : "purchased",
       createdAt: now,
       updatedAt: now,
     })
@@ -170,7 +174,7 @@ export const updateProduct = mutation({
       throw new Error("SKU ja existe no estoque.")
     }
 
-    const prevKanban = product.kanbanStatus ?? "planned"
+    const prevKanban = product.kanbanStatus ?? "purchased"
     if (args.kanbanStatus !== undefined && args.kanbanStatus !== prevKanban) {
       await logKanbanTransition(ctx, {
         userId: args.userId,
@@ -212,7 +216,7 @@ export const updateProductKanban = mutation({
       throw new Error("Produto nao encontrado.")
     }
 
-    const prev = product.kanbanStatus ?? "planned"
+    const prev = product.kanbanStatus ?? "purchased"
     if (prev !== args.kanbanStatus) {
       await logKanbanTransition(ctx, {
         userId: args.userId,
@@ -252,7 +256,7 @@ export const applyKanbanMove = mutation({
       throw new Error("Produto nao encontrado.")
     }
 
-    const prevKanban = product.kanbanStatus ?? "planned"
+    const prevKanban = product.kanbanStatus ?? "purchased"
     const now = Date.now()
     const today = new Date().toISOString().slice(0, 10)
 
@@ -376,6 +380,8 @@ export const addManualStockEntry = mutation({
   args: {
     userId: v.string(),
     name: v.string(),
+    /** SKU definido por ti — não é mais gerado automaticamente (MAN-...). */
+    sku: v.string(),
     quantity: v.number(),
     unitCost: v.number(),
     supplier: v.string(),
@@ -383,15 +389,29 @@ export const addManualStockEntry = mutation({
     location: manualLocationValidator,
     estimatedArrival: v.optional(v.string()),
     observations: v.optional(v.string()),
+    /** Foto sugerida a partir de um produto já existente (ex.: ML). */
+    imageUrl: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
     const normalizedName = args.name.trim()
     const supplier = args.supplier.trim()
+    const normalizedSku = args.sku.trim().toUpperCase()
     if (!normalizedName || !supplier) {
       throw new Error("Preencha nome e fornecedor.")
     }
+    if (!normalizedSku) {
+      throw new Error("Informe o SKU do produto.")
+    }
     if (args.quantity < 0 || args.unitCost < 0) {
       throw new Error("Quantidade e custo devem ser zero ou positivos.")
+    }
+
+    const skuTaken = await ctx.db
+      .query("stockProducts")
+      .withIndex("by_user_sku", (q) => q.eq("userId", args.userId).eq("sku", normalizedSku))
+      .first()
+    if (skuTaken) {
+      throw new Error("Este SKU ja existe no estoque. Use outro codigo.")
     }
 
     const dedupeKey = manualStockDedupeKey(
@@ -412,13 +432,14 @@ export const addManualStockEntry = mutation({
     }
 
     let kanbanStatus:
+      | "purchased"
       | "planned"
       | "buying"
       | "in_transit"
       | "awaiting_inspection"
       | "returned"
       | "completed"
-      | "in_stock" = "planned"
+      | "in_stock" = "purchased"
     if (args.location === "in_stock_physical") {
       kanbanStatus = "in_stock"
     } else if (args.location === "in_transit") {
@@ -431,12 +452,11 @@ export const addManualStockEntry = mutation({
 
     const now = Date.now()
     const today = new Date().toISOString().slice(0, 10)
-    const sku = `MAN-${now.toString(36)}-${Math.random().toString(36).slice(2, 7)}`.toUpperCase()
 
     const productId = await ctx.db.insert("stockProducts", {
       userId: args.userId,
       name: normalizedName,
-      sku,
+      sku: normalizedSku,
       category: "Entrada manual",
       quantity: args.quantity,
       minStock: 0,
@@ -448,6 +468,7 @@ export const addManualStockEntry = mutation({
       supplier,
       manualEntryDate: args.manualEntryDate,
       manualDedupeKey: dedupeKey,
+      ...(args.imageUrl?.trim() ? { imageUrl: args.imageUrl.trim() } : {}),
       createdAt: now,
       updatedAt: now,
     })
@@ -664,6 +685,26 @@ export const deleteProduct = mutation({
     }
 
     await ctx.db.delete(args.productId)
+  },
+})
+
+/** Migração única: planejado + comprando → comprado (unificação de colunas). */
+export const migratePlannedBuyingToPurchased = mutation({
+  args: { userId: v.string() },
+  handler: async (ctx, args) => {
+    const products = await ctx.db
+      .query("stockProducts")
+      .withIndex("by_user", (q) => q.eq("userId", args.userId))
+      .collect()
+    let updated = 0
+    const now = Date.now()
+    for (const p of products) {
+      if (p.kanbanStatus === "planned" || p.kanbanStatus === "buying") {
+        await ctx.db.patch(p._id, { kanbanStatus: "purchased", updatedAt: now })
+        updated += 1
+      }
+    }
+    return { updated }
   },
 })
 

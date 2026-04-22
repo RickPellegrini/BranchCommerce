@@ -16,6 +16,7 @@ import { cn } from "@/lib/utils"
 /** Ícones por coluna do Kanban — alinhados ao restante do app (lucide, traço fino). */
 export const KANBAN_STAGE_ICONS = {
   em_falta: PackageX,
+  purchased: ShoppingCart,
   planned: ListTodo,
   buying: ShoppingCart,
   in_transit: Truck,
@@ -42,6 +43,11 @@ export const KANBAN_STAGE_STYLE: Record<string, { border: string; icon: string; 
     border: "border-l-red-500",
     icon: "text-red-600 dark:text-red-400",
     badge: "bg-red-500/10 text-red-700 dark:bg-red-950/40 dark:text-red-300",
+  },
+  purchased: {
+    border: "border-l-teal-500",
+    icon: "text-teal-600 dark:text-teal-400",
+    badge: "bg-teal-500/10 text-teal-900 dark:bg-teal-950/40 dark:text-teal-200",
   },
   planned: {
     border: "border-l-sky-500",

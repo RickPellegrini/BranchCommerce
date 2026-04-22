@@ -8,6 +8,7 @@
  * @module
  */
 
+import type * as dedupeHelpers from "../dedupeHelpers.js";
 import type * as finance from "../finance.js";
 import type * as mercadolivre from "../mercadolivre.js";
 import type * as stock from "../stock.js";
@@ -19,6 +20,7 @@ import type {
 } from "convex/server";
 
 declare const fullApi: ApiFromModules<{
+  dedupeHelpers: typeof dedupeHelpers;
   finance: typeof finance;
   mercadolivre: typeof mercadolivre;
   stock: typeof stock;

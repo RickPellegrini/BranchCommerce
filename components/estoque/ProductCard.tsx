@@ -15,6 +15,7 @@ import {
   getUrgency,
   urgencyColor,
   urgencyBorderClass,
+  isCompradoKanbanStatus,
 } from "./types"
 
 interface ProductCardProps {
@@ -221,7 +222,7 @@ export function ProductCard({
 
           {/* Estimated arrival */}
           {product.estimatedArrival &&
-            (product.kanbanStatus === "buying" ||
+            (isCompradoKanbanStatus(product.kanbanStatus) ||
               product.kanbanStatus === "in_transit" ||
               product.kanbanStatus === "awaiting_inspection") && (
               <p className="mt-1.5 text-xs text-muted-foreground">

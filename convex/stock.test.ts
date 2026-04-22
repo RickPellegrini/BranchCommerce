@@ -70,6 +70,7 @@ describe("stock", () => {
       })
       const data = await t.query(api.stock.getDashboardData, { userId: "user1" })
       expect(data.movements).toHaveLength(0)
+      expect(data.products[0].kanbanStatus).toBe("purchased")
     })
 
     it("rejects duplicate SKU", async () => {
@@ -257,11 +258,11 @@ describe("stock", () => {
       await t.mutation(api.stock.applyKanbanMove, {
         userId: "user1",
         productId: id,
-        target: "buying",
+        target: "purchased",
       })
       const data = await t.query(api.stock.getDashboardData, { userId: "user1" })
       expect(data.products[0].quantity).toBe(10)
-      expect(data.products[0].kanbanStatus).toBe("buying")
+      expect(data.products[0].kanbanStatus).toBe("purchased")
     })
   })
 
@@ -397,6 +398,52 @@ describe("stock", () => {
       const finData = await t.query(api.finance.getDashboardData, { userId: "user1" })
       const saleTx = finData.transactions.find((tx) => tx.origin === "Venda online")
       expect(saleTx!.amount).toBe(150) // 3 * 50
+    })
+  })
+
+  // ── addManualStockEntry ───────────────────────────────────────────
+
+  describe("addManualStockEntry", () => {
+    it("requires sku and stores normalized uppercase sku", async () => {
+      const t = convexTest(schema, modules)
+      const id = await t.mutation(api.stock.addManualStockEntry, {
+        userId: "user1",
+        name: "Item manual",
+        sku: "abc-001",
+        quantity: 2,
+        unitCost: 10,
+        supplier: "Forn X",
+        manualEntryDate: "2025-01-15",
+        location: "in_stock_physical",
+      })
+      expect(id).toBeTruthy()
+      const data = await t.query(api.stock.getDashboardData, { userId: "user1" })
+      expect(data.products[0].sku).toBe("ABC-001")
+    })
+
+    it("rejects duplicate sku", async () => {
+      const t = convexTest(schema, modules)
+      await t.mutation(api.stock.addProduct, {
+        userId: "user1",
+        name: "A",
+        sku: "DUP-SKU",
+        category: "X",
+        quantity: 1,
+        minStock: 0,
+        unitCost: 1,
+      })
+      await expect(
+        t.mutation(api.stock.addManualStockEntry, {
+          userId: "user1",
+          name: "B",
+          sku: "dup-sku",
+          quantity: 1,
+          unitCost: 2,
+          supplier: "S",
+          manualEntryDate: "2025-01-15",
+          location: "in_stock_physical",
+        }),
+      ).rejects.toThrow("SKU ja existe")
     })
   })
 

@@ -1,5 +1,8 @@
 export type KanbanStatus =
+  | "purchased"
+  /** @deprecated usar purchased — mantido para dados antigos */
   | "planned"
+  /** @deprecated usar purchased — mantido para dados antigos */
   | "buying"
   | "in_transit"
   | "awaiting_inspection"
@@ -41,8 +44,7 @@ export const KANBAN_COLUMNS: Array<{
   label: string
   droppable?: boolean
 }> = [
-  { id: "planned", label: "Planejado" },
-  { id: "buying", label: "Comprando" },
+  { id: "purchased", label: "Comprado" },
   { id: "in_transit", label: "Em trânsito" },
   { id: "awaiting_inspection", label: "Aguardando conferência" },
   { id: "returned", label: "Devolvido" },
@@ -59,12 +61,26 @@ export const EM_FALTA_COLUMN = {
 /** Coluna visual do card no quadro (inclui Em falta, que depende de quantidade + status). */
 export type KanbanColumnId = KanbanStatus | "em_falta"
 
+/** Planejado / Comprando / Comprado unificados na UI como "Comprado". */
+export function isCompradoKanbanStatus(status: KanbanStatus | undefined): boolean {
+  return status === "purchased" || status === "planned" || status === "buying"
+}
+
+/** Para navegação entre colunas e labels, trata planned/buying como purchased. */
+export function getEffectiveKanbanStatusForUi(product: KanbanProduct): KanbanStatus {
+  if (isCompradoKanbanStatus(product.kanbanStatus)) return "purchased"
+  return product.kanbanStatus
+}
+
 export function getKanbanColumnId(product: KanbanProduct): KanbanColumnId {
   if (product.quantity === 0 && product.kanbanStatus === "in_stock") {
     return "em_falta"
   }
   if (product.kanbanStatus === "in_stock" && product.quantity > 0) {
     return "in_stock"
+  }
+  if (isCompradoKanbanStatus(product.kanbanStatus)) {
+    return "purchased"
   }
   return product.kanbanStatus
 }

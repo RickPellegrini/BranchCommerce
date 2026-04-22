@@ -96,6 +96,7 @@ import type {
   TransactionFilters,
 } from "@/lib/finance/types"
 import { exportTransactionsToCsv } from "@/lib/finance/export-csv"
+import { exportStockMovementHistoryToCsv } from "@/lib/stock/export-stock-history-csv"
 import {
   AnexosCountBadge,
   AnexosLancamentoModal,
@@ -105,9 +106,11 @@ import { cn } from "@/lib/utils"
 import { AnalysisModal } from "@/features/product-analysis/components/AnalysisModal"
 import { HunterAnalysisPage } from "@/features/product-analysis/components/HunterAnalysisPage"
 import { KanbanBoard } from "@/components/estoque/KanbanBoard"
+import { ProductNameInputWithSuggestions } from "@/components/estoque/ProductNameInputWithSuggestions"
 import type { ProductKanbanEventRow } from "@/components/estoque/ProductDetailModal"
 import { StockFeedbackAlert } from "@/components/estoque/stock-feedback-alert"
 import type { KanbanColumnId, KanbanProduct, KanbanStatus } from "@/components/estoque/types"
+import type { ProductSuggestionCandidate } from "@/lib/stock/product-name-suggestions"
 
 /**
  * Valor fixo só quando a API de saldo está indisponível: referência de garantia.
@@ -125,7 +128,7 @@ type FinanceSection =
   | "reports"
   | "history"
   | "cashflow"
-type StockSection = "overview" | "products" | "movements" | "history"
+type StockSection = "overview" | "products" | "history"
 type MlSection = "listings" | "orders" | "metrics"
 type MlSidebarGroup = "anuncios" | "pedidos" | "metricas"
 type HunterSection =
@@ -161,6 +164,7 @@ type StockMovement = {
   date: string
   unitPrice?: number
   note?: string
+  createdAt?: number
 }
 
 type MlConnectionStatus =
@@ -1234,8 +1238,12 @@ export function FinancialDashboard() {
     unitCost: "",
     sellingPrice: "",
   })
+  /** Foto copiada de sugestão (catálogo / ML) ao criar produto manual. */
+  const [productFormImageUrl, setProductFormImageUrl] = useState<string | undefined>(undefined)
+  const [manualStockImageUrl, setManualStockImageUrl] = useState<string | undefined>(undefined)
   const [manualStockForm, setManualStockForm] = useState({
     name: "",
+    sku: "",
     quantity: "",
     unitCost: "",
     supplier: "",
@@ -1723,6 +1731,21 @@ export function FinancialDashboard() {
     [stockData?.products],
   )
 
+  const productNameSuggestionCandidates = useMemo<ProductSuggestionCandidate[]>(
+    () =>
+      products
+        .filter((p) => Boolean(p.mlItemId || p.imageUrl))
+        .map((p) => ({
+          id: p.id,
+          name: p.name,
+          sku: p.sku,
+          imageUrl: p.imageUrl,
+          mlItemId: p.mlItemId,
+          sellingPrice: p.sellingPrice,
+        })),
+    [products],
+  )
+
   const kanbanProducts = useMemo<KanbanProduct[]>(
     () =>
       products.map((p) => ({
@@ -1736,7 +1759,7 @@ export function FinancialDashboard() {
         minStock: p.minStock,
         unitCost: p.unitCost,
         sellingPrice: p.sellingPrice,
-        kanbanStatus: p.kanbanStatus ?? (p.quantity > 0 ? "in_stock" : "planned"),
+        kanbanStatus: p.kanbanStatus ?? (p.quantity > 0 ? "in_stock" : "purchased"),
         kanbanNote: p.kanbanNote,
         estimatedArrival: p.estimatedArrival,
         kanbanHidden: p.kanbanHidden,
@@ -1785,6 +1808,7 @@ export function FinancialDashboard() {
         date: item.date,
         unitPrice: item.unitPrice,
         note: item.note,
+        createdAt: item.createdAt,
       })),
     [stockData?.movements],
   )
@@ -2735,6 +2759,7 @@ export function FinancialDashboard() {
         minStock,
         unitCost,
         sellingPrice,
+        ...(productFormImageUrl?.trim() ? { imageUrl: productFormImageUrl.trim() } : {}),
       })
 
       setProductForm({
@@ -2746,6 +2771,7 @@ export function FinancialDashboard() {
         unitCost: "",
         sellingPrice: "",
       })
+      setProductFormImageUrl(undefined)
       setProductFeedback({ type: "success", message: "Produto adicionado com sucesso." })
     } catch (error) {
       setProductFeedback({
@@ -2804,7 +2830,7 @@ export function FinancialDashboard() {
 
     try {
       const current = products.find((pr) => pr.id === editingProductId)
-      let resolvedKanban = current?.kanbanStatus ?? (quantity > 0 ? "in_stock" : "planned")
+      let resolvedKanban = current?.kanbanStatus ?? (quantity > 0 ? "in_stock" : "purchased")
       if (current && current.quantity > 0 && quantity === 0) {
         resolvedKanban = "in_stock"
       }
@@ -2893,7 +2919,7 @@ export function FinancialDashboard() {
     if (!p) return
     const nextQty = updates.quantity ?? p.quantity
     let resolvedKanban =
-      updates.kanbanStatus ?? p.kanbanStatus ?? (nextQty > 0 ? "in_stock" : "planned")
+      updates.kanbanStatus ?? p.kanbanStatus ?? (nextQty > 0 ? "in_stock" : "purchased")
     if (p.quantity > 0 && nextQty === 0) {
       resolvedKanban = "in_stock"
     }
@@ -3030,6 +3056,13 @@ export function FinancialDashboard() {
       })
       return
     }
+    if (!manualStockForm.sku.trim()) {
+      setProductFeedback({
+        type: "error",
+        message: "Informe o SKU (codigo unico do item).",
+      })
+      return
+    }
     if (!Number.isFinite(qty) || qty < 0 || !Number.isFinite(cost) || cost < 0) {
       setProductFeedback({
         type: "error",
@@ -3041,6 +3074,7 @@ export function FinancialDashboard() {
       await addManualStockEntryMutation({
         userId,
         name: manualStockForm.name.trim(),
+        sku: manualStockForm.sku.trim(),
         quantity: qty,
         unitCost: cost,
         supplier: manualStockForm.supplier.trim(),
@@ -3048,9 +3082,11 @@ export function FinancialDashboard() {
         location: manualStockForm.location,
         estimatedArrival: manualStockForm.estimatedArrival || undefined,
         observations: manualStockForm.observations || undefined,
+        ...(manualStockImageUrl?.trim() ? { imageUrl: manualStockImageUrl.trim() } : {}),
       })
       setManualStockForm({
         name: "",
+        sku: "",
         quantity: "",
         unitCost: "",
         supplier: "",
@@ -3059,6 +3095,7 @@ export function FinancialDashboard() {
         estimatedArrival: "",
         observations: "",
       })
+      setManualStockImageUrl(undefined)
       setShowManualStockForm(false)
       setProductFeedback({ type: "success", message: "Entrada manual registrada no estoque." })
     } catch (error) {
@@ -3109,6 +3146,10 @@ export function FinancialDashboard() {
     })
     setMovementForm((previous) => ({ ...previous, quantity: "", unitPrice: "", note: "" }))
   }
+
+  const exportStockHistory = useCallback(() => {
+    exportStockMovementHistoryToCsv(movements, productMap)
+  }, [movements, productMap])
 
   const disconnectMlAccount = async () => {
     if (mlDisconnecting) return
@@ -3589,12 +3630,6 @@ export function FinancialDashboard() {
               label="Produtos"
               isActive={activeStockSection === "products"}
               onClick={() => setActiveStockSection("products")}
-            />
-            <SidebarButton
-              icon={Repeat}
-              label="Movimentacoes"
-              isActive={activeStockSection === "movements"}
-              onClick={() => setActiveStockSection("movements")}
             />
             <SidebarButton
               icon={ReceiptText}
@@ -6699,8 +6734,9 @@ export function FinancialDashboard() {
                       <div>
                         <CardTitle className="text-base">Entrada manual (fornecedor)</CardTitle>
                         <CardDescription>
-                          Cria produto com etapa no Kanban conforme a localizacao. Dedup: mesmo nome
-                          + fornecedor + data.
+                          Informe o SKU (obrigatorio) — nao e gerado automaticamente. A miniatura so
+                          aparece se houver URL de imagem (ex.: ao escolher sugestao do catalogo
+                          ML). Dedup: mesmo nome + fornecedor + data.
                         </CardDescription>
                       </div>
                       <Button
@@ -6715,11 +6751,35 @@ export function FinancialDashboard() {
                     <CardContent className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
                       <div className="space-y-1 sm:col-span-2">
                         <label className="text-xs text-muted-foreground">Nome do produto</label>
-                        <Input
+                        <ProductNameInputWithSuggestions
                           value={manualStockForm.name}
+                          onChange={(name) => {
+                            setManualStockForm((p) => ({ ...p, name }))
+                            if (!name.trim()) setManualStockImageUrl(undefined)
+                          }}
+                          suggestionCandidates={productNameSuggestionCandidates}
+                          onPickSuggestion={(picked: ProductSuggestionCandidate) => {
+                            setManualStockForm((p) => ({
+                              ...p,
+                              name: picked.name,
+                              ...(picked.sku ? { sku: picked.sku } : {}),
+                            }))
+                            setManualStockImageUrl(picked.imageUrl)
+                          }}
+                        />
+                      </div>
+                      <div className="space-y-1">
+                        <label className="text-xs text-muted-foreground">SKU (unico)</label>
+                        <Input
+                          placeholder="Ex.: MULTICOOK-PH-127"
+                          value={manualStockForm.sku}
                           onChange={(e) =>
-                            setManualStockForm((p) => ({ ...p, name: e.target.value }))
+                            setManualStockForm((p) => ({
+                              ...p,
+                              sku: e.target.value,
+                            }))
                           }
+                          autoComplete="off"
                         />
                       </div>
                       <div className="space-y-1">
@@ -6878,12 +6938,24 @@ export function FinancialDashboard() {
                   <CardContent className="grid gap-4 sm:grid-cols-2">
                     <div className="space-y-1.5">
                       <p className="text-xs font-medium text-muted-foreground">Nome</p>
-                      <Input
-                        placeholder="Ex.: Liquidificador Philco 1200W"
+                      <ProductNameInputWithSuggestions
+                        placeholder="Ex.: multicook — aparecem sugestoes do catalogo (ML)"
                         value={productForm.name}
-                        onChange={(event) =>
-                          setProductForm((prev) => ({ ...prev, name: event.target.value }))
-                        }
+                        onChange={(name) => {
+                          setProductForm((prev) => ({ ...prev, name }))
+                          if (!name.trim()) setProductFormImageUrl(undefined)
+                        }}
+                        suggestionCandidates={productNameSuggestionCandidates}
+                        onPickSuggestion={(picked: ProductSuggestionCandidate) => {
+                          setProductForm((prev) => ({
+                            ...prev,
+                            name: picked.name,
+                            ...(picked.sellingPrice !== undefined && picked.sellingPrice > 0
+                              ? { sellingPrice: String(picked.sellingPrice) }
+                              : {}),
+                          }))
+                          setProductFormImageUrl(picked.imageUrl)
+                        }}
                       />
                     </div>
                     <div className="space-y-1.5">
@@ -7177,16 +7249,17 @@ export function FinancialDashboard() {
               </section>
             )}
 
-            {activeStockSection === "movements" && (
-              <section className="grid gap-4 xl:grid-cols-2">
+            {activeStockSection === "history" && (
+              <section className="grid gap-4">
                 <Card>
                   <CardHeader>
-                    <CardTitle>Movimentacao de estoque</CardTitle>
+                    <CardTitle>Nova movimentacao</CardTitle>
                     <CardDescription>
                       Use “Venda” para registrar a saida e refletir automaticamente no financeiro.
+                      Todas as entradas ficam no historico abaixo.
                     </CardDescription>
                   </CardHeader>
-                  <CardContent className="grid gap-3">
+                  <CardContent className="grid gap-3 sm:grid-cols-2">
                     <Select
                       value={movementForm.productId || undefined}
                       onValueChange={(value) =>
@@ -7196,7 +7269,7 @@ export function FinancialDashboard() {
                         }))
                       }
                     >
-                      <SelectTrigger className="w-full">
+                      <SelectTrigger className="w-full sm:col-span-2">
                         <SelectValue placeholder="Produto" />
                       </SelectTrigger>
                       <SelectContent>
@@ -7251,88 +7324,93 @@ export function FinancialDashboard() {
                       />
                     )}
                     <Input
+                      className="sm:col-span-2"
                       placeholder="Observacao"
                       value={movementForm.note}
                       onChange={(event) =>
                         setMovementForm((prev) => ({ ...prev, note: event.target.value }))
                       }
                     />
-                    <Button onClick={saveMovement} disabled={products.length === 0}>
+                    <Button
+                      className="sm:col-span-2"
+                      onClick={saveMovement}
+                      disabled={products.length === 0}
+                    >
                       Salvar movimentacao
                     </Button>
                   </CardContent>
                 </Card>
                 <Card>
-                  <CardHeader>
-                    <CardTitle>Ultimas movimentacoes</CardTitle>
+                  <CardHeader className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                    <div>
+                      <CardTitle>Historico de estoque</CardTitle>
+                      <CardDescription>
+                        Lista completa de movimentacoes; exporte o CSV para analise externa.
+                      </CardDescription>
+                    </div>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      onClick={exportStockHistory}
+                      disabled={movements.length === 0}
+                    >
+                      Exportar CSV
+                    </Button>
                   </CardHeader>
-                  <CardContent>
+                  <CardContent className="overflow-x-auto">
                     <Table>
                       <TableHeader>
                         <TableRow>
                           <TableHead>Data</TableHead>
                           <TableHead>Produto</TableHead>
+                          <TableHead className="hidden sm:table-cell">SKU</TableHead>
+                          <TableHead className="hidden md:table-cell">Categoria</TableHead>
                           <TableHead>Tipo</TableHead>
                           <TableHead className="text-right">Qtd</TableHead>
+                          <TableHead className="hidden lg:table-cell text-right">
+                            P. unit. mov.
+                          </TableHead>
+                          <TableHead>Observacao</TableHead>
                         </TableRow>
                       </TableHeader>
                       <TableBody>
                         {movements
                           .slice()
                           .sort((a, b) => b.date.localeCompare(a.date))
-                          .slice(0, 10)
-                          .map((movement) => (
-                            <TableRow key={movement.id}>
-                              <TableCell>{formatDate(movement.date)}</TableCell>
-                              <TableCell>
-                                {productMap.get(movement.productId)?.name ?? "Produto removido"}
-                              </TableCell>
-                              <TableCell>{movementLabel(movement.type)}</TableCell>
-                              <TableCell className="text-right">{movement.quantity}</TableCell>
-                            </TableRow>
-                          ))}
+                          .map((movement) => {
+                            const prod = productMap.get(movement.productId)
+                            return (
+                              <TableRow key={movement.id}>
+                                <TableCell>{formatDate(movement.date)}</TableCell>
+                                <TableCell className="max-w-[200px]">
+                                  {prod?.name ?? "Produto removido"}
+                                </TableCell>
+                                <TableCell className="hidden sm:table-cell font-mono text-xs">
+                                  {prod?.sku ?? "—"}
+                                </TableCell>
+                                <TableCell className="hidden md:table-cell text-muted-foreground">
+                                  {prod?.category ?? "—"}
+                                </TableCell>
+                                <TableCell>{movementLabel(movement.type)}</TableCell>
+                                <TableCell className="text-right tabular-nums">
+                                  {movement.quantity}
+                                </TableCell>
+                                <TableCell className="hidden lg:table-cell text-right tabular-nums">
+                                  {movement.type === "sale" && movement.unitPrice != null
+                                    ? formatCurrency(movement.unitPrice)
+                                    : "—"}
+                                </TableCell>
+                                <TableCell className="max-w-[180px] truncate">
+                                  {movement.note ?? "—"}
+                                </TableCell>
+                              </TableRow>
+                            )
+                          })}
                       </TableBody>
                     </Table>
                   </CardContent>
                 </Card>
               </section>
-            )}
-
-            {activeStockSection === "history" && (
-              <Card>
-                <CardHeader>
-                  <CardTitle>Historico de estoque</CardTitle>
-                </CardHeader>
-                <CardContent>
-                  <Table>
-                    <TableHeader>
-                      <TableRow>
-                        <TableHead>Data</TableHead>
-                        <TableHead>Produto</TableHead>
-                        <TableHead>Tipo</TableHead>
-                        <TableHead>Qtd</TableHead>
-                        <TableHead>Observacao</TableHead>
-                      </TableRow>
-                    </TableHeader>
-                    <TableBody>
-                      {movements
-                        .slice()
-                        .sort((a, b) => b.date.localeCompare(a.date))
-                        .map((movement) => (
-                          <TableRow key={movement.id}>
-                            <TableCell>{formatDate(movement.date)}</TableCell>
-                            <TableCell>
-                              {productMap.get(movement.productId)?.name ?? "Produto removido"}
-                            </TableCell>
-                            <TableCell>{movementLabel(movement.type)}</TableCell>
-                            <TableCell>{movement.quantity}</TableCell>
-                            <TableCell>{movement.note ?? "-"}</TableCell>
-                          </TableRow>
-                        ))}
-                    </TableBody>
-                  </Table>
-                </CardContent>
-              </Card>
             )}
           </>
         )}
