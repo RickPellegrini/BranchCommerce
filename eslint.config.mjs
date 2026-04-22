@@ -19,6 +19,8 @@ const eslintConfig = defineConfig([
     "build/**",
     "coverage/**",
     "next-env.d.ts",
+    // Convex codegen — `/* eslint-disable */` no topo dispara "unused directive" com --max-warnings 0
+    "convex/_generated/**",
   ]),
 ])
 
