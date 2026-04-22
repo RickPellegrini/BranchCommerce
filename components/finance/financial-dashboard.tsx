@@ -111,6 +111,8 @@ import type { ProductKanbanEventRow } from "@/components/estoque/ProductDetailMo
 import { StockFeedbackAlert } from "@/components/estoque/stock-feedback-alert"
 import type { KanbanColumnId, KanbanProduct, KanbanStatus } from "@/components/estoque/types"
 import type { ProductSuggestionCandidate } from "@/lib/stock/product-name-suggestions"
+import { normalizeMercadoLibreItemId } from "@/lib/mercadolivre/item-id"
+import { suggestUnitCostFromInventory, type ProductCostLookup } from "@/lib/stock/suggest-unit-cost"
 
 /**
  * Valor fixo só quando a API de saldo está indisponível: referência de garantia.
@@ -192,11 +194,32 @@ type MlListing = {
   thumbnail?: string
 }
 
+/** Dados minimos para vincular estoque ao anuncio (catalogo ou lista classica). */
+type MlListingStockEditSource = {
+  itemId: string
+  title: string
+  price: number
+  availableQuantity: number
+  sellerSku?: string | null
+  thumbnail?: string
+}
+
 /** Classico = `catalog_listing:false`. Sem flag, cai no heuristic antigo (sem catalog_product_id). */
 function isMlClassicListingRow(l: MlListing): boolean {
   if (l.catalogListing === true) return false
   if (l.catalogListing === false) return true
   return l.catalogProductId == null
+}
+
+function mlListingToStockEditSource(listing: MlListing): MlListingStockEditSource {
+  return {
+    itemId: normalizeMercadoLibreItemId(listing.id),
+    title: listing.title,
+    price: listing.price,
+    availableQuantity: listing.available_quantity,
+    sellerSku: listing.sku?.trim() ? listing.sku.trim() : null,
+    thumbnail: listing.thumbnail,
+  }
 }
 
 type MlOrder = {
@@ -250,6 +273,8 @@ type MlCatalogCompetitionRow = {
   status: string
   price: number
   availableQuantity: number
+  /** SKU do anuncio (seller_custom_field no ML), se informado. */
+  sellerSku?: string | null
   catalogProductId: string | null
   competitionStatus: string
   currentPrice: number
@@ -1336,6 +1361,25 @@ export function FinancialDashboard() {
   const [mlCatalogSearchTerm, setMlCatalogSearchTerm] = useState("")
   const [mlCatalogStatusFilter, setMlCatalogStatusFilter] = useState("all")
   const [mlCatalogSortBy, setMlCatalogSortBy] = useState("priority_desc")
+  const [mlCatalogStockDialogOpen, setMlCatalogStockDialogOpen] = useState(false)
+  const [mlCatalogStockEditRow, setMlCatalogStockEditRow] =
+    useState<MlListingStockEditSource | null>(null)
+  const [mlCatalogStockEditProductId, setMlCatalogStockEditProductId] =
+    useState<Id<"stockProducts"> | null>(null)
+  const [mlCatalogStockEditSuggestion, setMlCatalogStockEditSuggestion] = useState<ReturnType<
+    typeof suggestUnitCostFromInventory
+  > | null>(null)
+  const [mlCatalogStockEditSaving, setMlCatalogStockEditSaving] = useState(false)
+  const [mlCatalogStockEditError, setMlCatalogStockEditError] = useState<string | null>(null)
+  const [mlCatalogStockForm, setMlCatalogStockForm] = useState({
+    name: "",
+    sku: "",
+    category: "",
+    quantity: "",
+    minStock: "",
+    unitCost: "",
+    sellingPrice: "",
+  })
   const [mlOrderCostAnalysis, setMlOrderCostAnalysis] = useState<OrderCostAnalysis | null>(null)
   const [financeOrdersTitleFilter, setFinanceOrdersTitleFilter] = useState("")
   const [financeOrdersSkuFilter, setFinanceOrdersSkuFilter] = useState("")
@@ -1824,6 +1868,18 @@ export function FinancialDashboard() {
   )
 
   const productMap = useMemo(() => new Map(products.map((p) => [p.id, p])), [products])
+  const productCostLookups = useMemo<ProductCostLookup[]>(
+    () =>
+      products.map((p) => ({
+        id: p.id,
+        sku: p.sku,
+        name: p.name,
+        unitCost: p.unitCost,
+        category: p.category,
+        mlItemId: p.mlItemId,
+      })),
+    [products],
+  )
   const productMapByMlItemId = useMemo(
     () =>
       new Map(
@@ -2311,6 +2367,7 @@ export function FinancialDashboard() {
       "preco_atual",
       "preco_vencedor",
       "diferenca",
+      "custo_unitario_estoque",
       "lucro_venda_estimado",
       "catalog_product_id",
     ]
@@ -2332,6 +2389,7 @@ export function FinancialDashboard() {
         row.price.toFixed(2),
         row.winnerPrice?.toFixed(2) ?? "",
         diff.toFixed(2),
+        unitCost.toFixed(2),
         estimatedProfitPerSale.toFixed(2),
         row.catalogProductId ?? "",
       ]
@@ -2902,6 +2960,175 @@ export function FinancialDashboard() {
         type: "error",
         message: error instanceof Error ? error.message : "Nao foi possivel remover o produto.",
       })
+    }
+  }
+
+  const openMlCatalogStockEdit = useCallback(
+    (row: MlListingStockEditSource) => {
+      setMlCatalogStockEditRow(row)
+      setMlCatalogStockEditError(null)
+      const linked = productMapByMlItemId.get(normalizeMercadoLibreItemId(row.itemId))
+      if (linked) {
+        setMlCatalogStockEditProductId(linked.id as Id<"stockProducts">)
+        setMlCatalogStockEditSuggestion(null)
+        setMlCatalogStockForm({
+          name: linked.name,
+          sku: linked.sku,
+          category: linked.category,
+          quantity: String(linked.quantity),
+          minStock: String(linked.minStock),
+          unitCost: String(linked.unitCost),
+          sellingPrice: linked.sellingPrice ? String(linked.sellingPrice) : "",
+        })
+        setMlCatalogStockDialogOpen(true)
+        return
+      }
+
+      const sug = suggestUnitCostFromInventory({
+        sellerSku: row.sellerSku,
+        listingTitle: row.title,
+        products: productCostLookups,
+      })
+      setMlCatalogStockEditSuggestion(sug)
+
+      if (sug.matchedProductId) {
+        const matched = products.find((p) => p.id === sug.matchedProductId)
+        if (matched) {
+          setMlCatalogStockEditProductId(matched.id as Id<"stockProducts">)
+          const costHint =
+            sug.suggestedCost !== null && sug.suggestedCost > 0
+              ? sug.suggestedCost
+              : matched.unitCost
+          setMlCatalogStockForm({
+            name: matched.name,
+            sku: matched.sku,
+            category: matched.category,
+            quantity: String(matched.quantity),
+            minStock: String(matched.minStock),
+            unitCost: String(costHint),
+            sellingPrice: matched.sellingPrice ? String(matched.sellingPrice) : String(row.price),
+          })
+          setMlCatalogStockDialogOpen(true)
+          return
+        }
+      }
+
+      const defaultSku =
+        (row.sellerSku?.trim() && row.sellerSku.trim().toUpperCase()) ||
+        row.itemId.replace(/^MLB-?/i, "MLB")
+
+      setMlCatalogStockEditProductId(null)
+      setMlCatalogStockForm({
+        name: row.title,
+        sku: defaultSku,
+        category: "Mercado Livre",
+        quantity: String(Math.max(0, row.availableQuantity)),
+        minStock: "0",
+        unitCost:
+          sug.suggestedCost !== null && sug.suggestedCost !== undefined
+            ? String(sug.suggestedCost)
+            : "",
+        sellingPrice: String(row.price),
+      })
+      setMlCatalogStockDialogOpen(true)
+    },
+    [productCostLookups, productMapByMlItemId, products],
+  )
+
+  const saveMlCatalogStockEdit = async () => {
+    if (!userId || !mlCatalogStockEditRow) return
+    const row = mlCatalogStockEditRow
+    if (
+      !mlCatalogStockForm.name.trim() ||
+      !mlCatalogStockForm.sku.trim() ||
+      !mlCatalogStockForm.category.trim() ||
+      mlCatalogStockForm.quantity === "" ||
+      mlCatalogStockForm.minStock === "" ||
+      mlCatalogStockForm.unitCost === ""
+    ) {
+      setMlCatalogStockEditError("Preencha nome, SKU, categoria e custo.")
+      return
+    }
+
+    const quantity = Number(mlCatalogStockForm.quantity)
+    const minStock = Number(mlCatalogStockForm.minStock)
+    const unitCost = Number(mlCatalogStockForm.unitCost)
+    const sellingPrice = mlCatalogStockForm.sellingPrice
+      ? Number(mlCatalogStockForm.sellingPrice)
+      : undefined
+
+    if (
+      Number.isNaN(quantity) ||
+      Number.isNaN(minStock) ||
+      Number.isNaN(unitCost) ||
+      (mlCatalogStockForm.sellingPrice && Number.isNaN(sellingPrice))
+    ) {
+      setMlCatalogStockEditError("Use apenas numeros validos nos campos numericos.")
+      return
+    }
+
+    setMlCatalogStockEditSaving(true)
+    setMlCatalogStockEditError(null)
+
+    try {
+      if (mlCatalogStockEditProductId) {
+        const current = products.find((pr) => pr.id === mlCatalogStockEditProductId)
+        let resolvedKanban = current?.kanbanStatus ?? (quantity > 0 ? "in_stock" : "purchased")
+        if (current && current.quantity > 0 && quantity === 0) {
+          resolvedKanban = "in_stock"
+        }
+        if (current && current.quantity > 0 && quantity === 0) {
+          await applyKanbanMoveMutation({
+            userId,
+            productId: mlCatalogStockEditProductId,
+            target: "em_falta",
+          })
+        }
+        await updateProduct({
+          userId,
+          productId: mlCatalogStockEditProductId,
+          name: mlCatalogStockForm.name,
+          sku: mlCatalogStockForm.sku,
+          category: mlCatalogStockForm.category,
+          quantity,
+          minStock,
+          unitCost,
+          sellingPrice,
+          kanbanStatus: resolvedKanban,
+          kanbanNote: current?.kanbanNote,
+          estimatedArrival: current?.estimatedArrival,
+          mlItemId: normalizeMercadoLibreItemId(row.itemId),
+        })
+      } else {
+        await addProduct({
+          userId,
+          name: mlCatalogStockForm.name,
+          sku: mlCatalogStockForm.sku,
+          category: mlCatalogStockForm.category,
+          quantity,
+          minStock,
+          unitCost,
+          sellingPrice,
+          mlItemId: normalizeMercadoLibreItemId(row.itemId),
+          ...(row.thumbnail?.startsWith("http") ? { imageUrl: row.thumbnail } : {}),
+        })
+      }
+
+      setMlCatalogStockDialogOpen(false)
+      setMlCatalogStockEditRow(null)
+      setMlCatalogStockEditProductId(null)
+      setMlCatalogStockEditSuggestion(null)
+      setProductFeedback({
+        type: "success",
+        message:
+          "Estoque atualizado com vinculo ao anuncio ML; custos passam a valer em DRE e pedidos.",
+      })
+    } catch (error) {
+      setMlCatalogStockEditError(
+        error instanceof Error ? error.message : "Nao foi possivel salvar o produto.",
+      )
+    } finally {
+      setMlCatalogStockEditSaving(false)
     }
   }
 
@@ -7393,19 +7620,27 @@ export function FinancialDashboard() {
                     </Button>
                   </CardHeader>
                   <CardContent className="overflow-x-auto">
-                    <Table>
+                    <Table className="table-fixed min-w-[960px] [&_tbody_td]:align-top [&_thead_th]:align-middle">
                       <TableHeader>
                         <TableRow>
-                          <TableHead>Data</TableHead>
-                          <TableHead>Produto</TableHead>
-                          <TableHead className="hidden sm:table-cell">SKU</TableHead>
-                          <TableHead className="hidden md:table-cell">Categoria</TableHead>
-                          <TableHead>Tipo</TableHead>
-                          <TableHead className="text-right">Qtd</TableHead>
-                          <TableHead className="hidden lg:table-cell text-right">
+                          <TableHead className="w-[6.5rem]">Data</TableHead>
+                          <TableHead className="min-w-[11rem] max-w-[22rem] whitespace-normal">
+                            Produto
+                          </TableHead>
+                          <TableHead className="hidden w-[10rem] min-w-[9rem] max-w-[12rem] sm:table-cell whitespace-normal">
+                            SKU
+                          </TableHead>
+                          <TableHead className="hidden min-w-[8rem] max-w-[12rem] md:table-cell whitespace-normal">
+                            Categoria
+                          </TableHead>
+                          <TableHead className="w-[6rem]">Tipo</TableHead>
+                          <TableHead className="w-[4rem] text-right">Qtd</TableHead>
+                          <TableHead className="hidden w-[7rem] lg:table-cell text-right whitespace-normal">
                             P. unit. mov.
                           </TableHead>
-                          <TableHead>Observacao</TableHead>
+                          <TableHead className="min-w-[8rem] max-w-[14rem] whitespace-normal">
+                            Observacao
+                          </TableHead>
                         </TableRow>
                       </TableHeader>
                       <TableBody>
@@ -7416,27 +7651,33 @@ export function FinancialDashboard() {
                             const prod = productMap.get(movement.productId)
                             return (
                               <TableRow key={movement.id}>
-                                <TableCell>{formatDate(movement.date)}</TableCell>
-                                <TableCell className="max-w-[200px]">
+                                <TableCell className="whitespace-nowrap tabular-nums">
+                                  {formatDate(movement.date)}
+                                </TableCell>
+                                <TableCell className="max-w-[22rem] whitespace-normal break-words">
                                   {prod?.name ?? "Produto removido"}
                                 </TableCell>
-                                <TableCell className="hidden sm:table-cell font-mono text-xs">
+                                <TableCell className="hidden max-w-[12rem] break-all font-mono text-xs whitespace-normal sm:table-cell">
                                   {prod?.sku ?? "—"}
                                 </TableCell>
-                                <TableCell className="hidden md:table-cell text-muted-foreground">
+                                <TableCell className="hidden max-w-[12rem] break-words text-muted-foreground whitespace-normal md:table-cell">
                                   {prod?.category ?? "—"}
                                 </TableCell>
-                                <TableCell>{movementLabel(movement.type)}</TableCell>
-                                <TableCell className="text-right tabular-nums">
+                                <TableCell className="whitespace-nowrap">
+                                  {movementLabel(movement.type)}
+                                </TableCell>
+                                <TableCell className="text-right tabular-nums whitespace-nowrap">
                                   {movement.quantity}
                                 </TableCell>
-                                <TableCell className="hidden lg:table-cell text-right tabular-nums">
+                                <TableCell className="hidden text-right tabular-nums whitespace-nowrap lg:table-cell">
                                   {movement.type === "sale" && movement.unitPrice != null
                                     ? formatCurrency(movement.unitPrice)
                                     : "—"}
                                 </TableCell>
-                                <TableCell className="max-w-[180px] truncate">
-                                  {movement.note ?? "—"}
+                                <TableCell className="max-w-[14rem] whitespace-normal break-words">
+                                  <span className="line-clamp-3" title={movement.note ?? undefined}>
+                                    {movement.note ?? "—"}
+                                  </span>
                                 </TableCell>
                               </TableRow>
                             )
@@ -7613,7 +7854,8 @@ export function FinancialDashboard() {
                         Somente publicacoes na vitrine de catalogo ML (
                         <span className="font-mono">catalog_listing</span> diferente de false):
                         competicao de buy box. O anuncio classico sincronizado aparece na sub-aba
-                        Anuncios.
+                        Anuncios. Custo unitario e lucro usam o produto no Estoque com o mesmo ID do
+                        anuncio ML.
                       </CardDescription>
                     </CardHeader>
                     <CardContent className="space-y-4">
@@ -7678,21 +7920,21 @@ export function FinancialDashboard() {
                         </Card>
                       </div>
 
-                      <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-6">
+                      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-[minmax(0,2fr)_minmax(0,11rem)_minmax(0,11rem)_auto_auto] xl:items-end">
                         <Input
                           placeholder="Buscar por titulo, item ou catalogo..."
                           value={mlCatalogSearchTerm}
                           onChange={(event) => setMlCatalogSearchTerm(event.target.value)}
-                          className="xl:col-span-2"
+                          className="min-w-0 sm:col-span-2 xl:col-span-1"
                         />
                         <Select
                           value={mlCatalogStatusFilter}
                           onValueChange={setMlCatalogStatusFilter}
                         >
-                          <SelectTrigger>
-                            <SelectValue placeholder="Todos os status" />
+                          <SelectTrigger className="h-9 w-full min-w-0 [&_span]:truncate">
+                            <SelectValue placeholder="Status" />
                           </SelectTrigger>
-                          <SelectContent>
+                          <SelectContent position="popper" className="max-h-[min(24rem,70vh)]">
                             <SelectItem value="all">Todos</SelectItem>
                             <SelectItem value="winning">Ganhando</SelectItem>
                             <SelectItem value="sharing_first_place">Dividindo 1o</SelectItem>
@@ -7703,19 +7945,20 @@ export function FinancialDashboard() {
                           </SelectContent>
                         </Select>
                         <Select value={mlCatalogSortBy} onValueChange={setMlCatalogSortBy}>
-                          <SelectTrigger>
+                          <SelectTrigger
+                            className="h-9 w-full min-w-0 [&_span]:truncate"
+                            title={
+                              mlCatalogSortBy === "priority_desc"
+                                ? "Ativos e ganhando primeiro, pausados por ultimo"
+                                : undefined
+                            }
+                          >
                             <SelectValue placeholder="Ordenar" />
                           </SelectTrigger>
-                          <SelectContent>
-                            <SelectItem value="priority_desc">
-                              Prioridade (ativos/ganhando primeiro, pausados por ultimo)
-                            </SelectItem>
-                            <SelectItem value="difference_desc">
-                              Diferenca de preco (maior)
-                            </SelectItem>
-                            <SelectItem value="difference_asc">
-                              Diferenca de preco (menor)
-                            </SelectItem>
+                          <SelectContent position="popper" className="max-h-[min(24rem,70vh)]">
+                            <SelectItem value="priority_desc">Prioridade</SelectItem>
+                            <SelectItem value="difference_desc">Diferenca (maior)</SelectItem>
+                            <SelectItem value="difference_asc">Diferenca (menor)</SelectItem>
                             <SelectItem value="price_desc">Maior preco</SelectItem>
                             <SelectItem value="price_asc">Menor preco</SelectItem>
                           </SelectContent>
@@ -7727,6 +7970,10 @@ export function FinancialDashboard() {
                           Exportar
                         </Button>
                       </div>
+                      <p className="text-xs text-muted-foreground">
+                        Ordem &quot;Prioridade&quot;: ativos/ganhando primeiro; anuncios pausados
+                        por ultimo.
+                      </p>
 
                       {mlCatalogCompetitionLoading ? (
                         <p className="text-sm text-muted-foreground">
@@ -7746,8 +7993,11 @@ export function FinancialDashboard() {
                       ) : (
                         <div className="space-y-2">
                           {filteredCatalogCompetitionRows.map((row) => {
-                            const product = productMapByMlItemId.get(row.itemId)
+                            const product = productMapByMlItemId.get(
+                              normalizeMercadoLibreItemId(row.itemId),
+                            )
                             const unitCost = product?.unitCost ?? 0
+                            const costMissingOrZero = !product || unitCost <= 0
                             const difference = row.price - (row.winnerPrice ?? row.price)
                             const estimatedFees = row.price * HUB_ML_AVG_FEE_RATE
                             const estimatedProfitPerSale =
@@ -7792,7 +8042,7 @@ export function FinancialDashboard() {
                                     </Badge>
                                   </div>
 
-                                  <div className="mt-3 grid gap-3 text-sm md:grid-cols-4">
+                                  <div className="mt-3 grid gap-3 text-sm md:grid-cols-5">
                                     <div>
                                       <p className="text-muted-foreground">Seu Preco</p>
                                       <p className="font-semibold">{formatCurrency(row.price)}</p>
@@ -7822,6 +8072,26 @@ export function FinancialDashboard() {
                                       </p>
                                     </div>
                                     <div>
+                                      <p className="text-muted-foreground">Custo unit. (estoque)</p>
+                                      <p
+                                        className={cn(
+                                          "font-semibold tabular-nums",
+                                          product
+                                            ? "text-foreground"
+                                            : "text-muted-foreground font-normal",
+                                        )}
+                                      >
+                                        {product ? formatCurrency(unitCost) : "—"}
+                                      </p>
+                                      {costMissingOrZero ? (
+                                        <p className="mt-0.5 text-[10px] text-amber-700 dark:text-amber-300">
+                                          {!product
+                                            ? "Sem produto no estoque com este mlItemId."
+                                            : "Custo zero ou ausente — confira ou informe manualmente."}
+                                        </p>
+                                      ) : null}
+                                    </div>
+                                    <div>
                                       <p className="text-muted-foreground">Lucro/Venda</p>
                                       <p
                                         className={cn(
@@ -7836,7 +8106,14 @@ export function FinancialDashboard() {
                                     </div>
                                   </div>
 
-                                  <div className="mt-3 flex justify-end gap-2">
+                                  <div className="mt-3 flex flex-wrap justify-end gap-2">
+                                    <Button
+                                      size="sm"
+                                      variant="secondary"
+                                      onClick={() => openMlCatalogStockEdit(row)}
+                                    >
+                                      Editar custo / estoque
+                                    </Button>
                                     <Button
                                       size="sm"
                                       variant="outline"
@@ -7863,7 +8140,8 @@ export function FinancialDashboard() {
                         Publicacoes em modo classico no ML (
                         <span className="font-mono">catalog_listing: false</span>
                         ), incluindo o par sincronizado com a vitrine de catalogo. A competicao de
-                        buy box fica na sub-aba Catalogo.
+                        buy box fica na sub-aba Catalogo. Custo e lucro estimado usam o produto no
+                        Estoque vinculado ao ID do anuncio.
                       </CardDescription>
                     </CardHeader>
                     <CardContent className="space-y-4">
@@ -7893,66 +8171,117 @@ export function FinancialDashboard() {
                         </div>
                       ) : (
                         <div className="space-y-2">
-                          {mlNormalListingsFiltered.map((listing) => (
-                            <Card key={listing.id} className="rounded-none border">
-                              <CardContent className="pt-4">
-                                <div className="flex flex-wrap items-start justify-between gap-3">
-                                  <div className="flex items-start gap-3 min-w-0">
-                                    <div className="h-12 w-12 shrink-0 overflow-hidden rounded border bg-muted">
-                                      {listing.thumbnail ? (
-                                        <img
-                                          src={listing.thumbnail}
-                                          alt={listing.title}
-                                          className="h-full w-full object-cover"
-                                          loading="lazy"
-                                        />
-                                      ) : (
-                                        <div className="flex h-full w-full items-center justify-center text-[10px] text-muted-foreground">
-                                          —
-                                        </div>
-                                      )}
+                          {mlNormalListingsFiltered.map((listing) => {
+                            const stockProduct = productMapByMlItemId.get(
+                              normalizeMercadoLibreItemId(listing.id),
+                            )
+                            const unitCostAnuncio = stockProduct?.unitCost ?? 0
+                            const estimatedFeesAnuncio = listing.price * HUB_ML_AVG_FEE_RATE
+                            const lucroEstimadoAnuncio =
+                              listing.price -
+                              unitCostAnuncio -
+                              estimatedFeesAnuncio -
+                              HUB_CENTRALIZE_SHIPPING_PER_ITEM -
+                              HUB_CENTRALIZE_PACKAGING_PER_ITEM
+                            return (
+                              <Card key={listing.id} className="rounded-none border">
+                                <CardContent className="pt-4">
+                                  <div className="flex flex-wrap items-start justify-between gap-3">
+                                    <div className="flex items-start gap-3 min-w-0">
+                                      <div className="h-12 w-12 shrink-0 overflow-hidden rounded border bg-muted">
+                                        {listing.thumbnail ? (
+                                          <img
+                                            src={listing.thumbnail}
+                                            alt={listing.title}
+                                            className="h-full w-full object-cover"
+                                            loading="lazy"
+                                          />
+                                        ) : (
+                                          <div className="flex h-full w-full items-center justify-center text-[10px] text-muted-foreground">
+                                            —
+                                          </div>
+                                        )}
+                                      </div>
+                                      <div className="min-w-0">
+                                        <p className="font-medium line-clamp-2">{listing.title}</p>
+                                        <p className="text-xs font-mono text-muted-foreground">
+                                          {listing.id}
+                                        </p>
+                                        {listing.sku ? (
+                                          <p className="text-xs text-muted-foreground">
+                                            SKU: {listing.sku}
+                                          </p>
+                                        ) : null}
+                                        {listing.catalogProductId ? (
+                                          <p className="text-xs text-muted-foreground">
+                                            Par de catalogo ML:{" "}
+                                            <span className="font-mono">
+                                              {listing.catalogProductId}
+                                            </span>
+                                          </p>
+                                        ) : null}
+                                      </div>
                                     </div>
-                                    <div className="min-w-0">
-                                      <p className="font-medium line-clamp-2">{listing.title}</p>
-                                      <p className="text-xs font-mono text-muted-foreground">
-                                        {listing.id}
+                                    <div className="flex flex-wrap items-center gap-1.5 shrink-0">
+                                      <Badge
+                                        variant="secondary"
+                                        className="text-[10px] font-normal"
+                                      >
+                                        Classico
+                                      </Badge>
+                                      <Badge variant="outline">{listing.status}</Badge>
+                                    </div>
+                                  </div>
+                                  <div className="mt-3 grid gap-3 text-sm sm:grid-cols-2 lg:grid-cols-6">
+                                    <div>
+                                      <p className="text-muted-foreground">Preco</p>
+                                      <p className="font-semibold">
+                                        {formatCurrency(listing.price)}
                                       </p>
-                                      {listing.sku ? (
-                                        <p className="text-xs text-muted-foreground">
-                                          SKU: {listing.sku}
-                                        </p>
-                                      ) : null}
-                                      {listing.catalogProductId ? (
-                                        <p className="text-xs text-muted-foreground">
-                                          Par de catalogo ML:{" "}
-                                          <span className="font-mono">
-                                            {listing.catalogProductId}
-                                          </span>
+                                    </div>
+                                    <div>
+                                      <p className="text-muted-foreground">Custo unit. (estoque)</p>
+                                      <p
+                                        className={cn(
+                                          "font-semibold tabular-nums",
+                                          stockProduct
+                                            ? "text-foreground"
+                                            : "text-muted-foreground font-normal",
+                                        )}
+                                      >
+                                        {stockProduct ? formatCurrency(unitCostAnuncio) : "—"}
+                                      </p>
+                                      {!stockProduct ? (
+                                        <p className="text-[10px] text-muted-foreground mt-0.5">
+                                          Sem produto com este mlItemId
                                         </p>
                                       ) : null}
                                     </div>
+                                    <div>
+                                      <p className="text-muted-foreground">Estoque ML</p>
+                                      <p className="font-semibold">{listing.available_quantity}</p>
+                                    </div>
+                                    <div>
+                                      <p className="text-muted-foreground">Vendidos</p>
+                                      <p className="font-semibold">{listing.sold_quantity}</p>
+                                    </div>
+                                    <div className="sm:col-span-2 lg:col-span-2">
+                                      <p className="text-muted-foreground">Lucro/Venda (~)</p>
+                                      <p
+                                        className={cn(
+                                          "font-semibold",
+                                          stockProduct
+                                            ? lucroEstimadoAnuncio >= 0
+                                              ? "text-emerald-700 dark:text-emerald-400"
+                                              : "text-red-700 dark:text-red-300"
+                                            : "text-muted-foreground",
+                                        )}
+                                      >
+                                        {stockProduct ? formatCurrency(lucroEstimadoAnuncio) : "—"}
+                                      </p>
+                                    </div>
                                   </div>
-                                  <div className="flex flex-wrap items-center gap-1.5 shrink-0">
-                                    <Badge variant="secondary" className="text-[10px] font-normal">
-                                      Classico
-                                    </Badge>
-                                    <Badge variant="outline">{listing.status}</Badge>
-                                  </div>
-                                </div>
-                                <div className="mt-3 grid gap-3 text-sm sm:grid-cols-4">
-                                  <div>
-                                    <p className="text-muted-foreground">Preco</p>
-                                    <p className="font-semibold">{formatCurrency(listing.price)}</p>
-                                  </div>
-                                  <div>
-                                    <p className="text-muted-foreground">Estoque</p>
-                                    <p className="font-semibold">{listing.available_quantity}</p>
-                                  </div>
-                                  <div>
-                                    <p className="text-muted-foreground">Vendidos</p>
-                                    <p className="font-semibold">{listing.sold_quantity}</p>
-                                  </div>
-                                  <div className="flex flex-wrap items-end gap-2 justify-end sm:justify-start">
+                                  <div className="mt-3 flex flex-wrap items-center justify-end gap-2">
                                     {listing.permalink ? (
                                       <a
                                         href={listing.permalink}
@@ -7965,16 +8294,25 @@ export function FinancialDashboard() {
                                     ) : null}
                                     <Button
                                       size="sm"
+                                      variant="secondary"
+                                      onClick={() =>
+                                        openMlCatalogStockEdit(mlListingToStockEditSource(listing))
+                                      }
+                                    >
+                                      Editar custo / estoque
+                                    </Button>
+                                    <Button
+                                      size="sm"
                                       variant="outline"
                                       onClick={() => openAnalysis(listing.id)}
                                     >
                                       Abrir analise
                                     </Button>
                                   </div>
-                                </div>
-                              </CardContent>
-                            </Card>
-                          ))}
+                                </CardContent>
+                              </Card>
+                            )
+                          })}
                         </div>
                       )}
                     </CardContent>
@@ -8574,6 +8912,172 @@ export function FinancialDashboard() {
         {activeModule === "mercadolivre" && analysisItemId && (
           <AnalysisModal itemId={analysisItemId} onClose={() => setAnalysisItemId(null)} />
         )}
+
+        <Dialog.Root
+          open={mlCatalogStockDialogOpen}
+          onOpenChange={(open) => {
+            if (!open) {
+              setMlCatalogStockDialogOpen(false)
+              setMlCatalogStockEditRow(null)
+              setMlCatalogStockEditProductId(null)
+              setMlCatalogStockEditSuggestion(null)
+              setMlCatalogStockEditError(null)
+            }
+          }}
+        >
+          <Dialog.Portal>
+            <Dialog.Overlay className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm" />
+            <Dialog.Content className="fixed left-1/2 top-1/2 z-50 max-h-[min(90vh,42rem)] w-full max-w-lg -translate-x-1/2 -translate-y-1/2 overflow-y-auto rounded-2xl border border-border bg-card p-6 shadow-xl">
+              <Dialog.Title className="text-base font-semibold">
+                Editar custo e estoque (Mercado Livre)
+              </Dialog.Title>
+              <Dialog.Description className="mt-1 text-sm text-muted-foreground">
+                Vincula o anuncio <span className="font-mono">{mlCatalogStockEditRow?.itemId}</span>{" "}
+                ao produto no estoque. O custo e refletido em pedidos, DRE e lucro estimado.
+              </Dialog.Description>
+
+              {mlCatalogStockEditSuggestion ? (
+                <div className="mt-3 rounded-lg border border-border/80 bg-muted/40 px-3 py-2 text-xs leading-relaxed text-muted-foreground">
+                  <p className="font-medium text-foreground">Sugestao de custo</p>
+                  <p>{mlCatalogStockEditSuggestion.detail}</p>
+                  {mlCatalogStockEditSuggestion.matchedProductId ? (
+                    <p className="mt-1 text-amber-700 dark:text-amber-300">
+                      Ao salvar, este anuncio ML sera vinculado a esse produto (mesmo SKU ou nome
+                      parecido).
+                    </p>
+                  ) : null}
+                  {mlCatalogStockEditSuggestion.suggestedCost !== null &&
+                  mlCatalogStockEditSuggestion.suggestedCost > 0 ? (
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      className="mt-2"
+                      onClick={() =>
+                        setMlCatalogStockForm((f) => ({
+                          ...f,
+                          unitCost: String(mlCatalogStockEditSuggestion!.suggestedCost),
+                        }))
+                      }
+                    >
+                      Usar valor sugerido (
+                      {formatCurrency(mlCatalogStockEditSuggestion.suggestedCost)})
+                    </Button>
+                  ) : null}
+                </div>
+              ) : null}
+
+              {mlCatalogStockEditError ? (
+                <p className="mt-3 text-sm text-destructive">{mlCatalogStockEditError}</p>
+              ) : null}
+
+              <div className="mt-4 grid gap-3 sm:grid-cols-2">
+                <div className="space-y-1 sm:col-span-2">
+                  <label className="text-xs text-muted-foreground">Nome</label>
+                  <Input
+                    value={mlCatalogStockForm.name}
+                    onChange={(e) => setMlCatalogStockForm((f) => ({ ...f, name: e.target.value }))}
+                  />
+                </div>
+                <div className="space-y-1">
+                  <label className="text-xs text-muted-foreground">SKU</label>
+                  <Input
+                    value={mlCatalogStockForm.sku}
+                    onChange={(e) =>
+                      setMlCatalogStockForm((f) => ({
+                        ...f,
+                        sku: e.target.value,
+                      }))
+                    }
+                  />
+                </div>
+                <div className="space-y-1">
+                  <label className="text-xs text-muted-foreground">Categoria</label>
+                  <Input
+                    value={mlCatalogStockForm.category}
+                    onChange={(e) =>
+                      setMlCatalogStockForm((f) => ({
+                        ...f,
+                        category: e.target.value,
+                      }))
+                    }
+                  />
+                </div>
+                <div className="space-y-1">
+                  <label className="text-xs text-muted-foreground">Quantidade</label>
+                  <Input
+                    type="number"
+                    value={mlCatalogStockForm.quantity}
+                    onChange={(e) =>
+                      setMlCatalogStockForm((f) => ({
+                        ...f,
+                        quantity: e.target.value,
+                      }))
+                    }
+                  />
+                </div>
+                <div className="space-y-1">
+                  <label className="text-xs text-muted-foreground">Estoque minimo</label>
+                  <Input
+                    type="number"
+                    value={mlCatalogStockForm.minStock}
+                    onChange={(e) =>
+                      setMlCatalogStockForm((f) => ({
+                        ...f,
+                        minStock: e.target.value,
+                      }))
+                    }
+                  />
+                </div>
+                <div className="space-y-1">
+                  <label className="text-xs text-muted-foreground">Custo unitario (R$)</label>
+                  <Input
+                    type="number"
+                    step="0.01"
+                    value={mlCatalogStockForm.unitCost}
+                    onChange={(e) =>
+                      setMlCatalogStockForm((f) => ({
+                        ...f,
+                        unitCost: e.target.value,
+                      }))
+                    }
+                  />
+                </div>
+                <div className="space-y-1">
+                  <label className="text-xs text-muted-foreground">Preco venda (opcional)</label>
+                  <Input
+                    type="number"
+                    step="0.01"
+                    value={mlCatalogStockForm.sellingPrice}
+                    onChange={(e) =>
+                      setMlCatalogStockForm((f) => ({
+                        ...f,
+                        sellingPrice: e.target.value,
+                      }))
+                    }
+                  />
+                </div>
+              </div>
+              <div className="mt-4 flex justify-end gap-2">
+                <Button
+                  type="button"
+                  variant="outline"
+                  disabled={mlCatalogStockEditSaving}
+                  onClick={() => setMlCatalogStockDialogOpen(false)}
+                >
+                  Cancelar
+                </Button>
+                <Button
+                  type="button"
+                  disabled={mlCatalogStockEditSaving}
+                  onClick={() => void saveMlCatalogStockEdit()}
+                >
+                  {mlCatalogStockEditSaving ? "Salvando..." : "Salvar no estoque"}
+                </Button>
+              </div>
+            </Dialog.Content>
+          </Dialog.Portal>
+        </Dialog.Root>
       </section>
     </main>
   )

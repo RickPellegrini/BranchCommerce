@@ -16,6 +16,7 @@ type MlListingDetail = {
   catalog_product_id?: string
   /** false = par classico sincronizado (nao competir na grade de buy box deste hub) */
   catalog_listing?: boolean
+  seller_custom_field?: string | null
   thumbnail?: string
   secure_thumbnail?: string
   seller_id?: number
@@ -165,6 +166,7 @@ async function handleGet(url: URL) {
         status: row.status,
         price: row.price,
         availableQuantity: row.available_quantity,
+        sellerSku: row.seller_custom_field?.trim() || null,
         catalogProductId: row.catalog_product_id ?? null,
         competitionStatus,
         currentPrice: comp?.current_price ?? row.price,

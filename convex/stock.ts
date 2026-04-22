@@ -3,7 +3,7 @@ import { v } from "convex/values"
 import type { Id } from "./_generated/dataModel"
 import { mutation, query, type MutationCtx } from "./_generated/server"
 
-import { manualStockDedupeKey } from "./dedupeHelpers"
+import { manualStockDedupeKey, normalizeMlItemIdForStock } from "./dedupeHelpers"
 
 const kanbanStatusValidator = v.union(
   v.literal("purchased"),
@@ -52,6 +52,8 @@ export const addProduct = mutation({
     sellingPrice: v.optional(v.number()),
     /** URL da foto (ex.: copiada de um item já sincronizado com ML). */
     imageUrl: v.optional(v.string()),
+    /** Vinculo ao anuncio ML (catalogo/classico). */
+    mlItemId: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
     const normalizedSku = args.sku.trim().toUpperCase()
@@ -76,6 +78,20 @@ export const addProduct = mutation({
       throw new Error("SKU ja existe no estoque.")
     }
 
+    const normalizedMl =
+      args.mlItemId?.trim() ? normalizeMlItemIdForStock(args.mlItemId) : undefined
+    if (normalizedMl) {
+      const dupMl = await ctx.db
+        .query("stockProducts")
+        .withIndex("by_user_ml_item", (qb) =>
+          qb.eq("userId", args.userId).eq("mlItemId", normalizedMl),
+        )
+        .first()
+      if (dupMl) {
+        throw new Error("Ja existe produto vinculado a este ID de anuncio ML.")
+      }
+    }
+
     const now = Date.now()
     const today = new Date().toISOString().slice(0, 10)
 
@@ -90,6 +106,7 @@ export const addProduct = mutation({
       unitCostSource: "manual",
       sellingPrice: args.sellingPrice,
       ...(args.imageUrl?.trim() && { imageUrl: args.imageUrl.trim() }),
+      ...(normalizedMl ? { mlItemId: normalizedMl } : {}),
       kanbanStatus: args.quantity > 0 ? "in_stock" : "purchased",
       createdAt: now,
       updatedAt: now,
@@ -145,6 +162,8 @@ export const updateProduct = mutation({
     kanbanStatus: v.optional(kanbanStatusValidator),
     kanbanNote: v.optional(v.string()),
     estimatedArrival: v.optional(v.string()),
+    /** Define ou altera vinculo ao anuncio ML (omitir para manter o atual). */
+    mlItemId: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
     const product = await ctx.db.get(args.productId)
@@ -185,6 +204,21 @@ export const updateProduct = mutation({
       })
     }
 
+    let mlSuffix: { mlItemId: string } | Record<string, never> = {}
+    if (args.mlItemId !== undefined && args.mlItemId.trim()) {
+      const nid = normalizeMlItemIdForStock(args.mlItemId)
+      const dupMl = await ctx.db
+        .query("stockProducts")
+        .withIndex("by_user_ml_item", (qb) =>
+          qb.eq("userId", args.userId).eq("mlItemId", nid),
+        )
+        .first()
+      if (dupMl && dupMl._id !== args.productId) {
+        throw new Error("Ja existe produto vinculado a este ID de anuncio ML.")
+      }
+      mlSuffix = { mlItemId: nid }
+    }
+
     await ctx.db.patch(args.productId, {
       name: normalizedName,
       sku: normalizedSku,
@@ -197,6 +231,7 @@ export const updateProduct = mutation({
       ...(args.kanbanStatus !== undefined && { kanbanStatus: args.kanbanStatus }),
       ...(args.kanbanNote !== undefined && { kanbanNote: args.kanbanNote }),
       ...(args.estimatedArrival !== undefined && { estimatedArrival: args.estimatedArrival }),
+      ...mlSuffix,
       updatedAt: Date.now(),
     })
   },

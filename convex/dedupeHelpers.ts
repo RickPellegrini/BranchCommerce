@@ -1,3 +1,9 @@
+/** Alinha IDs de anuncio ML (`MLB123` / `MLB-123`) para indice `by_user_ml_item`. */
+export function normalizeMlItemIdForStock(raw: string): string {
+  const m = raw.trim().match(/^(MLB)-?(\d+)$/i)
+  return m ? `MLB${m[2]}` : raw.trim()
+}
+
 export function attachmentDedupeKey(
   userId: string,
   transactionId: string,
