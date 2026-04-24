@@ -139,14 +139,22 @@ async function logKanbanTransition(
     note?: string
   },
 ) {
-  await ctx.db.insert("productKanbanEvents", {
-    userId: args.userId,
-    productId: args.productId,
-    fromStatus: args.fromStatus,
-    toStatus: args.toStatus,
-    note: args.note,
-    createdAt: Date.now(),
-  })
+  // Histórico do Kanban é observabilidade: não pode bloquear o fluxo principal.
+  try {
+    await ctx.db.insert("productKanbanEvents", {
+      userId: args.userId,
+      productId: args.productId,
+      fromStatus: args.fromStatus,
+      toStatus: args.toStatus,
+      note: args.note,
+      createdAt: Date.now(),
+    })
+  } catch (error) {
+    const reason = error instanceof Error ? error.message : String(error)
+    console.error(
+      `[stock.logKanbanTransition] failed user=${args.userId} product=${args.productId} ${args.fromStatus}->${args.toStatus}: ${reason}`,
+    )
+  }
 }
 
 export const updateProduct = mutation({
