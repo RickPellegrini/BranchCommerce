@@ -11,6 +11,7 @@ import {
   type KanbanProduct,
   EM_FALTA_COLUMN,
   KANBAN_COLUMNS,
+  formatCurrencyBRL,
   getKanbanColumnId,
   getUrgency,
   urgencyColor,
@@ -216,8 +217,11 @@ export function ProductCard({
               </span>
             </div>
             <span className="rounded bg-muted px-1.5 py-0.5 text-muted-foreground">
-              {product.category}
+              {formatCurrencyBRL(product.unitCost)}
             </span>
+          </div>
+          <div className="mt-1 text-xs text-muted-foreground">
+            <span className="rounded bg-muted px-1.5 py-0.5">{product.category}</span>
           </div>
 
           {/* Estimated arrival */}

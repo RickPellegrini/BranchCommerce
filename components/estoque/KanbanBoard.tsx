@@ -13,6 +13,7 @@ import {
 import { Package, BarChart2, AlertCircle, TrendingDown, Truck, ClipboardList } from "lucide-react"
 import { Card, CardContent } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
+import { normalizeMercadoLibreItemId } from "@/lib/mercadolivre/item-id"
 import { cn } from "@/lib/utils"
 import {
   type KanbanColumnId,
@@ -40,6 +41,30 @@ interface StockSummary {
 
 const LS_COLLAPSED = "branchcommerce.kanban.collapsed"
 const LS_SHOW_HIDDEN = "branchcommerce.kanban.showHidden"
+const MLB_CODE_REGEX = /^MLB\d+$/i
+
+function extractMlCode(product: Pick<KanbanProduct, "mlItemId" | "sku">): string | null {
+  const candidate = product.mlItemId?.trim() || product.sku?.trim()
+  if (!candidate) return null
+  const normalized = normalizeMercadoLibreItemId(candidate)
+  return MLB_CODE_REGEX.test(normalized) ? normalized : null
+}
+
+function pickImageFromMlProductDetail(detail: unknown): string | null {
+  if (!detail || typeof detail !== "object") return null
+  const rec = detail as {
+    pictures?: Array<{ secure_url?: string; url?: string }>
+    secure_thumbnail?: string
+    thumbnail?: string
+  }
+  return (
+    rec.pictures?.[0]?.secure_url ??
+    rec.pictures?.[0]?.url ??
+    rec.secure_thumbnail ??
+    rec.thumbnail ??
+    null
+  )
+}
 
 interface KanbanBoardProps {
   products: KanbanProduct[]
@@ -69,6 +94,8 @@ export function KanbanBoard({
 }: KanbanBoardProps) {
   const [activeId, setActiveId] = useState<string | null>(null)
   const [selectedProduct, setSelectedProduct] = useState<KanbanProduct | null>(null)
+  const [fallbackImageByMlCode, setFallbackImageByMlCode] = useState<Record<string, string>>({})
+  const [imageLookupFailures, setImageLookupFailures] = useState<Record<string, true>>({})
   const [search, setSearch] = useState("")
   const [urgencyFilter, setUrgencyFilter] = useState<"all" | UrgencyLevel>("all")
   const [categoryFilter, setCategoryFilter] = useState("all")
@@ -107,27 +134,104 @@ export function KanbanBoard({
     }
   }, [collapsedByColumn])
 
+  const missingImageCodes = useMemo(() => {
+    const nextCodes = new Set<string>()
+    for (const product of products) {
+      if (product.imageUrl) continue
+      const mlCode = extractMlCode(product)
+      if (!mlCode) continue
+      if (fallbackImageByMlCode[mlCode]) continue
+      if (imageLookupFailures[mlCode]) continue
+      nextCodes.add(mlCode)
+    }
+    return [...nextCodes]
+  }, [products, fallbackImageByMlCode, imageLookupFailures])
+
+  useEffect(() => {
+    if (missingImageCodes.length === 0) return
+    let cancelled = false
+
+    const hydrateMissingImages = async () => {
+      const resolved: Record<string, string> = {}
+      const failures: string[] = []
+
+      await Promise.all(
+        missingImageCodes.map(async (mlCode) => {
+          try {
+            const response = await fetch(
+              `/api/ml/catalog/hub?action=product_detail&productId=${encodeURIComponent(mlCode)}`,
+              { cache: "no-store" },
+            )
+            if (!response.ok) {
+              failures.push(mlCode)
+              return
+            }
+            const payload = (await response.json()) as { ok?: boolean; data?: unknown }
+            const imageUrl = pickImageFromMlProductDetail(payload.data)
+            if (!payload.ok || !imageUrl) {
+              failures.push(mlCode)
+              return
+            }
+            resolved[mlCode] = imageUrl
+          } catch {
+            failures.push(mlCode)
+          }
+        }),
+      )
+
+      if (cancelled) return
+      if (Object.keys(resolved).length > 0) {
+        setFallbackImageByMlCode((prev) => ({ ...prev, ...resolved }))
+      }
+      if (failures.length > 0) {
+        setImageLookupFailures((prev) => {
+          const next = { ...prev }
+          for (const code of failures) next[code] = true
+          return next
+        })
+      }
+    }
+
+    void hydrateMissingImages()
+    return () => {
+      cancelled = true
+    }
+  }, [missingImageCodes])
+
+  const displayProducts = useMemo(
+    () =>
+      products.map((product) => {
+        if (product.imageUrl) return product
+        const mlCode = extractMlCode(product)
+        if (!mlCode) return product
+        const fallbackImage = fallbackImageByMlCode[mlCode]
+        if (!fallbackImage) return product
+        return { ...product, imageUrl: fallbackImage }
+      }),
+    [products, fallbackImageByMlCode],
+  )
+
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 8 } }))
 
   const categories = useMemo(
-    () => [...new Set(products.map((p) => p.category))].filter(Boolean),
-    [products],
+    () => [...new Set(displayProducts.map((p) => p.category))].filter(Boolean),
+    [displayProducts],
   )
 
   const filteredProducts = useMemo(() => {
     const q = search.toLowerCase()
-    return products.filter((p) => {
+    return displayProducts.filter((p) => {
       if (!showHidden && p.kanbanHidden) return false
       if (q && !p.name.toLowerCase().includes(q) && !p.sku.toLowerCase().includes(q)) return false
       if (urgencyFilter !== "all" && getUrgency(p) !== urgencyFilter) return false
       if (categoryFilter !== "all" && p.category !== categoryFilter) return false
       return true
     })
-  }, [products, search, urgencyFilter, categoryFilter, showHidden])
+  }, [displayProducts, search, urgencyFilter, categoryFilter, showHidden])
 
-  const activeProduct = activeId ? products.find((p) => p.id === activeId) : null
-  const inTransitCount = products.filter((p) => p.kanbanStatus === "in_transit").length
-  const compradoCount = products.filter((p) => isCompradoKanbanStatus(p.kanbanStatus)).length
+  const activeProduct = activeId ? displayProducts.find((p) => p.id === activeId) : null
+  const inTransitCount = displayProducts.filter((p) => p.kanbanStatus === "in_transit").length
+  const compradoCount = displayProducts.filter((p) => isCompradoKanbanStatus(p.kanbanStatus)).length
 
   function handleDragStart(event: DragStartEvent) {
     setActiveId(event.active.id as string)
@@ -138,7 +242,7 @@ export function KanbanBoard({
     setActiveId(null)
     if (!over) return
     const target = over.id as KanbanColumnId
-    const product = products.find((p) => p.id === active.id)
+    const product = displayProducts.find((p) => p.id === active.id)
     if (!product) return
     if (getKanbanColumnId(product) === target) return
     void onUpdateKanbanStatus(product.id, target)

@@ -50,6 +50,7 @@ export function ProductDetailModal({
   const [estimatedArrival, setEstimatedArrival] = useState(product.estimatedArrival ?? "")
   const [editQuantity, setEditQuantity] = useState(String(product.quantity))
   const [editMinStock, setEditMinStock] = useState(String(product.minStock))
+  const [editUnitCost, setEditUnitCost] = useState(String(product.unitCost ?? 0))
   const [saving, setSaving] = useState(false)
 
   const urgency = getUrgency(product)
@@ -70,6 +71,7 @@ export function ProductDetailModal({
       await onSaveEdits({
         quantity: Number(editQuantity),
         minStock: Number(editMinStock),
+        unitCost: Number(editUnitCost),
         kanbanNote: note || undefined,
         estimatedArrival: estimatedArrival || undefined,
       })
@@ -134,15 +136,9 @@ export function ProductDetailModal({
                 {" / "}
                 {product.minStock} min
               </div>
-              {product.sellingPrice !== undefined && (
-                <div>
-                  <span className="text-muted-foreground">Preço: </span>
-                  {formatCurrencyBRL(product.sellingPrice)}
-                </div>
-              )}
               {product.unitCost > 0 && (
                 <div>
-                  <span className="text-muted-foreground">Custo: </span>
+                  <span className="text-muted-foreground">Preço (custo): </span>
                   {formatCurrencyBRL(product.unitCost)}
                 </div>
               )}
@@ -170,6 +166,16 @@ export function ProductDetailModal({
                   type="number"
                   value={editMinStock}
                   onChange={(e) => setEditMinStock(e.target.value)}
+                />
+              </div>
+              <div className="space-y-1">
+                <label className="text-xs text-muted-foreground">Preço (custo)</label>
+                <Input
+                  type="number"
+                  min={0}
+                  step="0.01"
+                  value={editUnitCost}
+                  onChange={(e) => setEditUnitCost(e.target.value)}
                 />
               </div>
               {(isCompradoKanbanStatus(product.kanbanStatus) ||

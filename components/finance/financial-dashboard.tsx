@@ -3161,6 +3161,7 @@ export function FinancialDashboard() {
     const p = products.find((x) => x.id === productId)
     if (!p) return
     const nextQty = updates.quantity ?? p.quantity
+    const nextUnitCost = updates.unitCost ?? p.unitCost
     let resolvedKanban =
       updates.kanbanStatus ?? p.kanbanStatus ?? (nextQty > 0 ? "in_stock" : "purchased")
     if (p.quantity > 0 && nextQty === 0) {
@@ -3186,7 +3187,7 @@ export function FinancialDashboard() {
         category: p.category,
         quantity: nextQty,
         minStock: updates.minStock ?? p.minStock,
-        unitCost: p.unitCost,
+        unitCost: nextUnitCost,
         sellingPrice: p.sellingPrice,
         kanbanStatus: resolvedKanban,
         kanbanNote: updates.kanbanNote !== undefined ? updates.kanbanNote : p.kanbanNote,
