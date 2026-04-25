@@ -10,7 +10,7 @@ const defaultSettings = {
   },
   defaults: {
     productCost: 0,
-    taxPercent: 0,
+    centralizeEnabled: true,
     freeShippingEnabled: true,
     freeShippingMinPrice: 79,
     freeShippingSubsidyPercent: 50,
@@ -44,7 +44,7 @@ function readForm() {
     },
     defaults: {
       productCost: parseNumber(document.getElementById("default-product-cost").value),
-      taxPercent: parseNumber(document.getElementById("default-tax-percent").value),
+      centralizeEnabled: document.getElementById("default-centralize-enabled").value === "true",
       freeShippingEnabled:
         document.getElementById("default-free-shipping-enabled").value === "true",
       freeShippingMinPrice: parseNumber(
@@ -70,7 +70,9 @@ function writeForm(values) {
   document.getElementById("sync-api-base-url").value = values.sync.apiBaseUrl
   document.getElementById("sync-api-key").value = values.sync.apiKey
   document.getElementById("default-product-cost").value = String(values.defaults.productCost)
-  document.getElementById("default-tax-percent").value = String(values.defaults.taxPercent)
+  document.getElementById("default-centralize-enabled").value = String(
+    values.defaults.centralizeEnabled ?? true,
+  )
   document.getElementById("default-free-shipping-enabled").value = String(
     values.defaults.freeShippingEnabled ?? true,
   )

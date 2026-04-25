@@ -32,7 +32,8 @@
   /**
    * @typedef {Object} SellerOperationCosts
    * @property {number} productCost
-   * @property {number} taxPercent
+   * @property {number} taxPercent Sempre 0 (impostos removidos da UI).
+   * @property {boolean|undefined} centralizeEnabled Incluir custos fixos Centralize (5 + 1,50)
    * @property {number} adsPercent
    * @property {number} packagingCost
    * @property {number} otherFixedCosts
@@ -102,6 +103,7 @@
     return {
       productCost: 0,
       taxPercent: 0,
+      centralizeEnabled: true,
       adsPercent: 0,
       packagingCost: 0,
       otherFixedCosts: 0,

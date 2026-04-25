@@ -87,7 +87,7 @@
 
     const grossRevenue = Math.max(0, toNumberOrZero(marketplace.salePrice))
     const marketplaceFeeAmount = resolveMarketplaceFeeAmount(grossRevenue, marketplace)
-    const taxAmount = grossRevenue * toPercentValue(operation.taxPercent)
+    const taxAmount = 0
     const adsAmount = grossRevenue * toPercentValue(operation.adsPercent)
     const riskAmount = grossRevenue * toPercentValue(operation.riskPercent)
 
@@ -97,7 +97,11 @@
     const productCost = Math.max(0, toNumberOrZero(operation.productCost))
     const packagingCost = Math.max(0, toNumberOrZero(operation.packagingCost))
     const otherFixedCosts = Math.max(0, toNumberOrZero(operation.otherFixedCosts))
-    const centralizeFixedCosts = CENTRALIZE_FIXED_SHIPPING + CENTRALIZE_FIXED_PACKAGING
+    const centralizeOn =
+      operation.centralizeEnabled === undefined ? true : Boolean(operation.centralizeEnabled)
+    const centralizeFixedCosts = centralizeOn
+      ? CENTRALIZE_FIXED_SHIPPING + CENTRALIZE_FIXED_PACKAGING
+      : 0
 
     const totalCosts =
       marketplaceFeeAmount +
