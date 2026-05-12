@@ -1481,7 +1481,7 @@ export function FinancialDashboard() {
   const [mpError, setMpError] = useState<string | null>(null)
   const [mpBalanceUnavailable, setMpBalanceUnavailable] = useState(false)
   const [mpSaldoOculto, setMpSaldoOculto] = useState(false)
-  const [mpTxSummary, setMpTxSummary] = useState<{
+  const [, setMpTxSummary] = useState<{
     totalCredits: number
     totalDebits: number
     windowSinceIso: string
@@ -1500,7 +1500,7 @@ export function FinancialDashboard() {
     }>
   }
   const [mpDayGroups, setMpDayGroups] = useState<DayGroupUI[]>([])
-  const [mpFuturePendingTotal, setMpFuturePendingTotal] = useState(0)
+  const [, setMpFuturePendingTotal] = useState(0)
   const [mpFutureLoading, setMpFutureLoading] = useState(false)
   const [mpFutureStatus, setMpFutureStatus] = useState<string | null>(null)
   const [mpExpandedDays, setMpExpandedDays] = useState<Set<string>>(new Set())
@@ -1622,76 +1622,6 @@ export function FinancialDashboard() {
     void fetchFutureReleases()
   }, [activeModule, activeFinanceSection, fetchMpData, fetchFutureReleases])
 
-  const mpFutureAPagarTotal = 0
-
-  /** IDs de pagamentos que ainda entram em "lancamentos futuros" (evita somar credito no extrato + net a receber). */
-  const mpFutureReleaseIds = useMemo(
-    () => new Set(mpDayGroups.flatMap((g) => g.releases.map((r) => r.sourceId))),
-    [mpDayGroups],
-  )
-
-  /**
-   * Saldo MP estimado (fallback quando a API de saldo retorna 403):
-   *   creditos liquidos (janela) - debitos (janela) + liberacoes pendentes futuras
-   *
-   * Os pagamentos cujo ID ainda esta em "lancamentos futuros" sao descontados
-   * dos creditos pra evitar double-counting (eles ainda nao caíram no saldo,
-   * mas voltam pela soma das liberacoes pendentes).
-   */
-  const mpFuturePendingTotalAll = useMemo(
-    () => mpDayGroups.reduce((s, g) => s + g.total, 0),
-    [mpDayGroups],
-  )
-
-  const mpCreditosLiquidosJanela = useMemo(() => {
-    // Subtrai creditos que ainda estao "pendentes de liberacao" — eles entram
-    // pelo bloco de liberacoes futuras, nao devem ser contados duas vezes.
-    if (mpTxSummary) {
-      const aindaPendente = mpTransactions
-        .filter((t) => t.type === "credit" && mpFutureReleaseIds.has(t.id))
-        .reduce((s, t) => s + t.amount, 0)
-      return Math.max(0, mpTxSummary.totalCredits - aindaPendente)
-    }
-    // Fallback se summary ainda nao chegou
-    let s = 0
-    for (const t of mpTransactions) {
-      if (t.type === "credit" && !mpFutureReleaseIds.has(t.id)) s += t.amount
-    }
-    return s
-  }, [mpTxSummary, mpTransactions, mpFutureReleaseIds])
-
-  const mpDebitosJanela = useMemo(() => {
-    if (mpTxSummary) return mpTxSummary.totalDebits
-    return mpTransactions.filter((t) => t.type === "debit").reduce((s, t) => s + t.amount, 0)
-  }, [mpTxSummary, mpTransactions])
-
-  const todayIsoPrefix = useMemo(() => new Date().toISOString().slice(0, 10), [])
-
-  const mpSaldoHoje = useMemo(() => {
-    let creditos = 0
-    let debitos = 0
-    for (const t of mpTransactions) {
-      if (!t.date || !t.date.startsWith(todayIsoPrefix)) continue
-      if (t.type === "credit") creditos += t.amount
-      else debitos += t.amount
-    }
-    // Liberacoes previstas para hoje que ainda nao apareceram no extrato
-    let liberacoesHoje = 0
-    for (const g of mpDayGroups) {
-      if (g.date !== todayIsoPrefix) continue
-      for (const r of g.releases) {
-        if (!mpTransactions.some((t) => t.id === r.sourceId && t.type === "credit"))
-          liberacoesHoje += r.amount
-      }
-    }
-    return creditos - debitos + liberacoesHoje
-  }, [mpTransactions, mpDayGroups, todayIsoPrefix])
-
-  const mpSaldoEstimadoSemApi = useMemo(
-    () => mpCreditosLiquidosJanela - mpDebitosJanela,
-    [mpCreditosLiquidosJanela, mpDebitosJanela],
-  )
-
   const mpFutureGross = useMemo(
     () => mpDayGroups.reduce((s, g) => s + g.grossTotal, 0),
     [mpDayGroups],
@@ -1728,7 +1658,6 @@ export function FinancialDashboard() {
   const deleteProduct = useMutation(api.stock.deleteProduct)
   const addMovement = useMutation(api.stock.addMovement)
   const syncStockFromMercadoLivre = useMutation(api.stock.syncFromMercadoLivre)
-  const reconcileWithMlDataMutation = useMutation(api.stock.reconcileWithMlData)
   const setProductKanbanHidden = useMutation(api.stock.setProductKanbanHidden)
   const addManualStockEntryMutation = useMutation(api.stock.addManualStockEntry)
   const addExpenseWithPayment = useMutation(api.finance.addExpenseWithPayment)
