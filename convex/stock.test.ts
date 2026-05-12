@@ -11,7 +11,7 @@ async function setupProduct(t: ReturnType<typeof convexTest>) {
   return t.mutation(api.stock.addProduct, {
     userId: "user1",
     name: "Widget A",
-    sku: "wgt-a",
+    mlItemId: "MLB000001",
     category: "Gadgets",
     quantity: 10,
     minStock: 2,
@@ -24,12 +24,12 @@ describe("stock", () => {
   // ── addProduct ────────────────────────────────────────────────────
 
   describe("addProduct", () => {
-    it("creates a product with normalized SKU", async () => {
+    it("creates a product with mlItemId as sku", async () => {
       const t = convexTest(schema, modules)
       const id = await t.mutation(api.stock.addProduct, {
         userId: "user1",
         name: "Widget",
-        sku: "wgt-001",
+        mlItemId: "MLB100001",
         category: "Gadgets",
         quantity: 5,
         minStock: 1,
@@ -37,7 +37,8 @@ describe("stock", () => {
       })
       expect(id).toBeTruthy()
       const data = await t.query(api.stock.getDashboardData, { userId: "user1" })
-      expect(data.products[0].sku).toBe("WGT-001")
+      expect(data.products[0].mlItemId).toBe("MLB100001")
+      expect(data.products[0].sku).toBe("MLB100001")
     })
 
     it("creates initial movement when quantity > 0", async () => {
@@ -45,7 +46,7 @@ describe("stock", () => {
       await t.mutation(api.stock.addProduct, {
         userId: "user1",
         name: "Widget",
-        sku: "ABC",
+        mlItemId: "MLB100002",
         category: "Test",
         quantity: 5,
         minStock: 0,
@@ -62,7 +63,7 @@ describe("stock", () => {
       await t.mutation(api.stock.addProduct, {
         userId: "user1",
         name: "Empty",
-        sku: "EMP",
+        mlItemId: "MLB100003",
         category: "Test",
         quantity: 0,
         minStock: 0,
@@ -73,12 +74,12 @@ describe("stock", () => {
       expect(data.products[0].kanbanStatus).toBe("purchased")
     })
 
-    it("rejects duplicate SKU", async () => {
+    it("rejects duplicate MLB ID", async () => {
       const t = convexTest(schema, modules)
       await t.mutation(api.stock.addProduct, {
         userId: "user1",
         name: "A",
-        sku: "DUP",
+        mlItemId: "MLB100004",
         category: "Test",
         quantity: 0,
         minStock: 0,
@@ -88,22 +89,22 @@ describe("stock", () => {
         t.mutation(api.stock.addProduct, {
           userId: "user1",
           name: "B",
-          sku: "dup",
+          mlItemId: "MLB100004",
           category: "Test",
           quantity: 0,
           minStock: 0,
           unitCost: 0,
         }),
-      ).rejects.toThrow("SKU ja existe")
+      ).rejects.toThrow("MLB ID")
     })
 
-    it("rejects empty name/sku/category", async () => {
+    it("rejects empty name/mlItemId/category", async () => {
       const t = convexTest(schema, modules)
       await expect(
         t.mutation(api.stock.addProduct, {
           userId: "user1",
           name: "",
-          sku: "X",
+          mlItemId: "MLB100005",
           category: "Test",
           quantity: 0,
           minStock: 0,
@@ -118,7 +119,7 @@ describe("stock", () => {
         t.mutation(api.stock.addProduct, {
           userId: "user1",
           name: "Bad",
-          sku: "BAD",
+          mlItemId: "MLB100006",
           category: "Test",
           quantity: -1,
           minStock: 0,
@@ -138,7 +139,6 @@ describe("stock", () => {
         userId: "user1",
         productId: id,
         name: "Widget B",
-        sku: "WGT-B",
         category: "Updated",
         quantity: 20,
         minStock: 5,
@@ -147,10 +147,9 @@ describe("stock", () => {
       })
       const data = await t.query(api.stock.getDashboardData, { userId: "user1" })
       expect(data.products[0].name).toBe("Widget B")
-      expect(data.products[0].sku).toBe("WGT-B")
     })
 
-    it("allows keeping the same SKU", async () => {
+    it("allows keeping the same name", async () => {
       const t = convexTest(schema, modules)
       const id = await setupProduct(t)
       await expect(
@@ -158,39 +157,12 @@ describe("stock", () => {
           userId: "user1",
           productId: id,
           name: "Widget A",
-          sku: "WGT-A",
           category: "Gadgets",
           quantity: 10,
           minStock: 2,
           unitCost: 15,
         }),
       ).resolves.not.toThrow()
-    })
-
-    it("rejects SKU conflict with another product", async () => {
-      const t = convexTest(schema, modules)
-      const id1 = await setupProduct(t)
-      await t.mutation(api.stock.addProduct, {
-        userId: "user1",
-        name: "Widget B",
-        sku: "WGT-B",
-        category: "Gadgets",
-        quantity: 0,
-        minStock: 0,
-        unitCost: 0,
-      })
-      await expect(
-        t.mutation(api.stock.updateProduct, {
-          userId: "user1",
-          productId: id1,
-          name: "Widget A",
-          sku: "WGT-B",
-          category: "Gadgets",
-          quantity: 10,
-          minStock: 2,
-          unitCost: 15,
-        }),
-      ).rejects.toThrow("SKU ja existe")
     })
 
     it("throws for wrong user", async () => {
@@ -201,7 +173,6 @@ describe("stock", () => {
           userId: "user2",
           productId: id,
           name: "Hack",
-          sku: "HACK",
           category: "X",
           quantity: 0,
           minStock: 0,
@@ -235,7 +206,7 @@ describe("stock", () => {
       await t.mutation(api.stock.addProduct, {
         userId: "user1",
         name: "Empty",
-        sku: "EMP",
+        mlItemId: "MLB200001",
         category: "Test",
         quantity: 0,
         minStock: 0,
@@ -404,12 +375,12 @@ describe("stock", () => {
   // ── addManualStockEntry ───────────────────────────────────────────
 
   describe("addManualStockEntry", () => {
-    it("requires sku and stores normalized uppercase sku", async () => {
+    it("requires mlItemId and stores normalized MLB ID as sku", async () => {
       const t = convexTest(schema, modules)
       const id = await t.mutation(api.stock.addManualStockEntry, {
         userId: "user1",
         name: "Item manual",
-        sku: "abc-001",
+        mlItemId: "MLB300001",
         quantity: 2,
         unitCost: 10,
         supplier: "Forn X",
@@ -418,15 +389,16 @@ describe("stock", () => {
       })
       expect(id).toBeTruthy()
       const data = await t.query(api.stock.getDashboardData, { userId: "user1" })
-      expect(data.products[0].sku).toBe("ABC-001")
+      expect(data.products[0].mlItemId).toBe("MLB300001")
+      expect(data.products[0].sku).toBe("MLB300001")
     })
 
-    it("rejects duplicate sku", async () => {
+    it("rejects duplicate MLB ID", async () => {
       const t = convexTest(schema, modules)
       await t.mutation(api.stock.addProduct, {
         userId: "user1",
         name: "A",
-        sku: "DUP-SKU",
+        mlItemId: "MLB300002",
         category: "X",
         quantity: 1,
         minStock: 0,
@@ -436,14 +408,14 @@ describe("stock", () => {
         t.mutation(api.stock.addManualStockEntry, {
           userId: "user1",
           name: "B",
-          sku: "dup-sku",
+          mlItemId: "MLB300002",
           quantity: 1,
           unitCost: 2,
           supplier: "S",
           manualEntryDate: "2025-01-15",
           location: "in_stock_physical",
         }),
-      ).rejects.toThrow("SKU ja existe")
+      ).rejects.toThrow("MLB ID")
     })
   })
 
@@ -455,27 +427,14 @@ describe("stock", () => {
       await t.mutation(api.stock.addProduct, {
         userId: "user1",
         name: "ML Product",
-        sku: "ML1",
+        mlItemId: "MLB400001",
         category: "ML",
         quantity: 5,
         minStock: 0,
         unitCost: 10,
       })
-      await t.query(api.stock.getDashboardData, { userId: "user1" })
-      await t.mutation(api.stock.syncFromMercadoLivre, {
-        userId: "user1",
-        listings: [
-          {
-            id: "MLB123",
-            title: "ML Product",
-            price: 100,
-            availableQuantity: 5,
-            sku: "ML1",
-          },
-        ],
-      })
       const result = await t.mutation(api.stock.upsertCostFromBranchHunter, {
-        mlItemId: "MLB123",
+        mlItemId: "MLB400001",
         unitCost: 25,
       })
       expect(result.updated).toBeGreaterThanOrEqual(0)
@@ -486,21 +445,14 @@ describe("stock", () => {
       await t.mutation(api.stock.addProduct, {
         userId: "user1",
         name: "Manual Cost",
-        sku: "MAN1",
+        mlItemId: "MLBMANUAL01",
         category: "Test",
         quantity: 1,
         minStock: 0,
         unitCost: 50,
       })
-      // addProduct sets unitCostSource to "manual"
-      await t.mutation(api.stock.syncFromMercadoLivre, {
-        userId: "user1",
-        listings: [
-          { id: "MLB-MANUAL", title: "Manual Cost", price: 100, availableQuantity: 1, sku: "MAN1" },
-        ],
-      })
       const result = await t.mutation(api.stock.upsertCostFromBranchHunter, {
-        mlItemId: "MLB-MANUAL",
+        mlItemId: "MLBMANUAL01",
         unitCost: 99,
       })
       expect(result.skippedManual).toBeGreaterThanOrEqual(1)
@@ -530,13 +482,25 @@ describe("stock", () => {
   // ── syncFromMercadoLivre ──────────────────────────────────────────
 
   describe("syncFromMercadoLivre", () => {
-    it("creates new products from listings", async () => {
+    it("creates new products from fulfillment listings", async () => {
       const t = convexTest(schema, modules)
       const result = await t.mutation(api.stock.syncFromMercadoLivre, {
         userId: "user1",
         listings: [
-          { id: "MLB001", title: "Product 1", price: 99, availableQuantity: 10 },
-          { id: "MLB002", title: "Product 2", price: 199, availableQuantity: 0 },
+          {
+            id: "MLB001",
+            title: "Product 1",
+            price: 99,
+            availableQuantity: 10,
+            logisticType: "fulfillment",
+          },
+          {
+            id: "MLB002",
+            title: "Product 2",
+            price: 199,
+            availableQuantity: 0,
+            logisticType: "fulfillment",
+          },
         ],
       })
       expect(result.created).toBe(2)
@@ -548,28 +512,57 @@ describe("stock", () => {
       const t = convexTest(schema, modules)
       await t.mutation(api.stock.syncFromMercadoLivre, {
         userId: "user1",
-        listings: [{ id: "MLB001", title: "V1", price: 99, availableQuantity: 10 }],
+        listings: [
+          {
+            id: "MLB001",
+            title: "V1",
+            price: 99,
+            availableQuantity: 10,
+            logisticType: "fulfillment",
+          },
+        ],
       })
       const result = await t.mutation(api.stock.syncFromMercadoLivre, {
         userId: "user1",
-        listings: [{ id: "MLB001", title: "V2", price: 129, availableQuantity: 8 }],
+        listings: [
+          {
+            id: "MLB001",
+            title: "V2",
+            price: 129,
+            availableQuantity: 8,
+            logisticType: "fulfillment",
+          },
+        ],
       })
       expect(result.updated).toBe(1)
       expect(result.created).toBe(0)
-      const data = await t.query(api.stock.getDashboardData, { userId: "user1" })
-      expect(data.products[0].name).toBe("V2")
-      expect(data.products[0].sellingPrice).toBe(129)
     })
 
     it("creates adjustment movement when quantity changes", async () => {
       const t = convexTest(schema, modules)
       await t.mutation(api.stock.syncFromMercadoLivre, {
         userId: "user1",
-        listings: [{ id: "MLB001", title: "Prod", price: 50, availableQuantity: 10 }],
+        listings: [
+          {
+            id: "MLB001",
+            title: "Prod",
+            price: 50,
+            availableQuantity: 10,
+            logisticType: "fulfillment",
+          },
+        ],
       })
       await t.mutation(api.stock.syncFromMercadoLivre, {
         userId: "user1",
-        listings: [{ id: "MLB001", title: "Prod", price: 50, availableQuantity: 7 }],
+        listings: [
+          {
+            id: "MLB001",
+            title: "Prod",
+            price: 50,
+            availableQuantity: 7,
+            logisticType: "fulfillment",
+          },
+        ],
       })
       const data = await t.query(api.stock.getDashboardData, { userId: "user1" })
       const adjustments = data.movements.filter((m) => m.type === "adjustment")

@@ -9,6 +9,7 @@ export type KanbanStatus =
   | "returned"
   | "completed"
   | "in_stock"
+  | "fulfillment"
 
 export type UrgencyLevel = "critical" | "low" | "ok"
 
@@ -17,6 +18,7 @@ export interface KanbanProduct {
   name: string
   sku: string
   mlItemId?: string
+  mlItemAliases?: string[]
   imageUrl?: string
   category: string
   quantity: number
@@ -44,12 +46,13 @@ export const KANBAN_COLUMNS: Array<{
   label: string
   droppable?: boolean
 }> = [
+  { id: "in_stock", label: "Estoque" },
+  { id: "fulfillment", label: "Full (ML)" },
   { id: "purchased", label: "Comprado" },
   { id: "in_transit", label: "Em trânsito" },
   { id: "awaiting_inspection", label: "Aguardando conferência" },
   { id: "returned", label: "Devolvido" },
   { id: "completed", label: "Concluído" },
-  { id: "in_stock", label: "No estoque" },
 ]
 
 export const EM_FALTA_COLUMN = {
@@ -75,6 +78,9 @@ export function getEffectiveKanbanStatusForUi(product: KanbanProduct): KanbanSta
 export function getKanbanColumnId(product: KanbanProduct): KanbanColumnId {
   if (product.quantity === 0 && product.kanbanStatus === "in_stock") {
     return "em_falta"
+  }
+  if (product.kanbanStatus === "fulfillment") {
+    return "fulfillment"
   }
   if (product.kanbanStatus === "in_stock" && product.quantity > 0) {
     return "in_stock"

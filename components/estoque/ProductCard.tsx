@@ -105,7 +105,21 @@ export function ProductCard({
                   </span>
                 )}
               </div>
-              <p className="mt-0.5 truncate text-xs text-muted-foreground">{product.sku}</p>
+              <p className="mt-0.5 truncate text-xs font-mono text-muted-foreground">
+                {product.mlItemId ?? product.sku}
+              </p>
+              {(product.mlItemAliases?.length ?? 0) > 0 && (
+                <div className="mt-0.5 flex flex-wrap gap-1">
+                  {product.mlItemAliases!.map((alias) => (
+                    <span
+                      key={alias}
+                      className="inline-block rounded bg-muted px-1 py-px font-mono text-[10px] text-muted-foreground"
+                    >
+                      {alias}
+                    </span>
+                  ))}
+                </div>
+              )}
             </div>
           </button>
 

@@ -4,12 +4,14 @@ export type FutureRelease = {
   sourceId: string
   releaseDate: string
   amount: number
+  grossAmount: number
 }
 
 export type DayGroup = {
   date: string
   dayLabel: string
   total: number
+  grossTotal: number
   releases: FutureRelease[]
 }
 
@@ -146,10 +148,11 @@ export async function getFutureReleases(accessToken: string): Promise<DayGroup[]
     const detail = details.get(p.id)
     const releaseDate = p.money_release_date!
     const dateKey = localDate(releaseDate)
-    const amount = detail ? getNetAmount(detail) : p.transaction_amount
+    const netAmount = detail ? getNetAmount(detail) : p.transaction_amount
+    const gross = detail ? detail.transaction_amount : p.transaction_amount
 
     const list = byDay.get(dateKey) ?? []
-    list.push({ sourceId: String(p.id), releaseDate, amount })
+    list.push({ sourceId: String(p.id), releaseDate, amount: netAmount, grossAmount: gross })
     byDay.set(dateKey, list)
   }
 
@@ -160,6 +163,7 @@ export async function getFutureReleases(accessToken: string): Promise<DayGroup[]
       date,
       dayLabel: buildDayLabel(date),
       total: releases.reduce((s, r) => s + r.amount, 0),
+      grossTotal: releases.reduce((s, r) => s + r.grossAmount, 0),
       releases,
     })
   }

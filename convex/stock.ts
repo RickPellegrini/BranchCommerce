@@ -1,7 +1,7 @@
 import { v } from "convex/values"
 
 import type { Id } from "./_generated/dataModel"
-import { mutation, query, type MutationCtx } from "./_generated/server"
+import { internalMutation, mutation, query, type MutationCtx } from "./_generated/server"
 
 import { manualStockDedupeKey, normalizeMlItemIdForStock } from "./dedupeHelpers"
 
@@ -14,6 +14,7 @@ const kanbanStatusValidator = v.union(
   v.literal("returned"),
   v.literal("completed"),
   v.literal("in_stock"),
+  v.literal("fulfillment"),
 )
 
 export const getDashboardData = query({
@@ -44,24 +45,22 @@ export const addProduct = mutation({
   args: {
     userId: v.string(),
     name: v.string(),
-    sku: v.string(),
+    sku: v.optional(v.string()),
     category: v.string(),
     quantity: v.number(),
     minStock: v.number(),
     unitCost: v.number(),
     sellingPrice: v.optional(v.number()),
-    /** URL da foto (ex.: copiada de um item já sincronizado com ML). */
     imageUrl: v.optional(v.string()),
-    /** Vinculo ao anuncio ML (catalogo/classico). */
-    mlItemId: v.optional(v.string()),
+    mlItemId: v.string(),
   },
   handler: async (ctx, args) => {
-    const normalizedSku = args.sku.trim().toUpperCase()
+    const normalizedMl = normalizeMlItemIdForStock(args.mlItemId)
     const normalizedName = args.name.trim()
     const normalizedCategory = args.category.trim()
 
-    if (!normalizedSku || !normalizedName || !normalizedCategory) {
-      throw new Error("Preencha nome, SKU e categoria do produto.")
+    if (!normalizedMl || !normalizedName || !normalizedCategory) {
+      throw new Error("Preencha nome, MLB ID e categoria do produto.")
     }
     if (args.quantity < 0 || args.minStock < 0 || args.unitCost < 0) {
       throw new Error("Quantidade, estoque minimo e custo devem ser maiores ou iguais a zero.")
@@ -69,28 +68,13 @@ export const addProduct = mutation({
 
     const existing = await ctx.db
       .query("stockProducts")
-      .withIndex("by_user_sku", (queryBuilder) =>
-        queryBuilder.eq("userId", args.userId).eq("sku", normalizedSku),
+      .withIndex("by_user_ml_item", (qb) =>
+        qb.eq("userId", args.userId).eq("mlItemId", normalizedMl),
       )
       .first()
 
     if (existing) {
-      throw new Error("SKU ja existe no estoque.")
-    }
-
-    const normalizedMl = args.mlItemId?.trim()
-      ? normalizeMlItemIdForStock(args.mlItemId)
-      : undefined
-    if (normalizedMl) {
-      const dupMl = await ctx.db
-        .query("stockProducts")
-        .withIndex("by_user_ml_item", (qb) =>
-          qb.eq("userId", args.userId).eq("mlItemId", normalizedMl),
-        )
-        .first()
-      if (dupMl) {
-        throw new Error("Ja existe produto vinculado a este ID de anuncio ML.")
-      }
+      throw new Error("Ja existe produto com este MLB ID no estoque.")
     }
 
     const now = Date.now()
@@ -99,7 +83,7 @@ export const addProduct = mutation({
     const productId = await ctx.db.insert("stockProducts", {
       userId: args.userId,
       name: normalizedName,
-      sku: normalizedSku,
+      sku: normalizedMl,
       category: normalizedCategory,
       quantity: args.quantity,
       minStock: args.minStock,
@@ -107,7 +91,7 @@ export const addProduct = mutation({
       unitCostSource: "manual",
       sellingPrice: args.sellingPrice,
       ...(args.imageUrl?.trim() && { imageUrl: args.imageUrl.trim() }),
-      ...(normalizedMl ? { mlItemId: normalizedMl } : {}),
+      mlItemId: normalizedMl,
       kanbanStatus: args.quantity > 0 ? "in_stock" : "purchased",
       createdAt: now,
       updatedAt: now,
@@ -162,7 +146,7 @@ export const updateProduct = mutation({
     userId: v.string(),
     productId: v.id("stockProducts"),
     name: v.string(),
-    sku: v.string(),
+    sku: v.optional(v.string()),
     category: v.string(),
     quantity: v.number(),
     minStock: v.number(),
@@ -171,8 +155,8 @@ export const updateProduct = mutation({
     kanbanStatus: v.optional(kanbanStatusValidator),
     kanbanNote: v.optional(v.string()),
     estimatedArrival: v.optional(v.string()),
-    /** Define ou altera vinculo ao anuncio ML (omitir para manter o atual). */
     mlItemId: v.optional(v.string()),
+    mlItemAliases: v.optional(v.array(v.string())),
   },
   handler: async (ctx, args) => {
     const product = await ctx.db.get(args.productId)
@@ -180,26 +164,14 @@ export const updateProduct = mutation({
       throw new Error("Produto nao encontrado.")
     }
 
-    const normalizedSku = args.sku.trim().toUpperCase()
     const normalizedName = args.name.trim()
     const normalizedCategory = args.category.trim()
 
-    if (!normalizedSku || !normalizedName || !normalizedCategory) {
-      throw new Error("Preencha nome, SKU e categoria do produto.")
+    if (!normalizedName || !normalizedCategory) {
+      throw new Error("Preencha nome e categoria do produto.")
     }
     if (args.quantity < 0 || args.minStock < 0 || args.unitCost < 0) {
       throw new Error("Quantidade, estoque minimo e custo devem ser maiores ou iguais a zero.")
-    }
-
-    const existing = await ctx.db
-      .query("stockProducts")
-      .withIndex("by_user_sku", (queryBuilder) =>
-        queryBuilder.eq("userId", args.userId).eq("sku", normalizedSku),
-      )
-      .first()
-
-    if (existing && existing._id !== args.productId) {
-      throw new Error("SKU ja existe no estoque.")
     }
 
     const prevKanban = product.kanbanStatus ?? "purchased"
@@ -213,7 +185,7 @@ export const updateProduct = mutation({
       })
     }
 
-    let mlSuffix: { mlItemId: string } | Record<string, never> = {}
+    let mlSuffix: { mlItemId: string; sku: string } | Record<string, never> = {}
     if (args.mlItemId !== undefined && args.mlItemId.trim()) {
       const nid = normalizeMlItemIdForStock(args.mlItemId)
       const dupMl = await ctx.db
@@ -223,12 +195,37 @@ export const updateProduct = mutation({
       if (dupMl && dupMl._id !== args.productId) {
         throw new Error("Ja existe produto vinculado a este ID de anuncio ML.")
       }
-      mlSuffix = { mlItemId: nid }
+      mlSuffix = { mlItemId: nid, sku: nid }
+    }
+
+    let aliasesPatch: { mlItemAliases: string[] } | Record<string, never> = {}
+    if (args.mlItemAliases !== undefined) {
+      const normalized = [...new Set(args.mlItemAliases.map(normalizeMlItemIdForStock))]
+      const primaryId = mlSuffix.mlItemId ?? product.mlItemId
+      const clean = normalized.filter((a) => a !== primaryId)
+
+      const allProducts = await ctx.db
+        .query("stockProducts")
+        .withIndex("by_user", (q) => q.eq("userId", args.userId))
+        .collect()
+      for (const alias of clean) {
+        for (const other of allProducts) {
+          if (other._id === args.productId) continue
+          if (other.mlItemId === alias) {
+            throw new Error(
+              `O alias ${alias} ja esta vinculado como ID principal de outro produto.`,
+            )
+          }
+          if ((other.mlItemAliases ?? []).includes(alias)) {
+            throw new Error(`O alias ${alias} ja esta como alias de outro produto.`)
+          }
+        }
+      }
+      aliasesPatch = { mlItemAliases: clean }
     }
 
     await ctx.db.patch(args.productId, {
       name: normalizedName,
-      sku: normalizedSku,
       category: normalizedCategory,
       quantity: args.quantity,
       minStock: args.minStock,
@@ -239,6 +236,7 @@ export const updateProduct = mutation({
       ...(args.kanbanNote !== undefined && { kanbanNote: args.kanbanNote }),
       ...(args.estimatedArrival !== undefined && { estimatedArrival: args.estimatedArrival }),
       ...mlSuffix,
+      ...aliasesPatch,
       updatedAt: Date.now(),
     })
   },
@@ -422,8 +420,8 @@ export const addManualStockEntry = mutation({
   args: {
     userId: v.string(),
     name: v.string(),
-    /** SKU definido por ti — não é mais gerado automaticamente (MAN-...). */
-    sku: v.string(),
+    sku: v.optional(v.string()),
+    mlItemId: v.string(),
     quantity: v.number(),
     unitCost: v.number(),
     supplier: v.string(),
@@ -431,29 +429,28 @@ export const addManualStockEntry = mutation({
     location: manualLocationValidator,
     estimatedArrival: v.optional(v.string()),
     observations: v.optional(v.string()),
-    /** Foto sugerida a partir de um produto já existente (ex.: ML). */
     imageUrl: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
     const normalizedName = args.name.trim()
     const supplier = args.supplier.trim()
-    const normalizedSku = args.sku.trim().toUpperCase()
+    const normalizedMl = normalizeMlItemIdForStock(args.mlItemId)
     if (!normalizedName || !supplier) {
       throw new Error("Preencha nome e fornecedor.")
     }
-    if (!normalizedSku) {
-      throw new Error("Informe o SKU do produto.")
+    if (!normalizedMl) {
+      throw new Error("Informe o MLB ID do produto.")
     }
     if (args.quantity < 0 || args.unitCost < 0) {
       throw new Error("Quantidade e custo devem ser zero ou positivos.")
     }
 
-    const skuTaken = await ctx.db
+    const mlTaken = await ctx.db
       .query("stockProducts")
-      .withIndex("by_user_sku", (q) => q.eq("userId", args.userId).eq("sku", normalizedSku))
+      .withIndex("by_user_ml_item", (q) => q.eq("userId", args.userId).eq("mlItemId", normalizedMl))
       .first()
-    if (skuTaken) {
-      throw new Error("Este SKU ja existe no estoque. Use outro codigo.")
+    if (mlTaken) {
+      throw new Error("Ja existe produto com este MLB ID no estoque.")
     }
 
     const dedupeKey = manualStockDedupeKey(
@@ -481,7 +478,8 @@ export const addManualStockEntry = mutation({
       | "awaiting_inspection"
       | "returned"
       | "completed"
-      | "in_stock" = "purchased"
+      | "in_stock"
+      | "fulfillment" = "purchased"
     if (args.location === "in_stock_physical") {
       kanbanStatus = "in_stock"
     } else if (args.location === "in_transit") {
@@ -498,7 +496,8 @@ export const addManualStockEntry = mutation({
     const productId = await ctx.db.insert("stockProducts", {
       userId: args.userId,
       name: normalizedName,
-      sku: normalizedSku,
+      sku: normalizedMl,
+      mlItemId: normalizedMl,
       category: "Entrada manual",
       quantity: args.quantity,
       minStock: 0,
@@ -595,6 +594,7 @@ export const syncFromMercadoLivre = mutation({
         availableQuantity: v.number(),
         thumbnail: v.optional(v.string()),
         sku: v.optional(v.string()),
+        logisticType: v.optional(v.string()),
       }),
     ),
   },
@@ -605,7 +605,6 @@ export const syncFromMercadoLivre = mutation({
     let updated = 0
 
     for (const listing of args.listings) {
-      const normalizedSku = (listing.sku?.trim().toUpperCase() || listing.id).slice(0, 64)
       const nextQuantity = Math.max(0, Math.floor(listing.availableQuantity))
 
       const byMlItem = await ctx.db
@@ -615,30 +614,26 @@ export const syncFromMercadoLivre = mutation({
         )
         .first()
 
-      const bySku = byMlItem
-        ? null
-        : await ctx.db
-            .query("stockProducts")
-            .withIndex("by_user_sku", (queryBuilder) =>
-              queryBuilder.eq("userId", args.userId).eq("sku", normalizedSku),
-            )
-            .first()
-
-      const existing = byMlItem ?? bySku
+      const existing = byMlItem
 
       if (existing) {
-        await ctx.db.patch(existing._id, {
-          name: listing.title,
-          sku: existing.sku || normalizedSku,
+        const isFull = listing.logisticType === "fulfillment"
+        const patchData: Record<string, unknown> = {
           mlItemId: listing.id,
+          sku: listing.id,
           imageUrl: listing.thumbnail,
-          quantity: nextQuantity,
           sellingPrice: listing.price,
-          kanbanStatus: "in_stock",
           updatedAt: now,
-        })
+        }
+        if (isFull && existing.kanbanStatus !== "fulfillment") {
+          patchData.kanbanStatus = "fulfillment"
+        }
+        if (isFull) {
+          patchData.quantity = nextQuantity
+        }
+        await ctx.db.patch(existing._id, patchData)
 
-        if (existing.quantity !== nextQuantity) {
+        if (isFull && existing.quantity !== nextQuantity) {
           await ctx.db.insert("stockMovements", {
             userId: args.userId,
             productId: existing._id,
@@ -654,10 +649,13 @@ export const syncFromMercadoLivre = mutation({
         continue
       }
 
+      const isFull = listing.logisticType === "fulfillment"
+      if (!isFull) continue
+
       const productId = await ctx.db.insert("stockProducts", {
         userId: args.userId,
         name: listing.title,
-        sku: normalizedSku,
+        sku: listing.id,
         mlItemId: listing.id,
         imageUrl: listing.thumbnail,
         category: "Mercado Livre",
@@ -665,7 +663,7 @@ export const syncFromMercadoLivre = mutation({
         minStock: 0,
         unitCost: 0,
         sellingPrice: listing.price,
-        kanbanStatus: "in_stock",
+        kanbanStatus: "fulfillment",
         createdAt: now,
         updatedAt: now,
       })
@@ -677,7 +675,7 @@ export const syncFromMercadoLivre = mutation({
           type: "in",
           quantity: nextQuantity,
           date: today,
-          note: "Importado do Mercado Livre",
+          note: "Importado do Mercado Livre (fulfillment)",
           createdAt: now,
         })
       }
@@ -747,6 +745,445 @@ export const migratePlannedBuyingToPurchased = mutation({
       }
     }
     return { updated }
+  },
+})
+
+/**
+ * Reconcilia dados de produtos do estoque com dados do Mercado Livre.
+ * Atualiza nome, SKU, foto e quantidade para cada produto que tenha mlItemId.
+ */
+export const reconcileWithMlData = mutation({
+  args: {
+    userId: v.string(),
+    items: v.array(
+      v.object({
+        mlItemId: v.string(),
+        title: v.string(),
+        sku: v.optional(v.string()),
+        imageUrl: v.optional(v.string()),
+        availableQuantity: v.number(),
+        price: v.number(),
+        logisticType: v.optional(v.string()),
+      }),
+    ),
+  },
+  handler: async (ctx, args) => {
+    const now = Date.now()
+    const today = new Date().toISOString().slice(0, 10)
+    let updated = 0
+    let created = 0
+
+    const allProducts = await ctx.db
+      .query("stockProducts")
+      .withIndex("by_user", (q) => q.eq("userId", args.userId))
+      .collect()
+    const aliasOwner = new Map<string, (typeof allProducts)[number]>()
+    for (const p of allProducts) {
+      for (const a of p.mlItemAliases ?? []) aliasOwner.set(a, p)
+    }
+
+    for (const item of args.items) {
+      const byMlItem = await ctx.db
+        .query("stockProducts")
+        .withIndex("by_user_ml_item", (q) =>
+          q.eq("userId", args.userId).eq("mlItemId", item.mlItemId),
+        )
+        .first()
+
+      const product = byMlItem ?? aliasOwner.get(item.mlItemId) ?? null
+
+      const isFull = item.logisticType === "fulfillment"
+
+      if (!product) {
+        if (!isFull) continue
+
+        const nextQty = Math.max(0, Math.floor(item.availableQuantity))
+        const productId = await ctx.db.insert("stockProducts", {
+          userId: args.userId,
+          name: item.title,
+          sku: item.mlItemId,
+          mlItemId: item.mlItemId,
+          imageUrl: item.imageUrl,
+          category: "Mercado Livre",
+          quantity: nextQty,
+          minStock: 0,
+          unitCost: 0,
+          sellingPrice: item.price,
+          kanbanStatus: "fulfillment",
+          createdAt: now,
+          updatedAt: now,
+        })
+
+        if (nextQty > 0) {
+          await ctx.db.insert("stockMovements", {
+            userId: args.userId,
+            productId,
+            type: "in",
+            quantity: nextQty,
+            date: today,
+            note: "Criado via sync ML (fulfillment)",
+            createdAt: now,
+          })
+        }
+
+        created += 1
+        continue
+      }
+
+      const isAlias = product.mlItemId !== item.mlItemId
+      const patch: Record<string, unknown> = {
+        updatedAt: now,
+        ...(isAlias ? {} : { mlItemId: item.mlItemId, sku: item.mlItemId }),
+      }
+
+      if (!isAlias && item.title && item.title !== product.name) {
+        patch.name = item.title
+      }
+      if (!isAlias && item.imageUrl && item.imageUrl !== product.imageUrl) {
+        patch.imageUrl = item.imageUrl
+      }
+      if (!isAlias && item.price > 0 && item.price !== product.sellingPrice) {
+        patch.sellingPrice = item.price
+      }
+
+      if (isFull && product.kanbanStatus !== "fulfillment") {
+        await logKanbanTransition(ctx, {
+          userId: args.userId,
+          productId: product._id,
+          fromStatus: product.kanbanStatus ?? "purchased",
+          toStatus: "fulfillment",
+          note: "Reconciliação ML (fulfillment)",
+        })
+        patch.kanbanStatus = "fulfillment"
+      }
+
+      const nextQty = isFull ? Math.max(0, Math.floor(item.availableQuantity)) : product.quantity
+      if (nextQty !== product.quantity) {
+        patch.quantity = nextQty
+        await ctx.db.insert("stockMovements", {
+          userId: args.userId,
+          productId: product._id,
+          type: "adjustment",
+          quantity: nextQty,
+          date: today,
+          note: `Reconciliação ML: ${product.quantity} → ${nextQty}`,
+          createdAt: now,
+        })
+      }
+
+      await ctx.db.patch(product._id, patch)
+      updated += 1
+    }
+
+    return { updated, created, total: args.items.length }
+  },
+})
+
+export const enrichPhotosFromMl = mutation({
+  args: {
+    userId: v.string(),
+    mlItems: v.array(
+      v.object({
+        mlItemId: v.string(),
+        title: v.string(),
+        imageUrl: v.optional(v.string()),
+        sku: v.optional(v.string()),
+      }),
+    ),
+  },
+  handler: async (ctx, args) => {
+    const products = await ctx.db
+      .query("stockProducts")
+      .withIndex("by_user", (q) => q.eq("userId", args.userId))
+      .collect()
+
+    function tokenize(text: string) {
+      return text
+        .toLowerCase()
+        .normalize("NFD")
+        .replace(/[\u0300-\u036f]/g, "")
+        .split(/\s+/)
+        .filter((t) => t.length > 2)
+    }
+
+    const usedMlIds = new Set<string>()
+    for (const p of products) {
+      if (p.mlItemId) usedMlIds.add(p.mlItemId)
+      for (const a of p.mlItemAliases ?? []) usedMlIds.add(a)
+    }
+
+    let enriched = 0
+    let linked = 0
+    let aliasesAdded = 0
+
+    // Phase 1: products without photo or without mlItemId (original behaviour)
+    const candidates = products.filter((p) => !p.imageUrl || !p.mlItemId)
+    for (const product of candidates) {
+      const productTokens = tokenize(product.name)
+      if (productTokens.length === 0) continue
+
+      let bestMatch: (typeof args.mlItems)[number] | null = null
+      let bestScore = 0
+
+      for (const ml of args.mlItems) {
+        if (!product.imageUrl && !ml.imageUrl) continue
+        if (product.mlItemId && product.mlItemId === ml.mlItemId) continue
+        if (!product.mlItemId && usedMlIds.has(ml.mlItemId)) continue
+
+        const mlTokens = tokenize(ml.title)
+        const matches = productTokens.filter((t) => mlTokens.includes(t))
+        const score = matches.length / productTokens.length
+        if (score > bestScore) {
+          bestScore = score
+          bestMatch = ml
+        }
+      }
+
+      if (bestMatch && bestScore >= 0.4) {
+        const patch: Record<string, unknown> = { updatedAt: Date.now() }
+        if (!product.imageUrl && bestMatch.imageUrl) {
+          patch.imageUrl = bestMatch.imageUrl
+          enriched += 1
+        }
+        if (!product.mlItemId) {
+          patch.mlItemId = bestMatch.mlItemId
+          patch.sku = bestMatch.mlItemId
+          usedMlIds.add(bestMatch.mlItemId)
+          linked += 1
+        }
+        if (Object.keys(patch).length > 1) {
+          await ctx.db.patch(product._id, patch)
+        }
+      }
+    }
+
+    // Phase 2: accumulate aliases for products that already have mlItemId.
+    // For each ML listing not yet claimed, find the best-matching product and
+    // append the listing's mlItemId to that product's mlItemAliases.
+    const ALIAS_THRESHOLD = 0.55
+    for (const ml of args.mlItems) {
+      if (usedMlIds.has(ml.mlItemId)) continue
+      const mlTokens = tokenize(ml.title)
+      if (mlTokens.length === 0) continue
+
+      let bestProduct: (typeof products)[number] | null = null
+      let bestScore = 0
+      for (const p of products) {
+        if (!p.mlItemId) continue
+        const pTokens = tokenize(p.name)
+        if (pTokens.length === 0) continue
+        const matches = pTokens.filter((t) => mlTokens.includes(t))
+        const score = matches.length / Math.min(pTokens.length, mlTokens.length)
+        if (score > bestScore) {
+          bestScore = score
+          bestProduct = p
+        }
+      }
+
+      if (bestProduct && bestScore >= ALIAS_THRESHOLD) {
+        const existing = bestProduct.mlItemAliases ?? []
+        if (!existing.includes(ml.mlItemId)) {
+          const updated = [...existing, ml.mlItemId]
+          await ctx.db.patch(bestProduct._id, {
+            mlItemAliases: updated,
+            updatedAt: Date.now(),
+          })
+          bestProduct.mlItemAliases = updated
+          usedMlIds.add(ml.mlItemId)
+          aliasesAdded += 1
+        }
+      }
+    }
+
+    return { enriched, linked, aliasesAdded }
+  },
+})
+
+/**
+ * Detecta produtos duplicados por similaridade de titulo (tokens) e merge:
+ * - mantém o produto com maior unitCost como survivor
+ * - move os mlItemId dos duplicados para mlItemAliases do survivor
+ * - deleta os duplicados e suas movimentações/eventos
+ */
+export const mergeProductDuplicates = mutation({
+  args: { userId: v.string() },
+  handler: async (ctx, args) => {
+    const products = await ctx.db
+      .query("stockProducts")
+      .withIndex("by_user", (q) => q.eq("userId", args.userId))
+      .collect()
+
+    function tokenize(text: string) {
+      return text
+        .toLowerCase()
+        .normalize("NFD")
+        .replace(/[\u0300-\u036f]/g, "")
+        .split(/\s+/)
+        .filter((t) => t.length > 2)
+    }
+
+    function sim(a: string[], b: string[]): number {
+      if (a.length === 0 || b.length === 0) return 0
+      const matches = a.filter((t) => b.includes(t)).length
+      return matches / Math.min(a.length, b.length)
+    }
+
+    const MERGE_THRESHOLD = 0.6
+    const tokenized = products.map((p) => ({ product: p, tokens: tokenize(p.name) }))
+    const assigned = new Set<string>()
+    const groups: (typeof products)[] = []
+
+    for (let i = 0; i < tokenized.length; i++) {
+      const pid = tokenized[i].product._id
+      if (assigned.has(pid)) continue
+      assigned.add(pid)
+      const group = [tokenized[i].product]
+
+      for (let j = i + 1; j < tokenized.length; j++) {
+        const cid = tokenized[j].product._id
+        if (assigned.has(cid)) continue
+        if (sim(tokenized[i].tokens, tokenized[j].tokens) >= MERGE_THRESHOLD) {
+          group.push(tokenized[j].product)
+          assigned.add(cid)
+        }
+      }
+      groups.push(group)
+    }
+
+    let merged = 0
+    let removed = 0
+    for (const group of groups) {
+      if (group.length < 2) continue
+
+      group.sort((a, b) => {
+        if (a.unitCost !== b.unitCost) return b.unitCost - a.unitCost
+        if (a.quantity !== b.quantity) return b.quantity - a.quantity
+        if (a.mlItemId && !b.mlItemId) return -1
+        if (!a.mlItemId && b.mlItemId) return 1
+        return a.createdAt - b.createdAt
+      })
+
+      const survivor = group[0]
+      const existingAliases = new Set(survivor.mlItemAliases ?? [])
+      if (survivor.mlItemId) existingAliases.delete(survivor.mlItemId)
+
+      for (let i = 1; i < group.length; i++) {
+        const dup = group[i]
+        if (dup.mlItemId && dup.mlItemId !== survivor.mlItemId) {
+          existingAliases.add(dup.mlItemId)
+        }
+        for (const a of dup.mlItemAliases ?? []) {
+          if (a !== survivor.mlItemId) existingAliases.add(a)
+        }
+
+        const movements = await ctx.db
+          .query("stockMovements")
+          .withIndex("by_user_product", (q) => q.eq("userId", args.userId).eq("productId", dup._id))
+          .collect()
+        for (const m of movements) {
+          await ctx.db.delete(m._id)
+        }
+        const events = await ctx.db
+          .query("productKanbanEvents")
+          .withIndex("by_user_product", (q) => q.eq("userId", args.userId).eq("productId", dup._id))
+          .collect()
+        for (const e of events) {
+          await ctx.db.delete(e._id)
+        }
+
+        await ctx.db.delete(dup._id)
+        removed += 1
+      }
+
+      await ctx.db.patch(survivor._id, {
+        mlItemAliases: [...existingAliases],
+        updatedAt: Date.now(),
+      })
+      merged += 1
+    }
+
+    return { merged, removed }
+  },
+})
+
+export const bulkSetCosts = mutation({
+  args: {
+    userId: v.string(),
+    costs: v.array(
+      v.object({
+        mlItemId: v.string(),
+        unitCost: v.number(),
+      }),
+    ),
+  },
+  handler: async (ctx, args) => {
+    const products = await ctx.db
+      .query("stockProducts")
+      .withIndex("by_user", (q) => q.eq("userId", args.userId))
+      .collect()
+
+    const byMlId = new Map(products.filter((p) => p.mlItemId).map((p) => [p.mlItemId!, p]))
+
+    let updated = 0
+    for (const entry of args.costs) {
+      const product = byMlId.get(entry.mlItemId)
+
+      if (!product) continue
+      if (product.unitCost === entry.unitCost) continue
+
+      await ctx.db.patch(product._id, {
+        unitCost: entry.unitCost,
+        unitCostSource: "manual",
+        updatedAt: Date.now(),
+      })
+      updated += 1
+    }
+
+    return { updated, total: args.costs.length }
+  },
+})
+
+/**
+ * Reconciliação em massa: define status Kanban (fulfillment vs in_stock) com base
+ * no local real do produto (ML Full ou estoque físico).
+ */
+export const bulkReconcileStock = mutation({
+  args: {
+    userId: v.string(),
+    assignments: v.array(
+      v.object({
+        productId: v.id("stockProducts"),
+        targetStatus: v.union(v.literal("fulfillment"), v.literal("in_stock")),
+      }),
+    ),
+  },
+  handler: async (ctx, args) => {
+    const now = Date.now()
+    let updated = 0
+
+    for (const assignment of args.assignments) {
+      const product = await ctx.db.get(assignment.productId)
+      if (!product || product.userId !== args.userId) continue
+
+      const prev = product.kanbanStatus ?? "purchased"
+      if (prev === assignment.targetStatus) continue
+
+      await logKanbanTransition(ctx, {
+        userId: args.userId,
+        productId: assignment.productId,
+        fromStatus: prev,
+        toStatus: assignment.targetStatus,
+        note: "Reconciliação em massa",
+      })
+
+      await ctx.db.patch(assignment.productId, {
+        kanbanStatus: assignment.targetStatus,
+        updatedAt: now,
+      })
+      updated += 1
+    }
+
+    return { updated, total: args.assignments.length }
   },
 })
 
@@ -833,5 +1270,148 @@ export const addMovement = mutation({
     }
 
     return movementId
+  },
+})
+
+/**
+ * Migração única: limpa estoque existente e recria com dados reais confirmados.
+ * Limpa todo o estoque e recria APENAS os itens de estoque físico (sem ML).
+ * Os itens do Fulfillment/ML serão criados automaticamente pelo sync.
+ * Rodar via API: POST /api/stock/reset
+ */
+export const resetStockToReality = mutation({
+  args: { userId: v.string() },
+  handler: async (ctx, args) => {
+    const existingProducts = await ctx.db
+      .query("stockProducts")
+      .withIndex("by_user", (q) => q.eq("userId", args.userId))
+      .collect()
+
+    for (const p of existingProducts) {
+      const movements = await ctx.db
+        .query("stockMovements")
+        .withIndex("by_user_product", (q) => q.eq("userId", args.userId).eq("productId", p._id))
+        .collect()
+      for (const m of movements) await ctx.db.delete(m._id)
+
+      const events = await ctx.db
+        .query("productKanbanEvents")
+        .withIndex("by_user_product", (q) => q.eq("userId", args.userId).eq("productId", p._id))
+        .collect()
+      for (const e of events) await ctx.db.delete(e._id)
+
+      await ctx.db.delete(p._id)
+    }
+
+    const now = Date.now()
+    const today = new Date().toISOString().slice(0, 10)
+
+    type StockEntry = {
+      name: string
+      sku: string
+      quantity: number
+      unitCost: number
+      kanbanStatus: "in_stock"
+      category: string
+    }
+
+    const physicalStock: StockEntry[] = [
+      {
+        name: "Cafeteira Britânia Jarra De aço 1.2 Litros Inox 127v",
+        sku: "30CAFE12",
+        quantity: 2,
+        unitCost: 0,
+        kanbanStatus: "in_stock",
+        category: "Cafeteiras",
+      },
+      {
+        name: "CHALEIRA ELÉTRICA BCH06P BRITANIA 127V",
+        sku: "BCH06P",
+        quantity: 3,
+        unitCost: 0,
+        kanbanStatus: "in_stock",
+        category: "Chaleiras",
+      },
+      {
+        name: "Philco Soprador Termico PST01 (Inapto para venda)",
+        sku: "PST01",
+        quantity: 1,
+        unitCost: 0,
+        kanbanStatus: "in_stock",
+        category: "Inaptos",
+      },
+      {
+        name: "VENTILADOR BRITÂNIA ROSA BVT304 127V",
+        sku: "VENTILADOROSA",
+        quantity: 9,
+        unitCost: 101.56,
+        kanbanStatus: "in_stock",
+        category: "Ventiladores",
+      },
+      {
+        name: "Liquidificador Philco Turbo 1200w Plq1350 Preto 127v (Inapto para venda)",
+        sku: "PLQ1350",
+        quantity: 1,
+        unitCost: 220.09,
+        kanbanStatus: "in_stock",
+        category: "Inaptos",
+      },
+      {
+        name: "FERRO PHILCO PFV3100AZ NANO CERAMIC 127V",
+        sku: "3100AZ",
+        quantity: 5,
+        unitCost: 131.0,
+        kanbanStatus: "in_stock",
+        category: "Ferros",
+      },
+      {
+        name: "Panela De Arroz Philco 10 Xicaras PH10P Visor Glass Inox",
+        sku: "PH10P110V",
+        quantity: 1,
+        unitCost: 0,
+        kanbanStatus: "in_stock",
+        category: "Panelas",
+      },
+      {
+        name: "Passadeira à Vapor Britânia Portátil Turquesa/branco - 110v",
+        sku: "PASSAVAPORPHILCO124",
+        quantity: 1,
+        unitCost: 128.52,
+        kanbanStatus: "in_stock",
+        category: "Passadeiras",
+      },
+    ]
+
+    let created = 0
+    for (const entry of physicalStock) {
+      const productId = await ctx.db.insert("stockProducts", {
+        userId: args.userId,
+        name: entry.name,
+        sku: entry.sku,
+        category: entry.category,
+        quantity: entry.quantity,
+        minStock: 0,
+        unitCost: entry.unitCost,
+        kanbanStatus: entry.kanbanStatus,
+        createdAt: now,
+        updatedAt: now,
+      })
+
+      if (entry.quantity > 0) {
+        await ctx.db.insert("stockMovements", {
+          userId: args.userId,
+          productId,
+          type: "in",
+          quantity: entry.quantity,
+          date: today,
+          note: "Reset estoque — dados reais 12/05/2026",
+          createdAt: now,
+        })
+      }
+
+      created += 1
+    }
+
+    return { deleted: existingProducts.length, created }
   },
 })

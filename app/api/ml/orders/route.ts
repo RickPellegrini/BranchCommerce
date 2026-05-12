@@ -1,6 +1,8 @@
 import { jsonError, jsonOk } from "@/lib/mercadolivre/http"
 import { fetchMlApi } from "@/lib/mercadolivre/storage"
 import { requireMlConnection } from "@/lib/mercadolivre/server"
+import { fetchItemDetailsBatched } from "@/lib/mercadolivre/batch-fetch"
+import { normalizeMercadoLibreItemId } from "@/lib/mercadolivre/item-id"
 
 type MlOrdersResponse = {
   results: Array<{
@@ -47,15 +49,6 @@ type MlOrdersResponse = {
   }
 }
 
-type MlItemsMultiResponse = Array<{
-  body?: {
-    id: string
-    thumbnail?: string
-    secure_thumbnail?: string
-    catalog_listing?: boolean
-  }
-}>
-
 type MlShipmentResponse = {
   id: number
   status?: string
@@ -99,10 +92,12 @@ export async function GET(request: Request) {
 
     const itemDetailsMap = new Map<string, { thumbnail?: string; catalogListing?: boolean }>()
     if (uniqueItemIds.length > 0) {
-      const itemDetails = await fetchMlApi<MlItemsMultiResponse>(
-        `/items?ids=${uniqueItemIds.join(",")}`,
-        connection.accessToken,
-      )
+      const itemDetails = await fetchItemDetailsBatched<{
+        id: string
+        secure_thumbnail?: string
+        thumbnail?: string
+        catalog_listing?: boolean
+      }>(uniqueItemIds, connection.accessToken)
       for (const item of itemDetails) {
         if (!item.body?.id) continue
         itemDetailsMap.set(item.body.id, {
@@ -206,7 +201,7 @@ export async function GET(request: Request) {
         receiverCityState: [receiverCity, receiverState].filter(Boolean).join(" - "),
         items:
           order.order_items?.map((orderItem) => ({
-            id: orderItem.item?.id ?? "",
+            id: orderItem.item?.id ? normalizeMercadoLibreItemId(orderItem.item.id) : "",
             title: orderItem.item?.title ?? "Item sem titulo",
             sku: orderItem.item?.seller_sku ?? "",
             quantity: orderItem.quantity ?? 0,

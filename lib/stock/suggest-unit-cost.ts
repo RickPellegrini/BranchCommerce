@@ -39,13 +39,15 @@ export function suggestUnitCostFromInventory(input: {
 
   if (sellerSku?.trim()) {
     const skuUp = sellerSku.trim().toUpperCase()
-    const bySku = withPositiveCost.find((p) => p.sku.toUpperCase() === skuUp)
-    if (bySku) {
+    const byMlId = withPositiveCost.find(
+      (p) => p.mlItemId?.toUpperCase() === skuUp || p.sku.toUpperCase() === skuUp,
+    )
+    if (byMlId) {
       return {
-        suggestedCost: bySku.unitCost,
+        suggestedCost: byMlId.unitCost,
         source: "sku_match",
-        detail: `Mesmo SKU no estoque (${bySku.sku}).`,
-        matchedProductId: bySku.id,
+        detail: `Produto vinculado no estoque (${byMlId.mlItemId ?? byMlId.sku}).`,
+        matchedProductId: byMlId.id,
       }
     }
   }

@@ -1,7 +1,7 @@
 "use client"
 
 import { useDroppable } from "@dnd-kit/core"
-import { ChevronDown, ChevronRight, Package } from "lucide-react"
+import { ChevronDown, ChevronRight, Package, X } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
 import { KanbanStageIcon, kanbanStageStyle } from "./column-icons"
@@ -15,6 +15,7 @@ interface KanbanColumnProps {
   droppable?: boolean
   collapsed?: boolean
   onToggleCollapsed?: () => void
+  onHideColumn?: () => void
   onCardDetails: (product: KanbanProduct) => void
   onCardMoveTo: (product: KanbanProduct, target: KanbanColumnId) => void
   onCardDelete: (product: KanbanProduct) => void
@@ -28,6 +29,7 @@ export function KanbanColumn({
   droppable = true,
   collapsed = false,
   onToggleCollapsed,
+  onHideColumn,
   onCardDetails,
   onCardMoveTo,
   onCardDelete,
@@ -52,19 +54,33 @@ export function KanbanColumn({
             {label}
           </span>
         </div>
-        {onToggleCollapsed ? (
-          <Button
-            type="button"
-            variant="ghost"
-            size="icon"
-            className="h-7 w-7 shrink-0"
-            onClick={onToggleCollapsed}
-            aria-expanded={!collapsed}
-            aria-label={collapsed ? "Expandir coluna" : "Recolher coluna"}
-          >
-            <CollapseIcon className="h-4 w-4" />
-          </Button>
-        ) : null}
+        <div className="flex shrink-0 items-center">
+          {onToggleCollapsed ? (
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon"
+              className="h-7 w-7"
+              onClick={onToggleCollapsed}
+              aria-expanded={!collapsed}
+              aria-label={collapsed ? "Expandir coluna" : "Recolher coluna"}
+            >
+              <CollapseIcon className="h-4 w-4" />
+            </Button>
+          ) : null}
+          {onHideColumn ? (
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon"
+              className="h-7 w-7 text-muted-foreground hover:text-foreground"
+              onClick={onHideColumn}
+              aria-label="Esconder coluna"
+            >
+              <X className="h-3.5 w-3.5" />
+            </Button>
+          ) : null}
+        </div>
         <span
           className={cn(
             "shrink-0 rounded-full px-2 py-0.5 text-xs font-medium tabular-nums",

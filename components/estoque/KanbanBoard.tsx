@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useMemo, useEffect } from "react"
+import { useState, useMemo, useEffect, useCallback } from "react"
 import {
   DndContext,
   type DragEndEvent,
@@ -9,10 +9,26 @@ import {
   PointerSensor,
   useSensor,
   useSensors,
+  closestCenter,
 } from "@dnd-kit/core"
-import { Package, BarChart2, AlertCircle, TrendingDown, Truck, ClipboardList } from "lucide-react"
+import { SortableContext, horizontalListSortingStrategy, arrayMove } from "@dnd-kit/sortable"
+import {
+  Package,
+  BarChart2,
+  AlertCircle,
+  TrendingDown,
+  Truck,
+  ClipboardList,
+  Warehouse,
+  RefreshCw,
+  SlidersHorizontal,
+  Eye,
+  EyeOff,
+  Plus,
+} from "lucide-react"
 import { Card, CardContent } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 import { normalizeMercadoLibreItemId } from "@/lib/mercadolivre/item-id"
 import { cn } from "@/lib/utils"
 import {
@@ -27,7 +43,9 @@ import {
   formatCurrencyBRL,
   isCompradoKanbanStatus,
 } from "./types"
+import { KanbanStageIcon } from "./column-icons"
 import { KanbanColumn } from "./KanbanColumn"
+import { SortableColumn } from "./SortableColumn"
 import { KanbanFilters } from "./KanbanFilters"
 import { ProductCard } from "./ProductCard"
 import { ProductDetailModal, type ProductKanbanEventRow } from "./ProductDetailModal"
@@ -41,10 +59,17 @@ interface StockSummary {
 
 const LS_COLLAPSED = "branchcommerce.kanban.collapsed"
 const LS_SHOW_HIDDEN = "branchcommerce.kanban.showHidden"
+const LS_HIDDEN_COLS = "branchcommerce.kanban.hiddenCols"
+const LS_COL_ORDER = "branchcommerce.kanban.colOrder"
+
+const DEFAULT_COL_IDS = [EM_FALTA_COLUMN.id, ...KANBAN_COLUMNS.map((c) => c.id)]
+const ALL_COLUMNS_MAP = Object.fromEntries(
+  [EM_FALTA_COLUMN, ...KANBAN_COLUMNS].map((c) => [c.id, c]),
+)
 const MLB_CODE_REGEX = /^MLB\d+$/i
 
-function extractMlCode(product: Pick<KanbanProduct, "mlItemId" | "sku">): string | null {
-  const candidate = product.mlItemId?.trim() || product.sku?.trim()
+function extractMlCode(product: Pick<KanbanProduct, "mlItemId">): string | null {
+  const candidate = product.mlItemId?.trim()
   if (!candidate) return null
   const normalized = normalizeMercadoLibreItemId(candidate)
   return MLB_CODE_REGEX.test(normalized) ? normalized : null
@@ -79,7 +104,12 @@ interface KanbanBoardProps {
   onSaveProductEdits: (productId: string, updates: Partial<KanbanProduct>) => Promise<void>
   onDeleteProduct: (productId: string) => Promise<void>
   onToggleProductHidden?: (productId: string, hidden: boolean) => Promise<void>
+  onSyncWithMl?: () => Promise<void>
+  mlSyncing?: boolean
+  mlSyncDisabled?: boolean
   kanbanTimelineEvents?: ProductKanbanEventRow[]
+  onAddProduct?: () => void
+  showAddForm?: boolean
 }
 
 export function KanbanBoard({
@@ -90,7 +120,12 @@ export function KanbanBoard({
   onSaveProductEdits,
   onDeleteProduct,
   onToggleProductHidden,
+  onSyncWithMl,
+  mlSyncing = false,
+  mlSyncDisabled = false,
   kanbanTimelineEvents = [],
+  onAddProduct,
+  showAddForm,
 }: KanbanBoardProps) {
   const [activeId, setActiveId] = useState<string | null>(null)
   const [selectedProduct, setSelectedProduct] = useState<KanbanProduct | null>(null)
@@ -117,6 +152,44 @@ export function KanbanBoard({
       return {}
     }
   })
+  const [hiddenColumns, setHiddenColumns] = useState<Record<string, boolean>>(() => {
+    if (typeof window === "undefined") return {}
+    try {
+      const raw = localStorage.getItem(LS_HIDDEN_COLS)
+      if (!raw) return {}
+      return JSON.parse(raw) as Record<string, boolean>
+    } catch {
+      return {}
+    }
+  })
+  const [columnOrder, setColumnOrder] = useState<string[]>(() => {
+    if (typeof window === "undefined") return DEFAULT_COL_IDS
+    try {
+      const raw = localStorage.getItem(LS_COL_ORDER)
+      if (!raw) return DEFAULT_COL_IDS
+      const saved = JSON.parse(raw) as string[]
+      const missing = DEFAULT_COL_IDS.filter((id) => !saved.includes(id))
+      return [...saved.filter((id) => DEFAULT_COL_IDS.includes(id)), ...missing]
+    } catch {
+      return DEFAULT_COL_IDS
+    }
+  })
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(LS_HIDDEN_COLS, JSON.stringify(hiddenColumns))
+    } catch {
+      /* ignore */
+    }
+  }, [hiddenColumns])
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(LS_COL_ORDER, JSON.stringify(columnOrder))
+    } catch {
+      /* ignore */
+    }
+  }, [columnOrder])
 
   useEffect(() => {
     try {
@@ -222,7 +295,12 @@ export function KanbanBoard({
     const q = search.toLowerCase()
     return displayProducts.filter((p) => {
       if (!showHidden && p.kanbanHidden) return false
-      if (q && !p.name.toLowerCase().includes(q) && !p.sku.toLowerCase().includes(q)) return false
+      if (
+        q &&
+        !p.name.toLowerCase().includes(q) &&
+        !(p.mlItemId ?? p.sku).toLowerCase().includes(q)
+      )
+        return false
       if (urgencyFilter !== "all" && getUrgency(p) !== urgencyFilter) return false
       if (categoryFilter !== "all" && p.category !== categoryFilter) return false
       return true
@@ -232,6 +310,12 @@ export function KanbanBoard({
   const activeProduct = activeId ? displayProducts.find((p) => p.id === activeId) : null
   const inTransitCount = displayProducts.filter((p) => p.kanbanStatus === "in_transit").length
   const compradoCount = displayProducts.filter((p) => isCompradoKanbanStatus(p.kanbanStatus)).length
+  const fulfillmentCount = displayProducts.filter((p) => p.kanbanStatus === "fulfillment").length
+
+  const visibleColumnIds = useMemo(
+    () => columnOrder.filter((id) => !hiddenColumns[id]),
+    [columnOrder, hiddenColumns],
+  )
 
   function handleDragStart(event: DragStartEvent) {
     setActiveId(event.active.id as string)
@@ -248,10 +332,44 @@ export function KanbanBoard({
     void onUpdateKanbanStatus(product.id, target)
   }
 
+  const handleColumnDragEnd = useCallback((event: DragEndEvent) => {
+    const { active, over } = event
+    if (!over || active.id === over.id) return
+    setColumnOrder((prev) => {
+      const oldIdx = prev.indexOf(active.id as string)
+      const newIdx = prev.indexOf(over.id as string)
+      if (oldIdx === -1 || newIdx === -1) return prev
+      return arrayMove(prev, oldIdx, newIdx)
+    })
+  }, [])
+
+  const columnSensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 12 } }),
+  )
+
+  const getColumnProducts = useCallback(
+    (colId: string) => {
+      if (colId === EM_FALTA_COLUMN.id) {
+        return filteredProducts.filter((p) => p.quantity === 0 && p.kanbanStatus === "in_stock")
+      }
+      if (colId === "in_stock") {
+        return filteredProducts.filter((p) => p.kanbanStatus === "in_stock" && p.quantity > 0)
+      }
+      if (colId === "purchased") {
+        return filteredProducts.filter((p) => isCompradoKanbanStatus(p.kanbanStatus))
+      }
+      if (colId === "fulfillment") {
+        return filteredProducts.filter((p) => p.kanbanStatus === "fulfillment")
+      }
+      return filteredProducts.filter((p) => p.kanbanStatus === colId)
+    },
+    [filteredProducts],
+  )
+
   return (
     <div className="mx-auto w-full max-w-[1400px] space-y-4 px-1">
       {/* KPI summary */}
-      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6">
+      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-7">
         <SummaryKpi icon={Package} label="Produtos" value={stockSummary.totalProducts} />
         <SummaryKpi icon={BarChart2} label="Unidades" value={stockSummary.totalUnits} />
         <SummaryKpi
@@ -267,11 +385,12 @@ export function KanbanBoard({
           currency
         />
         <SummaryKpi icon={Truck} label="Em trânsito" value={inTransitCount} />
+        <SummaryKpi icon={Warehouse} label="Full (ML)" value={fulfillmentCount} />
         <SummaryKpi icon={ClipboardList} label="Comprado" value={compradoCount} />
       </div>
 
-      {/* Filters */}
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+      {/* Filters + actions */}
+      <div className="flex flex-wrap items-center gap-2">
         <KanbanFilters
           search={search}
           onSearch={setSearch}
@@ -281,94 +400,152 @@ export function KanbanBoard({
           onCategory={setCategoryFilter}
           categories={categories}
         />
-        <Button
-          type="button"
-          variant={showHidden ? "secondary" : "outline"}
-          size="sm"
-          className="shrink-0"
-          onClick={() => setShowHidden((v) => !v)}
-        >
-          {showHidden ? "Ocultar itens escondidos" : "Mostrar ocultos"}
-        </Button>
+        {onAddProduct && (
+          <Button
+            type="button"
+            variant={showAddForm ? "secondary" : "default"}
+            size="sm"
+            className="shrink-0"
+            onClick={onAddProduct}
+          >
+            <Plus className="mr-1.5 h-3.5 w-3.5" />
+            Adicionar
+          </Button>
+        )}
+        {onSyncWithMl && (
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            className="shrink-0"
+            disabled={mlSyncing || mlSyncDisabled}
+            onClick={() => void onSyncWithMl()}
+          >
+            <RefreshCw className={cn("mr-1.5 h-3.5 w-3.5", mlSyncing && "animate-spin")} />
+            {mlSyncing ? "Sincronizando…" : "Sync ML"}
+          </Button>
+        )}
+        <div className="ml-auto flex items-center gap-2">
+          <Popover>
+            <PopoverTrigger asChild>
+              <Button type="button" variant="outline" size="sm" className="shrink-0">
+                <SlidersHorizontal className="mr-1.5 h-3.5 w-3.5" />
+                Colunas
+              </Button>
+            </PopoverTrigger>
+            <PopoverContent align="end" className="w-56 p-2">
+              <p className="mb-2 px-1 text-xs font-medium text-muted-foreground">
+                Mostrar / esconder colunas
+              </p>
+              {columnOrder
+                .map((colId) => {
+                  const col = ALL_COLUMNS_MAP[colId]
+                  if (!col) return null
+                  return col
+                })
+                .filter(Boolean)
+                .map((col) => {
+                  const isHidden = !!hiddenColumns[col.id]
+                  return (
+                    <button
+                      key={col.id}
+                      type="button"
+                      className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-sm hover:bg-muted"
+                      onClick={() =>
+                        setHiddenColumns((prev) => ({ ...prev, [col.id]: !prev[col.id] }))
+                      }
+                    >
+                      {isHidden ? (
+                        <EyeOff className="h-3.5 w-3.5 text-muted-foreground" />
+                      ) : (
+                        <Eye className="h-3.5 w-3.5 text-foreground" />
+                      )}
+                      <KanbanStageIcon
+                        stageId={col.id}
+                        className={cn("h-3.5 w-3.5", isHidden && "opacity-40")}
+                      />
+                      <span className={cn(isHidden && "text-muted-foreground line-through")}>
+                        {col.label}
+                      </span>
+                    </button>
+                  )
+                })}
+            </PopoverContent>
+          </Popover>
+          <Button
+            type="button"
+            variant={showHidden ? "secondary" : "outline"}
+            size="sm"
+            className="shrink-0"
+            onClick={() => setShowHidden((v) => !v)}
+          >
+            {showHidden ? "Ocultar itens escondidos" : "Mostrar ocultos"}
+          </Button>
+        </div>
       </div>
 
-      {/* Boards */}
-      <DndContext sensors={sensors} onDragStart={handleDragStart} onDragEnd={handleDragEnd}>
-        <div className="-mx-1 overflow-x-auto rounded-xl">
-          <div className="flex min-w-max gap-4 px-1 pb-4 pt-1">
-            {/* Em falta: quantidade 0 + status físico "no estoque" (sem pipeline) */}
-            <KanbanColumn
-              id={EM_FALTA_COLUMN.id}
-              label={EM_FALTA_COLUMN.label}
-              droppable={EM_FALTA_COLUMN.droppable}
-              collapsed={!!collapsedByColumn[EM_FALTA_COLUMN.id]}
-              onToggleCollapsed={() =>
-                setCollapsedByColumn((prev) => ({
-                  ...prev,
-                  [EM_FALTA_COLUMN.id]: !prev[EM_FALTA_COLUMN.id],
-                }))
-              }
-              products={filteredProducts.filter(
-                (p) => p.quantity === 0 && p.kanbanStatus === "in_stock",
-              )}
-              onCardDetails={setSelectedProduct}
-              onCardMoveTo={(product, columnTarget) =>
-                void onUpdateKanbanStatus(product.id, columnTarget)
-              }
-              onCardDelete={(product) => void onDeleteProduct(product.id)}
-              onToggleCardHidden={
-                onToggleProductHidden
-                  ? (product) => void onToggleProductHidden(product.id, !product.kanbanHidden)
-                  : undefined
-              }
-            />
-            {KANBAN_COLUMNS.map((col) => (
-              <KanbanColumn
-                key={col.id}
-                id={col.id}
-                label={col.label}
-                collapsed={!!collapsedByColumn[col.id]}
-                onToggleCollapsed={() =>
-                  setCollapsedByColumn((prev) => ({
-                    ...prev,
-                    [col.id]: !prev[col.id],
-                  }))
-                }
-                products={filteredProducts.filter((p) => {
-                  if (col.id === "in_stock") {
-                    return p.kanbanStatus === "in_stock" && p.quantity > 0
-                  }
-                  if (col.id === "purchased") {
-                    return isCompradoKanbanStatus(p.kanbanStatus)
-                  }
-                  return p.kanbanStatus === col.id
+      {/* Column reorder layer */}
+      <DndContext
+        sensors={columnSensors}
+        collisionDetection={closestCenter}
+        onDragEnd={handleColumnDragEnd}
+      >
+        <SortableContext items={visibleColumnIds} strategy={horizontalListSortingStrategy}>
+          {/* Card drag layer (nested inside column layout) */}
+          <DndContext sensors={sensors} onDragStart={handleDragStart} onDragEnd={handleDragEnd}>
+            <div className="-mx-1 overflow-x-auto rounded-xl">
+              <div className="flex min-w-max gap-4 px-1 pb-4 pt-1">
+                {visibleColumnIds.map((colId) => {
+                  const col = ALL_COLUMNS_MAP[colId]
+                  if (!col) return null
+                  return (
+                    <SortableColumn key={colId} id={colId}>
+                      <KanbanColumn
+                        id={colId}
+                        label={col.label}
+                        droppable={col.droppable}
+                        collapsed={!!collapsedByColumn[colId]}
+                        onToggleCollapsed={() =>
+                          setCollapsedByColumn((prev) => ({
+                            ...prev,
+                            [colId]: !prev[colId],
+                          }))
+                        }
+                        onHideColumn={() =>
+                          setHiddenColumns((prev) => ({ ...prev, [colId]: true }))
+                        }
+                        products={getColumnProducts(colId)}
+                        onCardDetails={setSelectedProduct}
+                        onCardMoveTo={(product, columnTarget) =>
+                          void onUpdateKanbanStatus(product.id, columnTarget)
+                        }
+                        onCardDelete={(product) => void onDeleteProduct(product.id)}
+                        onToggleCardHidden={
+                          onToggleProductHidden
+                            ? (product) =>
+                                void onToggleProductHidden(product.id, !product.kanbanHidden)
+                            : undefined
+                        }
+                      />
+                    </SortableColumn>
+                  )
                 })}
-                onCardDetails={setSelectedProduct}
-                onCardMoveTo={(product, columnTarget) =>
-                  void onUpdateKanbanStatus(product.id, columnTarget)
-                }
-                onCardDelete={(product) => void onDeleteProduct(product.id)}
-                onToggleCardHidden={
-                  onToggleProductHidden
-                    ? (product) => void onToggleProductHidden(product.id, !product.kanbanHidden)
-                    : undefined
-                }
-              />
-            ))}
-          </div>
-        </div>
+              </div>
+            </div>
 
-        <DragOverlay>
-          {activeProduct ? (
-            <ProductCard
-              product={activeProduct}
-              isDragging
-              onDetails={() => {}}
-              onMoveTo={() => {}}
-              onDelete={() => {}}
-            />
-          ) : null}
-        </DragOverlay>
+            <DragOverlay>
+              {activeProduct ? (
+                <ProductCard
+                  product={activeProduct}
+                  isDragging
+                  onDetails={() => {}}
+                  onMoveTo={() => {}}
+                  onDelete={() => {}}
+                />
+              ) : null}
+            </DragOverlay>
+          </DndContext>
+        </SortableContext>
       </DndContext>
 
       {/* Detail modal */}

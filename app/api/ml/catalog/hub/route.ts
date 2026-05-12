@@ -3,6 +3,7 @@ import { normalizeMercadoLibreItemId } from "@/lib/mercadolivre/item-id"
 import { fetchMlApi, requestMlApi } from "@/lib/mercadolivre/storage"
 import { requireMlConnection } from "@/lib/mercadolivre/server"
 import { searchUserItemsIncludingPaused } from "@/lib/mercadolivre/user-items-search"
+import { fetchItemDetailsBatched } from "@/lib/mercadolivre/batch-fetch"
 
 export const dynamic = "force-dynamic"
 export const revalidate = 0
@@ -38,14 +39,6 @@ type PriceToWinResponse = {
   }
 }
 
-function chunkArray<T>(items: T[], size: number) {
-  const chunks: T[][] = []
-  for (let index = 0; index < items.length; index += size) {
-    chunks.push(items.slice(index, index + size))
-  }
-  return chunks
-}
-
 function isNoWinnersError(error: unknown) {
   if (!(error instanceof Error)) return false
   return (
@@ -76,18 +69,7 @@ async function loadSellerListings(accessToken: string, mlUserId: string, limit =
   )
   if (ids.length === 0) return []
 
-  const details: Array<{ body?: MlListingDetail }> = []
-  for (const chunk of chunkArray(ids, 20)) {
-    try {
-      const partial = await fetchMlApi<Array<{ body?: MlListingDetail }>>(
-        `/items?ids=${chunk.join(",")}`,
-        accessToken,
-      )
-      details.push(...partial)
-    } catch {
-      // Ignore one failed chunk and keep remaining listings.
-    }
-  }
+  const details = await fetchItemDetailsBatched<MlListingDetail>(ids, accessToken)
 
   const enriched = details
     .map((row) => row.body)

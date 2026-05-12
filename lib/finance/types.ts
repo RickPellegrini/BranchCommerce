@@ -29,7 +29,7 @@ export type AnexoLancamento = {
   convexAttachmentId?: string
 }
 
-export type PaymentMethod = "pix" | "debit" | "credit"
+export type PaymentMethod = "pix" | "debit" | "credit" | "boleto"
 export type PayStatus = "none" | "pending" | "paid"
 
 export type FinancialTransaction = {

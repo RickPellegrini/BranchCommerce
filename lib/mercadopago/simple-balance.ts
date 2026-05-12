@@ -160,13 +160,24 @@ function mpPartyIds(p: MpPaymentSearchRow): { payerId: string | null; collectorI
 /**
  * Credito = dinheiro entra na sua conta (voce e o collector do pagamento).
  * Debito = dinheiro sai (voce e o payer e nao e o collector), ex.: Pix enviado, ou cobranca nao aprovada.
+ * Refund / chargeback / reservation_release entram aqui: reembolso para o
+ * comprador, contestacao paga ao comprador, e devolucao de reserva — todos
+ * causam saida do saldo do vendedor.
  * Antes: qualquer `approved` virava credito — Pix enviado tambem e approved, gerando o bug.
  */
-function classifyMpTransactionType(
+export function classifyMpTransactionType(
   p: MpPaymentSearchRow,
   accountUserId: string,
 ): "credit" | "debit" {
   const me = String(accountUserId).trim()
+  const op = (p.operation_type ?? "").toLowerCase()
+
+  // Refund/chargeback: dinheiro sai do collector (voce) para o payer (comprador).
+  // Mesmo se voce e o collector original, o efeito no saldo e negativo.
+  if (op === "refund" || op === "chargeback") {
+    return "debit"
+  }
+
   const { payerId, collectorId } = mpPartyIds(p)
   const imCollector = collectorId !== null && collectorId === me
   const imPayer = payerId !== null && payerId === me
@@ -175,10 +186,10 @@ function classifyMpTransactionType(
     return "debit"
   }
   if (imCollector) {
+    if (op === "reservation_release") return "credit"
     return p.status === "approved" ? "credit" : "debit"
   }
 
-  const op = (p.operation_type ?? "").toLowerCase()
   if (imPayer && collectorId === null && (op === "money_transfer" || op === "account_fund")) {
     return "debit"
   }
@@ -236,17 +247,85 @@ function amountForBalanceLine(p: MpPaymentSearchRow, type: "credit" | "debit"): 
   return p.transaction_amount
 }
 
+export type MpTransactionsResult = {
+  transactions: MpTransaction[]
+  totalCredits: number
+  totalDebits: number
+  /** Filtro inicial (oldest aceito). Util pra UI explicar a janela usada. */
+  windowSinceIso: string
+  /** Numero de paginas consumidas. */
+  pagesFetched: number
+}
+
+const PAGE_SIZE = 50
+const MAX_PAGES = 20 // hard cap pra nao explodir em conta antiga
+
+/**
+ * Busca pagamentos do MP em uma janela de dias com paginacao. Para o nome
+ * "limit" retornar mais que 50, percorremos pages com `offset`.
+ * Quando `limit` e suficientemente pequeno (legado), pula a paginacao.
+ */
 export async function getTransactions(
   accessToken: string,
   accountUserId: string,
   limit = 30,
 ): Promise<MpTransaction[]> {
-  const raw = await mpFetch<MpSearchResponse>(
-    `/v1/payments/search?sort=date_created&criteria=desc&limit=${limit}`,
-    accessToken,
-  )
+  const result = await getTransactionsWindow(accessToken, accountUserId, {
+    maxItems: limit,
+    windowDays: limit > PAGE_SIZE ? 180 : null,
+  })
+  return result.transactions
+}
 
-  const classified = raw.results.map((p) => ({
+export async function getTransactionsWindow(
+  accessToken: string,
+  accountUserId: string,
+  opts: {
+    /** Limite total de items retornados (default 1000). */
+    maxItems?: number
+    /** Quantos dias para tras filtrar. Null = sem filtro de data. Default 180. */
+    windowDays?: number | null
+  } = {},
+): Promise<MpTransactionsResult> {
+  const maxItems = opts.maxItems ?? 1000
+  const windowDays = opts.windowDays === undefined ? 180 : opts.windowDays
+
+  const sinceDate =
+    windowDays === null ? null : new Date(Date.now() - windowDays * 24 * 60 * 60 * 1000)
+  const sinceIso = sinceDate ? sinceDate.toISOString() : new Date(0).toISOString()
+  const nowIso = new Date().toISOString()
+
+  const all: MpPaymentSearchRow[] = []
+  let offset = 0
+  let pagesFetched = 0
+  let reachedWindowEdge = false
+
+  while (pagesFetched < MAX_PAGES && all.length < maxItems && !reachedWindowEdge) {
+    const pageSize = Math.min(PAGE_SIZE, maxItems - all.length)
+    const dateRange = sinceDate
+      ? `&range=date_created&begin_date=${encodeURIComponent(sinceIso)}&end_date=${encodeURIComponent(nowIso)}`
+      : ""
+    const url =
+      `/v1/payments/search?sort=date_created&criteria=desc` +
+      `&limit=${pageSize}&offset=${offset}` +
+      dateRange
+    const page = await mpFetch<MpSearchResponse>(url, accessToken)
+    pagesFetched += 1
+    if (page.results.length === 0) break
+    for (const row of page.results) {
+      if (sinceDate && row.date_created && new Date(row.date_created) < sinceDate) {
+        reachedWindowEdge = true
+        break
+      }
+      all.push(row)
+      if (all.length >= maxItems) break
+    }
+    if (page.results.length < pageSize) break
+    if (offset + page.results.length >= page.paging.total) break
+    offset += page.results.length
+  }
+
+  const classified = all.map((p) => ({
     p,
     type: classifyMpTransactionType(p, accountUserId),
   }))
@@ -255,7 +334,7 @@ export async function getTransactions(
   const detailsById =
     creditIds.length > 0 ? await fetchMpPaymentDetailsForIds(creditIds, accessToken) : new Map()
 
-  return classified.map(({ p, type }) => {
+  const transactions: MpTransaction[] = classified.map(({ p, type }) => {
     let amount: number
     if (type === "debit") {
       amount = p.transaction_amount
@@ -272,4 +351,19 @@ export async function getTransactions(
       status: p.status,
     }
   })
+
+  let totalCredits = 0
+  let totalDebits = 0
+  for (const t of transactions) {
+    if (t.type === "credit") totalCredits += t.amount
+    else totalDebits += t.amount
+  }
+
+  return {
+    transactions,
+    totalCredits,
+    totalDebits,
+    windowSinceIso: sinceIso,
+    pagesFetched,
+  }
 }

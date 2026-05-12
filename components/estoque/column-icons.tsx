@@ -9,6 +9,7 @@ import {
   ShoppingCart,
   Truck,
   Undo2,
+  Warehouse,
 } from "lucide-react"
 
 import { cn } from "@/lib/utils"
@@ -23,6 +24,7 @@ export const KANBAN_STAGE_ICONS = {
   awaiting_inspection: SearchCheck,
   returned: Undo2,
   completed: CircleCheck,
+  fulfillment: Warehouse,
   in_stock: PackageCheck,
 } as const
 
@@ -78,6 +80,11 @@ export const KANBAN_STAGE_STYLE: Record<string, { border: string; icon: string; 
     border: "border-l-teal-500",
     icon: "text-teal-600 dark:text-teal-400",
     badge: "bg-teal-500/10 text-teal-900 dark:bg-teal-950/40 dark:text-teal-200",
+  },
+  fulfillment: {
+    border: "border-l-yellow-500",
+    icon: "text-yellow-600 dark:text-yellow-400",
+    badge: "bg-yellow-500/10 text-yellow-900 dark:bg-yellow-950/40 dark:text-yellow-200",
   },
   in_stock: {
     border: "border-l-emerald-500",
