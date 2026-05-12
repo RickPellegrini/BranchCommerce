@@ -85,6 +85,7 @@ import {
   monthlyEvolution,
   summarizeTransactions,
 } from "@/lib/finance/calculations"
+import type { DayGroup } from "@/lib/mercadopago/future-releases"
 import type {
   AnexoLancamento,
   ExpenseType,
@@ -1489,16 +1490,7 @@ export function FinancialDashboard() {
   const MP_WINDOW_DAYS = 180
   const [mpExtratoVerTudo, setMpExtratoVerTudo] = useState(false)
 
-  type DayGroupUI = {
-    date: string
-    dayLabel: string
-    total: number
-    releases: Array<{
-      sourceId: string
-      releaseDate: string
-      amount: number
-    }>
-  }
+  type DayGroupUI = DayGroup
   const [mpDayGroups, setMpDayGroups] = useState<DayGroupUI[]>([])
   const [, setMpFuturePendingTotal] = useState(0)
   const [mpFutureLoading, setMpFutureLoading] = useState(false)

@@ -1,7 +1,12 @@
 import { defineSchema, defineTable } from "convex/server"
 import { v } from "convex/values"
 
-const paymentMethodValidator = v.union(v.literal("pix"), v.literal("debit"), v.literal("credit"))
+const paymentMethodValidator = v.union(
+  v.literal("pix"),
+  v.literal("debit"),
+  v.literal("credit"),
+  v.literal("boleto"),
+)
 
 const payStatusValidator = v.union(v.literal("none"), v.literal("pending"), v.literal("paid"))
 

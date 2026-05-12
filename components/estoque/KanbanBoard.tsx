@@ -62,11 +62,15 @@ const LS_SHOW_HIDDEN = "branchcommerce.kanban.showHidden"
 const LS_HIDDEN_COLS = "branchcommerce.kanban.hiddenCols"
 const LS_COL_ORDER = "branchcommerce.kanban.colOrder"
 
-const DEFAULT_COL_IDS = [EM_FALTA_COLUMN.id, ...KANBAN_COLUMNS.map((c) => c.id)]
+const DEFAULT_COL_IDS: KanbanColumnId[] = [EM_FALTA_COLUMN.id, ...KANBAN_COLUMNS.map((c) => c.id)]
 const ALL_COLUMNS_MAP = Object.fromEntries(
   [EM_FALTA_COLUMN, ...KANBAN_COLUMNS].map((c) => [c.id, c]),
 )
 const MLB_CODE_REGEX = /^MLB\d+$/i
+
+function isDefaultColumnId(id: string): id is KanbanColumnId {
+  return DEFAULT_COL_IDS.some((defaultId) => defaultId === id)
+}
 
 function extractMlCode(product: Pick<KanbanProduct, "mlItemId">): string | null {
   const candidate = product.mlItemId?.trim()
@@ -169,7 +173,7 @@ export function KanbanBoard({
       if (!raw) return DEFAULT_COL_IDS
       const saved = JSON.parse(raw) as string[]
       const missing = DEFAULT_COL_IDS.filter((id) => !saved.includes(id))
-      return [...saved.filter((id) => DEFAULT_COL_IDS.includes(id)), ...missing]
+      return [...saved.filter(isDefaultColumnId), ...missing]
     } catch {
       return DEFAULT_COL_IDS
     }
@@ -443,7 +447,7 @@ export function KanbanBoard({
                   if (!col) return null
                   return col
                 })
-                .filter(Boolean)
+                .filter((col): col is NonNullable<typeof col> => col !== null)
                 .map((col) => {
                   const isHidden = !!hiddenColumns[col.id]
                   return (
