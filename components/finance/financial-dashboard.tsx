@@ -1739,6 +1739,37 @@ export function FinancialDashboard() {
   }, [activeModule, mlConnectionStatus?.connected, userId])
 
   useEffect(() => {
+    if (activeModule !== "stock" || !mlConnectionStatus?.connected || !userId) return
+    const autoSync = async () => {
+      setMlSyncingStock(true)
+      setMlError(null)
+      try {
+        const response = await fetch("/api/stock/sync-ml", {
+          method: "POST",
+          cache: "no-store",
+        })
+        const payload = await response.json()
+        if (!response.ok || !payload.ok) {
+          throw new Error(payload.error ?? "Falha ao sincronizar com Mercado Livre.")
+        }
+        const d = payload.data ?? {}
+        setMlInfo(
+          `Sincronização concluída: ${d.totalMlItems ?? 0} anúncios, ${d.updated ?? 0} atualizados, ${d.notFound ?? 0} sem vínculo.`,
+        )
+        setMlLastSyncAt(Date.now())
+      } catch (error) {
+        setMlError(
+          error instanceof Error ? error.message : "Erro ao reconciliar com Mercado Livre.",
+        )
+      } finally {
+        setMlSyncingStock(false)
+      }
+    }
+    void autoSync()
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- auto-sync on stock module entry
+  }, [activeModule, mlConnectionStatus?.connected, userId])
+
+  useEffect(() => {
     if ((activeModule !== "finance" && activeModule !== "home") || !userId) return
 
     const loadOrdersForFinancial = async () => {
