@@ -59,7 +59,6 @@ async function paginateSearch(
   const allIds: string[] = []
   let offset = 0
 
-  // eslint-disable-next-line no-constant-condition
   while (true) {
     const page = await fetchMlApi<MlSearchResponse>(
       `/users/${mlUserId}/items/search?limit=${pageSize}&offset=${offset}&status=${status}`,

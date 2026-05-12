@@ -1,7 +1,7 @@
 import { v } from "convex/values"
 
 import type { Id } from "./_generated/dataModel"
-import { internalMutation, mutation, query, type MutationCtx } from "./_generated/server"
+import { mutation, query, type MutationCtx } from "./_generated/server"
 
 import { manualStockDedupeKey, normalizeMlItemIdForStock } from "./dedupeHelpers"
 
