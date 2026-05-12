@@ -1766,7 +1766,6 @@ export function FinancialDashboard() {
       }
     }
     void autoSync()
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- auto-sync on stock module entry
   }, [activeModule, mlConnectionStatus?.connected, userId])
 
   useEffect(() => {
