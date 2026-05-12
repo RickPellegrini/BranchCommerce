@@ -1,8 +1,8 @@
 import { jsonError, jsonOk } from "@/lib/mercadolivre/http"
 import { normalizeMercadoLibreItemId } from "@/lib/mercadolivre/item-id"
-import { fetchMlApi } from "@/lib/mercadolivre/storage"
 import { requireMlConnection } from "@/lib/mercadolivre/server"
 import { searchUserItemsIncludingPaused } from "@/lib/mercadolivre/user-items-search"
+import { fetchItemDetailsBatched } from "@/lib/mercadolivre/batch-fetch"
 
 type MlListingDetail = {
   id: string
@@ -18,6 +18,7 @@ type MlListingDetail = {
   permalink?: string
   thumbnail?: string
   secure_thumbnail?: string
+  shipping?: { logistic_type?: string }
 }
 
 export async function GET(request: Request) {
@@ -36,24 +37,24 @@ export async function GET(request: Request) {
 
     let listings: MlListingDetail[] = []
     if (payload.results.length > 0) {
-      const ids = payload.results.join(",")
-      const rawDetails = await fetchMlApi<
-        Array<{
-          body?: MlListingDetail
-        }>
-      >(`/items?ids=${ids}`, connection.accessToken)
+      const rawDetails = await fetchItemDetailsBatched<MlListingDetail>(
+        payload.results,
+        connection.accessToken,
+      )
 
-      const mapped = rawDetails
+      const bodies = rawDetails
         .map((item) => item.body)
         .filter((item): item is MlListingDetail => Boolean(item))
-        .map((item) => ({
-          ...item,
-          id: normalizeMercadoLibreItemId(item.id),
-          thumbnail: item.secure_thumbnail ?? item.thumbnail,
-          sku: item.seller_custom_field ?? undefined,
-          catalogProductId: item.catalog_product_id ?? null,
-          catalogListing: item.catalog_listing === undefined ? null : Boolean(item.catalog_listing),
-        }))
+
+      const mapped = bodies.map((item) => ({
+        ...item,
+        id: normalizeMercadoLibreItemId(item.id),
+        thumbnail: item.secure_thumbnail ?? item.thumbnail,
+        sku: item.seller_custom_field ?? undefined,
+        catalogProductId: item.catalog_product_id ?? null,
+        catalogListing: item.catalog_listing === undefined ? null : Boolean(item.catalog_listing),
+        logisticType: item.shipping?.logistic_type ?? null,
+      }))
       const byId = new Map<string, (typeof mapped)[0]>()
       for (const row of mapped) {
         if (!byId.has(row.id)) byId.set(row.id, row)

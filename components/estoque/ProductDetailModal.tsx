@@ -2,7 +2,7 @@
 
 import { useState } from "react"
 import { Dialog } from "radix-ui"
-import { X, ChevronRight, Package } from "lucide-react"
+import { X, ChevronRight, Package, Plus } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Textarea } from "@/components/ui/textarea"
@@ -51,6 +51,11 @@ export function ProductDetailModal({
   const [editQuantity, setEditQuantity] = useState(String(product.quantity))
   const [editMinStock, setEditMinStock] = useState(String(product.minStock))
   const [editUnitCost, setEditUnitCost] = useState(String(product.unitCost ?? 0))
+  const [editMlItemId, setEditMlItemId] = useState(product.mlItemId ?? "")
+  const [mlIdError, setMlIdError] = useState<string | null>(null)
+  const [aliases, setAliases] = useState<string[]>(product.mlItemAliases ?? [])
+  const [newAlias, setNewAlias] = useState("")
+  const [aliasError, setAliasError] = useState<string | null>(null)
   const [saving, setSaving] = useState(false)
 
   const urgency = getUrgency(product)
@@ -65,7 +70,41 @@ export function ProductDetailModal({
   const currentColIdx = KANBAN_COLUMNS.findIndex((c) => c.id === effectiveStatus)
   const nextCol = KANBAN_COLUMNS[currentColIdx + 1]
 
+  const MLB_RE = /^MLB-?\d+$/i
+
+  function addAlias() {
+    setAliasError(null)
+    const val = newAlias.trim().toUpperCase()
+    if (!val) return
+    if (!MLB_RE.test(val)) {
+      setAliasError("Formato inválido. Use MLB1234567890.")
+      return
+    }
+    const primary = editMlItemId.trim().toUpperCase()
+    if (val === primary) {
+      setAliasError("Este já é o ID principal.")
+      return
+    }
+    if (aliases.some((a) => a.toUpperCase() === val)) {
+      setAliasError("Alias já adicionado.")
+      return
+    }
+    setAliases((prev) => [...prev, val])
+    setNewAlias("")
+  }
+
+  function removeAlias(idx: number) {
+    setAliases((prev) => prev.filter((_, i) => i !== idx))
+  }
+
   async function handleSave() {
+    setMlIdError(null)
+    setAliasError(null)
+    const trimmedMlId = editMlItemId.trim()
+    if (trimmedMlId && !MLB_RE.test(trimmedMlId)) {
+      setMlIdError("Formato inválido. Use algo como MLB1234567890.")
+      return
+    }
     setSaving(true)
     try {
       await onSaveEdits({
@@ -74,6 +113,8 @@ export function ProductDetailModal({
         unitCost: Number(editUnitCost),
         kanbanNote: note || undefined,
         estimatedArrival: estimatedArrival || undefined,
+        mlItemId: trimmedMlId || undefined,
+        mlItemAliases: aliases,
       })
     } finally {
       setSaving(false)
@@ -114,7 +155,9 @@ export function ProductDetailModal({
               <Dialog.Title className="truncate text-base font-semibold">
                 {product.name}
               </Dialog.Title>
-              <p className="text-xs text-muted-foreground">{product.sku}</p>
+              <p className="font-mono text-xs text-muted-foreground">
+                {product.mlItemId ?? product.sku}
+              </p>
             </div>
             <Dialog.Close asChild>
               <button className="rounded-lg p-1 hover:bg-muted">
@@ -146,6 +189,13 @@ export function ProductDetailModal({
                 <div className="col-span-2">
                   <span className="text-muted-foreground">ML ID: </span>
                   {product.mlItemId}
+                  {(product.mlItemAliases?.length ?? 0) > 0 && (
+                    <span className="text-muted-foreground">
+                      {" "}
+                      (+{product.mlItemAliases!.length} alias
+                      {product.mlItemAliases!.length > 1 ? "es" : ""})
+                    </span>
+                  )}
                 </div>
               )}
             </div>
@@ -177,6 +227,65 @@ export function ProductDetailModal({
                   value={editUnitCost}
                   onChange={(e) => setEditUnitCost(e.target.value)}
                 />
+              </div>
+              <div className="space-y-1">
+                <label className="text-xs text-muted-foreground">MLB ID (principal)</label>
+                <Input
+                  type="text"
+                  placeholder="Ex: MLB1234567890"
+                  value={editMlItemId}
+                  onChange={(e) => {
+                    setEditMlItemId(e.target.value)
+                    setMlIdError(null)
+                  }}
+                />
+                {mlIdError && <p className="text-xs text-destructive">{mlIdError}</p>}
+              </div>
+              <div className="col-span-2 space-y-1.5">
+                <label className="text-xs text-muted-foreground">
+                  MLB IDs extras (Full, Catálogo, etc.)
+                </label>
+                {aliases.length > 0 && (
+                  <div className="flex flex-wrap gap-1.5">
+                    {aliases.map((a, i) => (
+                      <span
+                        key={a}
+                        className="inline-flex items-center gap-1 rounded-md border bg-muted/50 px-2 py-0.5 font-mono text-xs"
+                      >
+                        {a}
+                        <button
+                          type="button"
+                          onClick={() => removeAlias(i)}
+                          className="rounded hover:text-destructive"
+                        >
+                          <X className="h-3 w-3" />
+                        </button>
+                      </span>
+                    ))}
+                  </div>
+                )}
+                <div className="flex gap-1.5">
+                  <Input
+                    type="text"
+                    placeholder="MLB..."
+                    value={newAlias}
+                    onChange={(e) => {
+                      setNewAlias(e.target.value)
+                      setAliasError(null)
+                    }}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") {
+                        e.preventDefault()
+                        addAlias()
+                      }
+                    }}
+                    className="flex-1"
+                  />
+                  <Button type="button" size="sm" variant="outline" onClick={addAlias}>
+                    <Plus className="h-3.5 w-3.5" />
+                  </Button>
+                </div>
+                {aliasError && <p className="text-xs text-destructive">{aliasError}</p>}
               </div>
               {(isCompradoKanbanStatus(product.kanbanStatus) ||
                 product.kanbanStatus === "in_transit" ||

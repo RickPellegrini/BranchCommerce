@@ -51,9 +51,8 @@ export function exportStockMovementHistoryToCsv(
     "DataRegistro",
     "IdProduto",
     "NomeProduto",
-    "SKU",
+    "MLB_ID",
     "Categoria",
-    "MLItemId",
     "CustoUnitarioProduto",
     "PrecoVendaCatalogo",
     "TipoMovimento",
@@ -69,9 +68,8 @@ export function exportStockMovementHistoryToCsv(
   for (const m of sorted) {
     const p = productById.get(m.productId)
     const nome = p?.name ?? ""
-    const sku = p?.sku ?? ""
+    const mlbId = p?.mlItemId ?? p?.sku ?? ""
     const cat = p?.category ?? ""
-    const ml = p?.mlItemId ?? ""
     const custo = p != null ? String(p.unitCost) : ""
     const pvCat = p?.sellingPrice != null ? String(p.sellingPrice) : ""
     const reg = m.createdAt != null ? new Date(m.createdAt).toISOString() : ""
@@ -84,9 +82,8 @@ export function exportStockMovementHistoryToCsv(
         reg,
         m.productId,
         nome,
-        sku,
+        mlbId,
         cat,
-        ml,
         custo,
         pvCat,
         movementTypePt(m.type),

@@ -202,4 +202,92 @@ describe("getTransactions (classifyMpTransactionType + amountForBalanceLine)", (
     const result = await getTransactions("token", accountUserId, 10)
     expect(result[0].type).toBe("debit")
   })
+
+  it("refund is classified as debit even when user is collector", async () => {
+    // Refund: dinheiro volta pro comprador, sai do saldo do vendedor.
+    const p = payment({
+      collector: { id: 12345 },
+      payer: { id: 99999 },
+      operation_type: "refund",
+      status: "approved",
+    })
+    vi.mocked(mpFetch).mockResolvedValue({ paging: { total: 1 }, results: [p] })
+
+    const result = await getTransactions("token", accountUserId, 10)
+    expect(result[0].type).toBe("debit")
+  })
+
+  it("chargeback is classified as debit", async () => {
+    const p = payment({
+      collector: { id: 12345 },
+      payer: { id: 99999 },
+      operation_type: "chargeback",
+      status: "approved",
+    })
+    vi.mocked(mpFetch).mockResolvedValue({ paging: { total: 1 }, results: [p] })
+
+    const result = await getTransactions("token", accountUserId, 10)
+    expect(result[0].type).toBe("debit")
+  })
+
+  it("reservation_release is classified as credit when user is collector", async () => {
+    // Liberacao de reserva: dinheiro previamente bloqueado vira saldo livre.
+    const p = payment({
+      collector: { id: 12345 },
+      payer: { id: 99999 },
+      operation_type: "reservation_release",
+      status: "approved",
+    })
+    vi.mocked(mpFetch).mockResolvedValue({ paging: { total: 1 }, results: [p] })
+
+    const result = await getTransactions("token", accountUserId, 10)
+    expect(result[0].type).toBe("credit")
+  })
+})
+
+describe("getTransactionsWindow summary", () => {
+  it("aggregates totals correctly", async () => {
+    const accountUserId = "12345"
+    const todayIso = new Date().toISOString()
+    const credit1 = payment({
+      id: 1,
+      date_created: todayIso,
+      collector: { id: 12345 },
+      payer: { id: 999 },
+      transaction_amount: 100,
+      transaction_details: { net_received_amount: 90 },
+    })
+    const credit2 = payment({
+      id: 2,
+      date_created: todayIso,
+      collector: { id: 12345 },
+      payer: { id: 999 },
+      transaction_amount: 50,
+      transaction_details: { net_received_amount: 45 },
+    })
+    const debitRefund = payment({
+      id: 3,
+      date_created: todayIso,
+      collector: { id: 12345 },
+      payer: { id: 999 },
+      operation_type: "refund",
+      transaction_amount: 20,
+    })
+
+    vi.mocked(mpFetch).mockResolvedValue({
+      paging: { total: 3, offset: 0, limit: 50 },
+      results: [credit1, credit2, debitRefund],
+    })
+    vi.mocked(fetchMpPaymentDetailsForIds).mockResolvedValue(new Map())
+
+    const { getTransactionsWindow } = await import("./simple-balance")
+    const result = await getTransactionsWindow("token", accountUserId, {
+      maxItems: 100,
+      windowDays: 180,
+    })
+
+    expect(result.totalCredits).toBe(90 + 45)
+    expect(result.totalDebits).toBe(20)
+    expect(result.transactions).toHaveLength(3)
+  })
 })

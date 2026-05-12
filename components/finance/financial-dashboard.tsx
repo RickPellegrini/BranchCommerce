@@ -145,6 +145,7 @@ type StockProduct = {
   name: string
   sku: string
   mlItemId?: string
+  mlItemAliases?: string[]
   imageUrl?: string
   category: string
   quantity: number
@@ -192,6 +193,7 @@ type MlListing = {
   catalogListing?: boolean | null
   permalink?: string
   thumbnail?: string
+  logisticType?: string | null
 }
 
 /** Dados minimos para vincular estoque ao anuncio (catalogo ou lista classica). */
@@ -309,6 +311,18 @@ const today = new Date().toISOString().slice(0, 10)
 const HUB_CENTRALIZE_SHIPPING_PER_ITEM = 5
 const HUB_CENTRALIZE_PACKAGING_PER_ITEM = 1.5
 const HUB_ML_AVG_FEE_RATE = 0.16
+
+// Mesmo tokenize usado em convex/stock.ts enrichPhotosFromMl — fallback para
+// casar pedidos com produtos cadastrados manualmente quando o mlItemId nao
+// esta vinculado ainda.
+function tokenizeTitle(text: string): string[] {
+  return text
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .split(/\s+/)
+    .filter((t) => t.length > 2)
+}
 
 function movementLabel(type: StockMovement["type"]) {
   if (type === "in") return "Entrada"
@@ -832,6 +846,17 @@ function buildSalesEvolutionData(
   return Array.from(buckets.values())
 }
 
+// Resolver flexivel: usa mlItemId direto; quando nao acha, deixa o caller
+// providenciar um fallback por similaridade de titulo / SKU.
+type OrderItemForLookup = { id: string; title?: string; sku?: string }
+type ProductLookupResolver = (item: OrderItemForLookup) => StockProduct | undefined
+
+function defaultProductResolver(
+  productByMlItemId: Map<string, StockProduct>,
+): ProductLookupResolver {
+  return (item) => productByMlItemId.get(item.id)
+}
+
 function buildOrdersSalesEvolutionData(
   orders: MlOrder[],
   productByMlItemId: Map<string, StockProduct>,
@@ -839,7 +864,9 @@ function buildOrdersSalesEvolutionData(
     period: FinancialPeriod
     range: { startDate?: string; endDate?: string }
   },
+  resolveProduct?: ProductLookupResolver,
 ): SalesEvolutionPoint[] {
+  const resolve = resolveProduct ?? defaultProductResolver(productByMlItemId)
   const bucketKeys = buildBucketKeys(options.range, options.period)
   const buckets = new Map<string, SalesEvolutionPoint>(
     bucketKeys.map((key) => [
@@ -856,14 +883,16 @@ function buildOrdersSalesEvolutionData(
     const bucket = buckets.get(key)
     if (!bucket) continue
 
+    const totalQty = order.items.reduce((s, i) => s + Math.max(0, i.quantity), 0)
     const productCost = order.items.reduce((sum, item) => {
-      const mappedProduct = productByMlItemId.get(item.id)
+      const mappedProduct = resolve({ id: item.id, title: item.title, sku: item.sku })
       return sum + (mappedProduct?.unitCost ?? 0) * Math.max(0, item.quantity)
     }, 0)
     const shippingCost = Math.max(0, order.shippingCostAmount)
     const taxes = Math.max(0, order.taxesAmount)
     const mlFee = Math.max(0, order.mlFeeAmount)
-    const totalCosts = productCost + shippingCost + taxes + mlFee
+    const packagingCost = totalQty * HUB_CENTRALIZE_PACKAGING_PER_ITEM
+    const totalCosts = productCost + shippingCost + taxes + mlFee + packagingCost
     const revenue = Math.max(0, order.totalAmount)
 
     bucket.revenue += revenue
@@ -878,7 +907,9 @@ function buildOrdersFinancialSummary(
   orders: MlOrder[],
   productByMlItemId: Map<string, StockProduct>,
   range?: { startDate?: string; endDate?: string },
+  resolveProduct?: ProductLookupResolver,
 ): OrdersFinancialSummary {
+  const resolve = resolveProduct ?? defaultProductResolver(productByMlItemId)
   const filteredOrders = orders.filter((order) => {
     const normalized = order.status.toLowerCase()
     if (normalized === "cancelled") return false
@@ -890,20 +921,22 @@ function buildOrdersFinancialSummary(
 
   return filteredOrders.reduce<OrdersFinancialSummary>(
     (acc, order) => {
+      const totalQty = order.items.reduce((s, i) => s + Math.max(0, i.quantity), 0)
       const productCost = order.items.reduce((total, item) => {
-        const mappedProduct = productByMlItemId.get(item.id)
+        const mappedProduct = resolve({ id: item.id, title: item.title, sku: item.sku })
         return total + (mappedProduct?.unitCost ?? 0) * Math.max(0, item.quantity)
       }, 0)
       const shippingCost = Math.max(0, order.shippingCostAmount)
       const taxes = Math.max(0, order.taxesAmount)
       const mlFee = Math.max(0, order.mlFeeAmount)
-      const orderCosts = productCost + shippingCost + taxes + mlFee
+      const packagingCost = totalQty * HUB_CENTRALIZE_PACKAGING_PER_ITEM
+      const orderCosts = productCost + shippingCost + taxes + mlFee + packagingCost
 
       acc.grossRevenue += Math.max(0, order.totalAmount)
       acc.totalCosts += orderCosts
       acc.netProfit += Math.max(0, order.totalAmount) - orderCosts
       acc.ordersCount += 1
-      acc.soldItems += order.items.reduce((total, item) => total + item.quantity, 0)
+      acc.soldItems += totalQty
       return acc
     },
     {
@@ -920,7 +953,9 @@ function buildOrdersCostComposition(
   orders: MlOrder[],
   productByMlItemId: Map<string, StockProduct>,
   range?: { startDate?: string; endDate?: string },
+  resolveProduct?: ProductLookupResolver,
 ) {
+  const resolve = resolveProduct ?? defaultProductResolver(productByMlItemId)
   const filteredOrders = orders.filter((order) => {
     const normalized = order.status.toLowerCase()
     if (normalized === "cancelled") return false
@@ -941,7 +976,7 @@ function buildOrdersCostComposition(
   for (const order of filteredOrders) {
     const totalQty = order.items.reduce((s, i) => s + Math.max(0, i.quantity), 0)
     const productCost = order.items.reduce((sum, item) => {
-      const mappedProduct = productByMlItemId.get(item.id)
+      const mappedProduct = resolve({ id: item.id, title: item.title, sku: item.sku })
       return sum + (mappedProduct?.unitCost ?? 0) * Math.max(0, item.quantity)
     }, 0)
 
@@ -1265,7 +1300,7 @@ export function FinancialDashboard() {
 
   const [productForm, setProductForm] = useState({
     name: "",
-    sku: "",
+    mlItemId: "",
     category: "",
     quantity: "",
     minStock: "",
@@ -1277,7 +1312,7 @@ export function FinancialDashboard() {
   const [manualStockImageUrl, setManualStockImageUrl] = useState<string | undefined>(undefined)
   const [manualStockForm, setManualStockForm] = useState({
     name: "",
-    sku: "",
+    mlItemId: "",
     quantity: "",
     unitCost: "",
     supplier: "",
@@ -1294,7 +1329,7 @@ export function FinancialDashboard() {
   const [editingProductId, setEditingProductId] = useState<Id<"stockProducts"> | null>(null)
   const [productEditForm, setProductEditForm] = useState({
     name: "",
-    sku: "",
+    mlItemId: "",
     category: "",
     quantity: "",
     minStock: "",
@@ -1373,7 +1408,7 @@ export function FinancialDashboard() {
   const [mlCatalogStockEditError, setMlCatalogStockEditError] = useState<string | null>(null)
   const [mlCatalogStockForm, setMlCatalogStockForm] = useState({
     name: "",
-    sku: "",
+    mlItemId: "",
     category: "",
     quantity: "",
     minStock: "",
@@ -1446,6 +1481,12 @@ export function FinancialDashboard() {
   const [mpError, setMpError] = useState<string | null>(null)
   const [mpBalanceUnavailable, setMpBalanceUnavailable] = useState(false)
   const [mpSaldoOculto, setMpSaldoOculto] = useState(false)
+  const [mpTxSummary, setMpTxSummary] = useState<{
+    totalCredits: number
+    totalDebits: number
+    windowSinceIso: string
+  } | null>(null)
+  const MP_WINDOW_DAYS = 180
   const [mpExtratoVerTudo, setMpExtratoVerTudo] = useState(false)
 
   type DayGroupUI = {
@@ -1470,7 +1511,9 @@ export function FinancialDashboard() {
     try {
       const [balRes, txRes] = await Promise.all([
         fetch("/api/mp/balance", { cache: "no-store" }),
-        fetch("/api/mp/transactions?limit=30", { cache: "no-store" }),
+        fetch(`/api/mp/transactions?windowDays=${MP_WINDOW_DAYS}&limit=1000`, {
+          cache: "no-store",
+        }),
       ])
 
       const balJson = await balRes.json()
@@ -1502,9 +1545,34 @@ export function FinancialDashboard() {
         setMpError(balJson.error ?? "Erro ao buscar saldo")
       }
 
-      if (txJson.ok) {
-        setMpTransactions(txJson.data ?? [])
-      } else {
+      if (txJson.ok && txJson.data) {
+        // Quando passamos windowDays, o endpoint devolve { transactions, totalCredits, totalDebits, windowSinceIso }.
+        // Compat: se vier array (chamada legada), tratamos como transactions e nao montamos summary.
+        if (Array.isArray(txJson.data)) {
+          setMpTransactions(txJson.data)
+          setMpTxSummary(null)
+        } else {
+          const d = txJson.data as {
+            transactions: Array<{
+              id: string
+              date: string
+              description: string
+              amount: number
+              type: "credit" | "debit"
+              status: string
+            }>
+            totalCredits: number
+            totalDebits: number
+            windowSinceIso: string
+          }
+          setMpTransactions(d.transactions ?? [])
+          setMpTxSummary({
+            totalCredits: d.totalCredits ?? 0,
+            totalDebits: d.totalDebits ?? 0,
+            windowSinceIso: d.windowSinceIso,
+          })
+        }
+      } else if (!txJson.ok) {
         console.error("[mp] transactions error:", txJson.error)
       }
     } catch (err) {
@@ -1562,39 +1630,76 @@ export function FinancialDashboard() {
     [mpDayGroups],
   )
 
-  const mpExtratoLiquidoSemDuplicarFuturo = useMemo(() => {
-    let entradas = 0
-    let saidas = 0
-    for (const t of mpTransactions) {
-      if (t.type === "debit") saidas += t.amount
-      else if (!mpFutureReleaseIds.has(t.id)) entradas += t.amount
-    }
-    return entradas - saidas
-  }, [mpTransactions, mpFutureReleaseIds])
+  /**
+   * Saldo MP estimado (fallback quando a API de saldo retorna 403):
+   *   creditos liquidos (janela) - debitos (janela) + liberacoes pendentes futuras
+   *
+   * Os pagamentos cujo ID ainda esta em "lancamentos futuros" sao descontados
+   * dos creditos pra evitar double-counting (eles ainda nao caíram no saldo,
+   * mas voltam pela soma das liberacoes pendentes).
+   */
+  const mpFuturePendingTotalAll = useMemo(
+    () => mpDayGroups.reduce((s, g) => s + g.total, 0),
+    [mpDayGroups],
+  )
 
-  /** Liberacoes com data local = hoje (momento da consulta no navegador); nao soma o restante do mes. */
-  const mpFuturePendingAteHoje = useMemo(() => {
-    const now = new Date()
+  const mpCreditosLiquidosJanela = useMemo(() => {
+    // Subtrai creditos que ainda estao "pendentes de liberacao" — eles entram
+    // pelo bloco de liberacoes futuras, nao devem ser contados duas vezes.
+    if (mpTxSummary) {
+      const aindaPendente = mpTransactions
+        .filter((t) => t.type === "credit" && mpFutureReleaseIds.has(t.id))
+        .reduce((s, t) => s + t.amount, 0)
+      return Math.max(0, mpTxSummary.totalCredits - aindaPendente)
+    }
+    // Fallback se summary ainda nao chegou
     let s = 0
-    for (const g of mpDayGroups) {
-      for (const r of g.releases) {
-        const d = new Date(r.releaseDate)
-        if (
-          d.getFullYear() === now.getFullYear() &&
-          d.getMonth() === now.getMonth() &&
-          d.getDate() === now.getDate()
-        ) {
-          s += r.amount
-        }
-      }
+    for (const t of mpTransactions) {
+      if (t.type === "credit" && !mpFutureReleaseIds.has(t.id)) s += t.amount
     }
     return s
-  }, [mpDayGroups])
+  }, [mpTxSummary, mpTransactions, mpFutureReleaseIds])
+
+  const mpDebitosJanela = useMemo(() => {
+    if (mpTxSummary) return mpTxSummary.totalDebits
+    return mpTransactions.filter((t) => t.type === "debit").reduce((s, t) => s + t.amount, 0)
+  }, [mpTxSummary, mpTransactions])
+
+  const todayIsoPrefix = useMemo(() => new Date().toISOString().slice(0, 10), [])
+
+  const mpSaldoHoje = useMemo(() => {
+    let creditos = 0
+    let debitos = 0
+    for (const t of mpTransactions) {
+      if (!t.date || !t.date.startsWith(todayIsoPrefix)) continue
+      if (t.type === "credit") creditos += t.amount
+      else debitos += t.amount
+    }
+    // Liberacoes previstas para hoje que ainda nao apareceram no extrato
+    let liberacoesHoje = 0
+    for (const g of mpDayGroups) {
+      if (g.date !== todayIsoPrefix) continue
+      for (const r of g.releases) {
+        if (!mpTransactions.some((t) => t.id === r.sourceId && t.type === "credit"))
+          liberacoesHoje += r.amount
+      }
+    }
+    return creditos - debitos + liberacoesHoje
+  }, [mpTransactions, mpDayGroups, todayIsoPrefix])
 
   const mpSaldoEstimadoSemApi = useMemo(
-    () => mpExtratoLiquidoSemDuplicarFuturo + mpFuturePendingAteHoje - mpFutureAPagarTotal,
-    [mpExtratoLiquidoSemDuplicarFuturo, mpFuturePendingAteHoje],
+    () => mpCreditosLiquidosJanela - mpDebitosJanela,
+    [mpCreditosLiquidosJanela, mpDebitosJanela],
   )
+
+  const mpFutureGross = useMemo(
+    () => mpDayGroups.reduce((s, g) => s + g.grossTotal, 0),
+    [mpDayGroups],
+  )
+
+  const mpFutureNet = useMemo(() => mpDayGroups.reduce((s, g) => s + g.total, 0), [mpDayGroups])
+
+  const mpFutureFees = useMemo(() => mpFutureGross - mpFutureNet, [mpFutureGross, mpFutureNet])
 
   const financeData = useQuery(
     api.finance.getDashboardData,
@@ -1623,6 +1728,7 @@ export function FinancialDashboard() {
   const deleteProduct = useMutation(api.stock.deleteProduct)
   const addMovement = useMutation(api.stock.addMovement)
   const syncStockFromMercadoLivre = useMutation(api.stock.syncFromMercadoLivre)
+  const reconcileWithMlDataMutation = useMutation(api.stock.reconcileWithMlData)
   const setProductKanbanHidden = useMutation(api.stock.setProductKanbanHidden)
   const addManualStockEntryMutation = useMutation(api.stock.addManualStockEntry)
   const addExpenseWithPayment = useMutation(api.finance.addExpenseWithPayment)
@@ -1770,6 +1876,7 @@ export function FinancialDashboard() {
         name: item.name,
         sku: item.sku,
         mlItemId: item.mlItemId,
+        mlItemAliases: item.mlItemAliases,
         imageUrl: item.imageUrl,
         category: item.category,
         quantity: item.quantity,
@@ -1807,6 +1914,7 @@ export function FinancialDashboard() {
         name: p.name,
         sku: p.sku,
         mlItemId: p.mlItemId,
+        mlItemAliases: p.mlItemAliases,
         imageUrl: p.imageUrl,
         category: p.category,
         quantity: p.quantity,
@@ -1880,23 +1988,59 @@ export function FinancialDashboard() {
       })),
     [products],
   )
-  const productMapByMlItemId = useMemo(
+  const productMapByMlItemId = useMemo(() => {
+    const map = new Map<string, StockProduct>()
+    for (const p of products) {
+      if (p.mlItemId) map.set(p.mlItemId, p)
+      for (const alias of p.mlItemAliases ?? []) {
+        if (!map.has(alias)) map.set(alias, p)
+      }
+    }
+    return map
+  }, [products])
+  const productMapBySku = productMapByMlItemId
+
+  // Fallback safety net: quando o item do pedido nao tem mlItemId vinculado
+  // a nenhum produto, tentamos casar por similaridade de titulo. Tokenizamos
+  // uma vez aqui pra evitar recomputar em cada busca.
+  const productTokenIndex = useMemo(
     () =>
-      new Map(
-        products
-          .filter((product) => product.mlItemId)
-          .map((product) => [product.mlItemId as string, product]),
-      ),
+      products
+        .filter((p) => p.unitCost > 0)
+        .map((p) => ({
+          product: p,
+          tokens: tokenizeTitle(p.name),
+        }))
+        .filter((entry) => entry.tokens.length > 0),
     [products],
   )
-  const productMapBySku = useMemo(
-    () =>
-      new Map(
-        products
-          .filter((product) => product.sku)
-          .map((product) => [product.sku.toLowerCase(), product]),
-      ),
-    [products],
+
+  const findProductByOrderItem = useCallback(
+    (item: { id?: string; title?: string; sku?: string }) => {
+      if (item.id) {
+        const direct = productMapByMlItemId.get(item.id)
+        if (direct) return direct
+      }
+      if (item.title) {
+        const itemTokens = tokenizeTitle(item.title)
+        if (itemTokens.length === 0) return undefined
+        let bestScore = 0
+        let bestProduct: StockProduct | undefined
+        for (const entry of productTokenIndex) {
+          const denom = Math.min(itemTokens.length, entry.tokens.length)
+          if (denom === 0) continue
+          const matches = entry.tokens.filter((t) => itemTokens.includes(t)).length
+          const score = matches / denom
+          if (score > bestScore) {
+            bestScore = score
+            bestProduct = entry.product
+          }
+        }
+        if (bestScore >= 0.5 && bestProduct) return bestProduct
+      }
+      return undefined
+    },
+    [productMapByMlItemId, productTokenIndex],
   )
   const expenseCategories = categories.filter((category) => category.kind === "expense")
   const incomeCategories = categories.filter((category) => category.kind === "income")
@@ -2031,10 +2175,15 @@ export function FinancialDashboard() {
     [filteredMovements],
   )
   const costComposition = useMemo(() => {
-    const fromOrders = buildOrdersCostComposition(mlOrders, productMapByMlItemId, {
-      startDate: filters.startDate,
-      endDate: filters.endDate,
-    })
+    const fromOrders = buildOrdersCostComposition(
+      mlOrders,
+      productMapByMlItemId,
+      {
+        startDate: filters.startDate,
+        endDate: filters.endDate,
+      },
+      findProductByOrderItem,
+    )
     if (fromOrders.length > 0) {
       return fromOrders
     }
@@ -2046,6 +2195,7 @@ export function FinancialDashboard() {
     filters.startDate,
     mlOrders,
     productMapByMlItemId,
+    findProductByOrderItem,
   ])
   const costCompositionTotal = useMemo(
     () => costComposition.reduce((sum, item) => sum + item.total, 0),
@@ -2053,11 +2203,16 @@ export function FinancialDashboard() {
   )
   const ordersFinancialSummary = useMemo(
     () =>
-      buildOrdersFinancialSummary(mlOrders, productMapByMlItemId, {
-        startDate: filters.startDate,
-        endDate: filters.endDate,
-      }),
-    [filters.endDate, filters.startDate, mlOrders, productMapByMlItemId],
+      buildOrdersFinancialSummary(
+        mlOrders,
+        productMapByMlItemId,
+        {
+          startDate: filters.startDate,
+          endDate: filters.endDate,
+        },
+        findProductByOrderItem,
+      ),
+    [filters.endDate, filters.startDate, mlOrders, productMapByMlItemId, findProductByOrderItem],
   )
   const hasOrdersFinancialData = ordersFinancialSummary.ordersCount > 0
   const salesEvolution = useMemo(() => {
@@ -2069,7 +2224,12 @@ export function FinancialDashboard() {
       },
     }
     if (hasOrdersFinancialData) {
-      return buildOrdersSalesEvolutionData(mlOrders, productMapByMlItemId, options)
+      return buildOrdersSalesEvolutionData(
+        mlOrders,
+        productMapByMlItemId,
+        options,
+        findProductByOrderItem,
+      )
     }
     return buildSalesEvolutionData(filteredTransactions, filteredMovements, options)
   }, [
@@ -2080,6 +2240,7 @@ export function FinancialDashboard() {
     hasOrdersFinancialData,
     mlOrders,
     productMapByMlItemId,
+    findProductByOrderItem,
   ])
   const salesInFilterFinal = hasOrdersFinancialData
     ? ordersFinancialSummary.grossRevenue
@@ -2119,6 +2280,17 @@ export function FinancialDashboard() {
     transactions,
   ])
   const homeNetProfit = homeDreSnapshot?.netProfit ?? operatingResultFinal
+  const homeExpenses = homeDreSnapshot
+    ? homeDreSnapshot.marketplaceFees +
+      homeDreSnapshot.shippingPaidBySeller +
+      homeDreSnapshot.productCosts +
+      homeDreSnapshot.packagingCost +
+      homeDreSnapshot.taxes +
+      homeDreSnapshot.operationalExpenses +
+      homeDreSnapshot.fixedCosts -
+      homeDreSnapshot.shippingBonus
+    : expensesInFilterFinal
+  const homeMarginFinal = salesInFilterFinal > 0 ? (homeNetProfit / salesInFilterFinal) * 100 : 0
   const homePeriodLabel = useMemo(() => {
     if (filters.startDate && filters.endDate) {
       return `${formatDate(filters.startDate)} – ${formatDate(filters.endDate)}`
@@ -2129,11 +2301,16 @@ export function FinancialDashboard() {
   const homeCurrentMonthOrders = useMemo(() => {
     const d = new Date()
     const { start, end } = monthDateRange(d.getFullYear(), d.getMonth() + 1)
-    return buildOrdersFinancialSummary(mlOrders, productMapByMlItemId, {
-      startDate: start,
-      endDate: end,
-    })
-  }, [mlOrders, productMapByMlItemId])
+    return buildOrdersFinancialSummary(
+      mlOrders,
+      productMapByMlItemId,
+      {
+        startDate: start,
+        endDate: end,
+      },
+      findProductByOrderItem,
+    )
+  }, [mlOrders, productMapByMlItemId, findProductByOrderItem])
 
   /** Evita repetir o mesmo bloco de pedidos ML quando o filtro ja e o mes civil corrente. */
   const homeFilterMatchesCurrentMonth = useMemo(() => {
@@ -2203,10 +2380,15 @@ export function FinancialDashboard() {
         ? "Mesmo intervalo, 1 mes antes"
         : "Mesmo intervalo, 1 ano antes"
     if (hasOrdersFinancialData) {
-      const s = buildOrdersFinancialSummary(mlOrders, productMapByMlItemId, {
-        startDate: start,
-        endDate: end,
-      })
+      const s = buildOrdersFinancialSummary(
+        mlOrders,
+        productMapByMlItemId,
+        {
+          startDate: start,
+          endDate: end,
+        },
+        findProductByOrderItem,
+      )
       return {
         revenue: s.grossRevenue,
         costs: s.totalCosts,
@@ -2233,6 +2415,7 @@ export function FinancialDashboard() {
     mlOrders,
     productMapByMlItemId,
     transactions,
+    findProductByOrderItem,
   ])
 
   const monthProjectionOverview = useMemo(() => {
@@ -2526,7 +2709,7 @@ export function FinancialDashboard() {
         color: "text-emerald-700 dark:text-emerald-400",
       },
       { label: "(-) Devolucoes", value: -dreSnapshot.returnsAmount },
-      { label: "(-) Custo dos Produtos (SKU)", value: -dreSnapshot.productCosts },
+      { label: "(-) Custo dos Produtos", value: -dreSnapshot.productCosts },
       { label: "(-) Custo de Embalagem", value: -dreSnapshot.packagingCost },
       { label: "(-) Impostos", value: -dreSnapshot.taxes },
       {
@@ -2796,7 +2979,7 @@ export function FinancialDashboard() {
     if (
       !userId ||
       !productForm.name.trim() ||
-      !productForm.sku.trim() ||
+      !productForm.mlItemId.trim() ||
       !productForm.category.trim() ||
       productForm.quantity === "" ||
       productForm.minStock === "" ||
@@ -2827,7 +3010,7 @@ export function FinancialDashboard() {
       await addProduct({
         userId,
         name: productForm.name,
-        sku: productForm.sku,
+        mlItemId: productForm.mlItemId,
         category: productForm.category,
         quantity,
         minStock,
@@ -2838,7 +3021,7 @@ export function FinancialDashboard() {
 
       setProductForm({
         name: "",
-        sku: "",
+        mlItemId: "",
         category: "",
         quantity: "",
         minStock: "",
@@ -2859,7 +3042,7 @@ export function FinancialDashboard() {
     setEditingProductId(product.id as Id<"stockProducts">)
     setProductEditForm({
       name: product.name,
-      sku: product.sku,
+      mlItemId: product.mlItemId ?? product.sku,
       category: product.category,
       quantity: String(product.quantity),
       minStock: String(product.minStock),
@@ -2873,7 +3056,7 @@ export function FinancialDashboard() {
       !userId ||
       !editingProductId ||
       !productEditForm.name.trim() ||
-      !productEditForm.sku.trim() ||
+      !productEditForm.mlItemId.trim() ||
       !productEditForm.category.trim() ||
       productEditForm.quantity === "" ||
       productEditForm.minStock === "" ||
@@ -2919,7 +3102,7 @@ export function FinancialDashboard() {
         userId,
         productId: editingProductId,
         name: productEditForm.name,
-        sku: productEditForm.sku,
+        mlItemId: productEditForm.mlItemId,
         category: productEditForm.category,
         quantity,
         minStock,
@@ -2973,7 +3156,7 @@ export function FinancialDashboard() {
         setMlCatalogStockEditSuggestion(null)
         setMlCatalogStockForm({
           name: linked.name,
-          sku: linked.sku,
+          mlItemId: linked.mlItemId ?? linked.sku,
           category: linked.category,
           quantity: String(linked.quantity),
           minStock: String(linked.minStock),
@@ -3001,7 +3184,7 @@ export function FinancialDashboard() {
               : matched.unitCost
           setMlCatalogStockForm({
             name: matched.name,
-            sku: matched.sku,
+            mlItemId: matched.mlItemId ?? matched.sku,
             category: matched.category,
             quantity: String(matched.quantity),
             minStock: String(matched.minStock),
@@ -3013,14 +3196,12 @@ export function FinancialDashboard() {
         }
       }
 
-      const defaultSku =
-        (row.sellerSku?.trim() && row.sellerSku.trim().toUpperCase()) ||
-        row.itemId.replace(/^MLB-?/i, "MLB")
+      const defaultMlId = row.itemId.replace(/^MLB-?/i, "MLB")
 
       setMlCatalogStockEditProductId(null)
       setMlCatalogStockForm({
         name: row.title,
-        sku: defaultSku,
+        mlItemId: defaultMlId,
         category: "Mercado Livre",
         quantity: String(Math.max(0, row.availableQuantity)),
         minStock: "0",
@@ -3040,13 +3221,13 @@ export function FinancialDashboard() {
     const row = mlCatalogStockEditRow
     if (
       !mlCatalogStockForm.name.trim() ||
-      !mlCatalogStockForm.sku.trim() ||
+      !mlCatalogStockForm.mlItemId.trim() ||
       !mlCatalogStockForm.category.trim() ||
       mlCatalogStockForm.quantity === "" ||
       mlCatalogStockForm.minStock === "" ||
       mlCatalogStockForm.unitCost === ""
     ) {
-      setMlCatalogStockEditError("Preencha nome, SKU, categoria e custo.")
+      setMlCatalogStockEditError("Preencha nome, MLB ID, categoria e custo.")
       return
     }
 
@@ -3088,7 +3269,6 @@ export function FinancialDashboard() {
           userId,
           productId: mlCatalogStockEditProductId,
           name: mlCatalogStockForm.name,
-          sku: mlCatalogStockForm.sku,
           category: mlCatalogStockForm.category,
           quantity,
           minStock,
@@ -3103,7 +3283,6 @@ export function FinancialDashboard() {
         await addProduct({
           userId,
           name: mlCatalogStockForm.name,
-          sku: mlCatalogStockForm.sku,
           category: mlCatalogStockForm.category,
           quantity,
           minStock,
@@ -3183,7 +3362,6 @@ export function FinancialDashboard() {
         userId,
         productId: p.id as Id<"stockProducts">,
         name: p.name,
-        sku: p.sku,
         category: p.category,
         quantity: nextQty,
         minStock: updates.minStock ?? p.minStock,
@@ -3193,6 +3371,8 @@ export function FinancialDashboard() {
         kanbanNote: updates.kanbanNote !== undefined ? updates.kanbanNote : p.kanbanNote,
         estimatedArrival:
           updates.estimatedArrival !== undefined ? updates.estimatedArrival : p.estimatedArrival,
+        ...(updates.mlItemId !== undefined && { mlItemId: updates.mlItemId }),
+        ...(updates.mlItemAliases !== undefined && { mlItemAliases: updates.mlItemAliases }),
       })
       setProductFeedback({ type: "success", message: "Produto atualizado com sucesso." })
     } catch (error) {
@@ -3300,10 +3480,10 @@ export function FinancialDashboard() {
       })
       return
     }
-    if (!manualStockForm.sku.trim()) {
+    if (!manualStockForm.mlItemId.trim()) {
       setProductFeedback({
         type: "error",
-        message: "Informe o SKU (codigo unico do item).",
+        message: "Informe o MLB ID do produto.",
       })
       return
     }
@@ -3318,7 +3498,7 @@ export function FinancialDashboard() {
       await addManualStockEntryMutation({
         userId,
         name: manualStockForm.name.trim(),
-        sku: manualStockForm.sku.trim(),
+        mlItemId: manualStockForm.mlItemId.trim(),
         quantity: qty,
         unitCost: cost,
         supplier: manualStockForm.supplier.trim(),
@@ -3330,7 +3510,7 @@ export function FinancialDashboard() {
       })
       setManualStockForm({
         name: "",
-        sku: "",
+        mlItemId: "",
         quantity: "",
         unitCost: "",
         supplier: "",
@@ -3465,7 +3645,16 @@ export function FinancialDashboard() {
         throw new Error(payload.error ?? "Falha ao buscar pedidos.")
       }
       setMlOrdersCount(payload.data.total ?? 0)
-      setMlOrders((payload.data.orders ?? []) as MlOrder[])
+      const rawOrders = (payload.data.orders ?? []) as MlOrder[]
+      setMlOrders(
+        rawOrders.map((o) => ({
+          ...o,
+          items: o.items.map((i) => ({
+            ...i,
+            id: i.id ? normalizeMercadoLibreItemId(i.id) : "",
+          })),
+        })),
+      )
     } catch (error) {
       setMlError(error instanceof Error ? error.message : "Erro ao buscar pedidos.")
     } finally {
@@ -3549,6 +3738,7 @@ export function FinancialDashboard() {
           availableQuantity: listing.available_quantity,
           thumbnail: listing.thumbnail,
           sku: listing.sku,
+          logisticType: listing.logisticType ?? undefined,
         })),
       })
 
@@ -3570,6 +3760,33 @@ export function FinancialDashboard() {
   const refreshMlSync = async () => {
     if (!mlConnectionStatus?.connected || mlSyncingStock) return
     await Promise.all([syncStockWithMl(), loadMlOverviewCards()])
+  }
+
+  const handleKanbanSyncWithMl = async () => {
+    if (!userId || !mlConnectionStatus?.connected) return
+    setMlSyncingStock(true)
+    setMlError(null)
+    setMlInfo(null)
+    try {
+      const response = await fetch("/api/stock/sync-ml", {
+        method: "POST",
+        cache: "no-store",
+      })
+      const payload = await response.json()
+      if (!response.ok || !payload.ok) {
+        throw new Error(payload.error ?? "Falha ao sincronizar com Mercado Livre.")
+      }
+
+      const d = payload.data ?? {}
+      setMlInfo(
+        `Sincronização concluída: ${d.totalMlItems ?? 0} anúncios, ${d.updated ?? 0} atualizados, ${d.notFound ?? 0} sem vínculo.`,
+      )
+      setMlLastSyncAt(Date.now())
+    } catch (error) {
+      setMlError(error instanceof Error ? error.message : "Erro ao reconciliar com Mercado Livre.")
+    } finally {
+      setMlSyncingStock(false)
+    }
   }
 
   const openAnalysis = (itemId: string) => setAnalysisItemId(itemId)
@@ -4086,13 +4303,13 @@ export function FinancialDashboard() {
                   <p
                     className={cn(
                       "mt-4 text-2xl font-bold tabular-nums tracking-tight sm:text-3xl",
-                      operatingMarginFinal >= 0 ? "text-foreground" : "text-destructive",
+                      homeMarginFinal >= 0 ? "text-foreground" : "text-destructive",
                     )}
                   >
-                    {operatingMarginFinal.toFixed(1)}%
+                    {homeMarginFinal.toFixed(1)}%
                   </p>
                   <p className="mt-1 text-xs text-muted-foreground">
-                    Sobre receita · custos totais {formatCurrency(expensesInFilterFinal)}
+                    Sobre receita · custos totais {formatCurrency(homeExpenses)}
                   </p>
                 </CardContent>
               </Card>
@@ -4513,188 +4730,169 @@ export function FinancialDashboard() {
                     </CardDescription>
                   </CardHeader>
                   <CardContent className="space-y-4">
-                    <div className="rounded-lg border border-border/70 bg-muted/15 p-4 shadow-sm">
-                      <div className="mb-3 flex items-center gap-2">
-                        <CalendarDays className="size-4 text-muted-foreground" />
-                        <h3 className="text-sm font-semibold text-foreground">Filtros</h3>
-                        <span className="text-xs text-muted-foreground">
-                          Periodo, movimentacoes e pedidos do Mercado Livre
-                        </span>
+                    <div className="rounded-lg border border-border/70 bg-muted/15 px-4 py-3 shadow-sm">
+                      <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
+                        <div className="flex items-center gap-1.5 text-muted-foreground">
+                          <CalendarDays className="size-3.5" />
+                          <span className="text-xs font-semibold">Filtros</span>
+                        </div>
+
+                        <div className="flex min-w-0 flex-wrap items-center gap-1.5 rounded-md border border-border/60 bg-background px-2 py-1">
+                          <BrDateInput
+                            value={filters.startDate ?? ""}
+                            onValueChange={(value) =>
+                              setFilters((prev) => ({
+                                ...prev,
+                                startDate: value || undefined,
+                              }))
+                            }
+                          />
+                          <span className="text-xs text-muted-foreground">-</span>
+                          <BrDateInput
+                            value={filters.endDate ?? ""}
+                            onValueChange={(value) =>
+                              setFilters((prev) => ({
+                                ...prev,
+                                endDate: value || undefined,
+                              }))
+                            }
+                          />
+                        </div>
+
+                        <Select
+                          value={filters.categoryId ?? "all-categories"}
+                          onValueChange={(value) =>
+                            setFilters((prev) => ({
+                              ...prev,
+                              categoryId: value === "all-categories" ? undefined : value,
+                            }))
+                          }
+                        >
+                          <SelectTrigger className="h-8 w-auto min-w-[140px]">
+                            <SelectValue placeholder="Categoria" />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="all-categories">Todas categorias</SelectItem>
+                            {categories.map((category) => (
+                              <SelectItem key={category.id} value={category.id}>
+                                {category.name}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+
+                        <Select
+                          value={filters.kind ?? "all"}
+                          onValueChange={(value) =>
+                            setFilters((prev) => ({
+                              ...prev,
+                              kind: value as TransactionFilters["kind"],
+                            }))
+                          }
+                        >
+                          <SelectTrigger className="h-8 w-auto min-w-[140px]">
+                            <SelectValue placeholder="Tipo" />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="all">Entradas e saidas</SelectItem>
+                            <SelectItem value="income">Entradas</SelectItem>
+                            <SelectItem value="expense">Saidas</SelectItem>
+                          </SelectContent>
+                        </Select>
+
+                        <Separator orientation="vertical" className="hidden h-6 sm:block" />
+
+                        <Input
+                          className="h-8 w-auto min-w-[140px] max-w-[180px]"
+                          placeholder="Titulo do pedido"
+                          value={financeOrdersTitleFilter}
+                          onChange={(event) => setFinanceOrdersTitleFilter(event.target.value)}
+                        />
+                        <Input
+                          className="h-8 w-auto min-w-[100px] max-w-[140px]"
+                          placeholder="MLB ID"
+                          value={financeOrdersSkuFilter}
+                          onChange={(event) => setFinanceOrdersSkuFilter(event.target.value)}
+                        />
+                        <Select
+                          value={financeOrdersStatusFilter}
+                          onValueChange={setFinanceOrdersStatusFilter}
+                        >
+                          <SelectTrigger className="h-8 w-auto min-w-[140px]">
+                            <SelectValue placeholder="Status" />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="all">Todos os status</SelectItem>
+                            <SelectItem value="paid">Pago</SelectItem>
+                            <SelectItem value="ready_to_ship">Pronto para envio</SelectItem>
+                            <SelectItem value="shipped">Enviado</SelectItem>
+                            <SelectItem value="delivered">Entregue</SelectItem>
+                          </SelectContent>
+                        </Select>
+                        <Select value="all-accounts" onValueChange={() => undefined}>
+                          <SelectTrigger className="h-8 w-auto min-w-[140px]">
+                            <SelectValue placeholder="Conta" />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="all-accounts">Todas as contas</SelectItem>
+                            <SelectItem value={financeAccountLabel}>
+                              {financeAccountLabel}
+                            </SelectItem>
+                          </SelectContent>
+                        </Select>
                       </div>
 
-                      <div className="flex flex-col gap-4">
-                        <div>
-                          <p className="mb-2 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
-                            Periodo e categorias
-                          </p>
-                          <div className="flex flex-wrap items-end gap-3">
-                            <div className="flex min-w-0 flex-wrap items-center gap-2 rounded-md border border-border/60 bg-background px-2 py-1.5">
-                              <BrDateInput
-                                value={filters.startDate ?? ""}
-                                onValueChange={(value) =>
-                                  setFilters((prev) => ({
-                                    ...prev,
-                                    startDate: value || undefined,
-                                  }))
-                                }
-                              />
-                              <span className="text-xs text-muted-foreground">ate</span>
-                              <BrDateInput
-                                value={filters.endDate ?? ""}
-                                onValueChange={(value) =>
-                                  setFilters((prev) => ({
-                                    ...prev,
-                                    endDate: value || undefined,
-                                  }))
-                                }
-                              />
-                            </div>
-                            <Select
-                              value={filters.categoryId ?? "all-categories"}
-                              onValueChange={(value) =>
-                                setFilters((prev) => ({
-                                  ...prev,
-                                  categoryId: value === "all-categories" ? undefined : value,
-                                }))
-                              }
-                            >
-                              <SelectTrigger className="h-9 w-full min-w-[160px] max-w-[220px]">
-                                <SelectValue placeholder="Categoria" />
-                              </SelectTrigger>
-                              <SelectContent>
-                                <SelectItem value="all-categories">Todas categorias</SelectItem>
-                                {categories.map((category) => (
-                                  <SelectItem key={category.id} value={category.id}>
-                                    {category.name}
-                                  </SelectItem>
-                                ))}
-                              </SelectContent>
-                            </Select>
-                            <Select
-                              value={filters.kind ?? "all"}
-                              onValueChange={(value) =>
-                                setFilters((prev) => ({
-                                  ...prev,
-                                  kind: value as TransactionFilters["kind"],
-                                }))
-                              }
-                            >
-                              <SelectTrigger className="h-9 w-full min-w-[180px] max-w-[240px]">
-                                <SelectValue placeholder="Tipo" />
-                              </SelectTrigger>
-                              <SelectContent>
-                                <SelectItem value="all">Entradas e saidas</SelectItem>
-                                <SelectItem value="income">Entradas</SelectItem>
-                                <SelectItem value="expense">Saidas</SelectItem>
-                              </SelectContent>
-                            </Select>
-                          </div>
-                        </div>
-
-                        <Separator className="bg-border/60" />
-
-                        <div>
-                          <p className="mb-2 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
-                            Pedidos (tabela e metricas ML)
-                          </p>
-                          <div className="flex flex-wrap items-end gap-3">
-                            <Input
-                              className="h-9 min-w-[min(100%,200px)] max-w-[240px] flex-1"
-                              placeholder="Titulo do pedido"
-                              value={financeOrdersTitleFilter}
-                              onChange={(event) => setFinanceOrdersTitleFilter(event.target.value)}
-                            />
-                            <Input
-                              className="h-9 min-w-[min(100%,120px)] max-w-[160px] flex-1"
-                              placeholder="SKU"
-                              value={financeOrdersSkuFilter}
-                              onChange={(event) => setFinanceOrdersSkuFilter(event.target.value)}
-                            />
-                            <Select
-                              value={financeOrdersStatusFilter}
-                              onValueChange={setFinanceOrdersStatusFilter}
-                            >
-                              <SelectTrigger className="h-9 min-w-[160px] max-w-[200px]">
-                                <SelectValue placeholder="Status" />
-                              </SelectTrigger>
-                              <SelectContent>
-                                <SelectItem value="all">Todos os status</SelectItem>
-                                <SelectItem value="paid">Pago</SelectItem>
-                                <SelectItem value="ready_to_ship">Pronto para envio</SelectItem>
-                                <SelectItem value="shipped">Enviado</SelectItem>
-                                <SelectItem value="delivered">Entregue</SelectItem>
-                              </SelectContent>
-                            </Select>
-                            <Select value="all-accounts" onValueChange={() => undefined}>
-                              <SelectTrigger className="h-9 min-w-[160px] max-w-[220px]">
-                                <SelectValue placeholder="Conta" />
-                              </SelectTrigger>
-                              <SelectContent>
-                                <SelectItem value="all-accounts">Todas as contas</SelectItem>
-                                <SelectItem value={financeAccountLabel}>
-                                  {financeAccountLabel}
-                                </SelectItem>
-                              </SelectContent>
-                            </Select>
-                          </div>
-                        </div>
-
-                        <div className="flex flex-wrap items-center gap-2 border-t border-border/50 pt-3">
-                          <span className="mr-1 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
-                            Comparar / projetar
-                          </span>
-                          <Button
-                            type="button"
-                            size="sm"
-                            variant={financeOverviewCompare === "none" ? "secondary" : "outline"}
-                            className="h-7 rounded-none px-2.5 text-[10px] font-normal"
-                            onClick={() => setFinanceOverviewCompare("none")}
-                          >
-                            Sem comparar
-                          </Button>
-                          <Button
-                            type="button"
-                            size="sm"
-                            variant={
-                              financeOverviewCompare === "prev_month" ? "secondary" : "outline"
-                            }
-                            className="h-7 rounded-none px-2.5 text-[10px] font-normal"
-                            onClick={() => setFinanceOverviewCompare("prev_month")}
-                          >
-                            vs Mes anterior
-                          </Button>
-                          <Button
-                            type="button"
-                            size="sm"
-                            variant={
-                              financeOverviewCompare === "prev_year" ? "secondary" : "outline"
-                            }
-                            className="h-7 rounded-none px-2.5 text-[10px] font-normal"
-                            onClick={() => setFinanceOverviewCompare("prev_year")}
-                          >
-                            vs Ano anterior
-                          </Button>
-                          <Button
-                            type="button"
-                            size="sm"
-                            variant={financeOverviewProjection === "none" ? "secondary" : "outline"}
-                            className="h-7 rounded-none px-2.5 text-[10px] font-normal"
-                            onClick={() => setFinanceOverviewProjection("none")}
-                          >
-                            Sem projecao
-                          </Button>
-                          <Button
-                            type="button"
-                            size="sm"
-                            variant={
-                              financeOverviewProjection === "month" ? "secondary" : "outline"
-                            }
-                            className="h-7 rounded-none px-2.5 text-[10px] font-normal"
-                            onClick={() => setFinanceOverviewProjection("month")}
-                          >
-                            Projecao do mes
-                          </Button>
-                        </div>
+                      <div className="mt-2 flex flex-wrap items-center gap-2 border-t border-border/50 pt-2">
+                        <span className="mr-1 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+                          Comparar / projetar
+                        </span>
+                        <Button
+                          type="button"
+                          size="sm"
+                          variant={financeOverviewCompare === "none" ? "secondary" : "outline"}
+                          className="h-7 rounded-none px-2.5 text-[10px] font-normal"
+                          onClick={() => setFinanceOverviewCompare("none")}
+                        >
+                          Sem comparar
+                        </Button>
+                        <Button
+                          type="button"
+                          size="sm"
+                          variant={
+                            financeOverviewCompare === "prev_month" ? "secondary" : "outline"
+                          }
+                          className="h-7 rounded-none px-2.5 text-[10px] font-normal"
+                          onClick={() => setFinanceOverviewCompare("prev_month")}
+                        >
+                          vs Mes anterior
+                        </Button>
+                        <Button
+                          type="button"
+                          size="sm"
+                          variant={financeOverviewCompare === "prev_year" ? "secondary" : "outline"}
+                          className="h-7 rounded-none px-2.5 text-[10px] font-normal"
+                          onClick={() => setFinanceOverviewCompare("prev_year")}
+                        >
+                          vs Ano anterior
+                        </Button>
+                        <Button
+                          type="button"
+                          size="sm"
+                          variant={financeOverviewProjection === "none" ? "secondary" : "outline"}
+                          className="h-7 rounded-none px-2.5 text-[10px] font-normal"
+                          onClick={() => setFinanceOverviewProjection("none")}
+                        >
+                          Sem projecao
+                        </Button>
+                        <Button
+                          type="button"
+                          size="sm"
+                          variant={financeOverviewProjection === "month" ? "secondary" : "outline"}
+                          className="h-7 rounded-none px-2.5 text-[10px] font-normal"
+                          onClick={() => setFinanceOverviewProjection("month")}
+                        >
+                          Projecao do mes
+                        </Button>
                       </div>
                     </div>
 
@@ -4994,48 +5192,71 @@ export function FinancialDashboard() {
                                   </TableCell>
                                 </TableRow>
                               ) : (
-                                financeDetailedOrders.slice(0, 10).map((order) => (
-                                  <TableRow key={order.id}>
-                                    <TableCell className="font-medium">{order.title}</TableCell>
-                                    <TableCell className="uppercase">
-                                      {financeAccountLabel}
-                                    </TableCell>
-                                    <TableCell>
-                                      {new Date(order.orderDate).toLocaleString("pt-BR")}
-                                    </TableCell>
-                                    <TableCell>
-                                      <Badge className={mlStatusBadgeClass(order.status)}>
-                                        {order.status === "paid" ? "Confirmado" : order.status}
-                                      </Badge>
-                                    </TableCell>
-                                    <TableCell className="text-right font-medium">
-                                      {formatCurrency(order.totalAmount)}
-                                    </TableCell>
-                                    <TableCell
-                                      className={cn(
-                                        "text-right font-semibold",
-                                        valueToneClass(order.profit),
-                                      )}
+                                financeDetailedOrders.slice(0, 10).map((order) => {
+                                  const handleRowClick = () => {
+                                    const fullOrder = mlOrders.find((o) => o.id === order.id)
+                                    if (!fullOrder) return
+                                    const firstItem = fullOrder.items[0]
+                                    const stockProduct = firstItem
+                                      ? findProductByOrderItem({
+                                          id: firstItem.id,
+                                          title: firstItem.title,
+                                          sku: firstItem.sku,
+                                        })
+                                      : undefined
+                                    openOrderCostAnalysis(
+                                      fullOrder,
+                                      stockProduct?.unitCost ?? 0,
+                                      firstItem?.quantity ?? 0,
+                                    )
+                                  }
+                                  return (
+                                    <TableRow
+                                      key={order.id}
+                                      className="cursor-pointer transition-colors hover:bg-muted/50"
+                                      onClick={handleRowClick}
                                     >
-                                      <span className="inline-flex items-center gap-1">
-                                        {order.profit >= 0 ? (
-                                          <TrendingUp className="size-3.5" />
-                                        ) : (
-                                          <TrendingDown className="size-3.5" />
+                                      <TableCell className="font-medium">{order.title}</TableCell>
+                                      <TableCell className="uppercase">
+                                        {financeAccountLabel}
+                                      </TableCell>
+                                      <TableCell>
+                                        {new Date(order.orderDate).toLocaleString("pt-BR")}
+                                      </TableCell>
+                                      <TableCell>
+                                        <Badge className={mlStatusBadgeClass(order.status)}>
+                                          {order.status === "paid" ? "Confirmado" : order.status}
+                                        </Badge>
+                                      </TableCell>
+                                      <TableCell className="text-right font-medium">
+                                        {formatCurrency(order.totalAmount)}
+                                      </TableCell>
+                                      <TableCell
+                                        className={cn(
+                                          "text-right font-semibold",
+                                          valueToneClass(order.profit),
                                         )}
-                                        {formatCurrency(order.profit)}
-                                      </span>
-                                    </TableCell>
-                                    <TableCell
-                                      className={cn(
-                                        "text-right font-semibold",
-                                        valueToneClass(order.margin),
-                                      )}
-                                    >
-                                      {order.margin.toFixed(1)}%
-                                    </TableCell>
-                                  </TableRow>
-                                ))
+                                      >
+                                        <span className="inline-flex items-center gap-1">
+                                          {order.profit >= 0 ? (
+                                            <TrendingUp className="size-3.5" />
+                                          ) : (
+                                            <TrendingDown className="size-3.5" />
+                                          )}
+                                          {formatCurrency(order.profit)}
+                                        </span>
+                                      </TableCell>
+                                      <TableCell
+                                        className={cn(
+                                          "text-right font-semibold",
+                                          valueToneClass(order.margin),
+                                        )}
+                                      >
+                                        {order.margin.toFixed(1)}%
+                                      </TableCell>
+                                    </TableRow>
+                                  )
+                                })
                               )}
                             </TableBody>
                           </Table>
@@ -5801,6 +6022,7 @@ export function FinancialDashboard() {
                             <SelectItem value="pix">Pix</SelectItem>
                             <SelectItem value="debit">Debito</SelectItem>
                             <SelectItem value="credit">Credito (parcelas)</SelectItem>
+                            <SelectItem value="boleto">Boleto</SelectItem>
                           </SelectContent>
                         </Select>
                       </div>
@@ -6631,7 +6853,7 @@ export function FinancialDashboard() {
                               <SelectItem value="__none__">Nenhum</SelectItem>
                               {products.map((p) => (
                                 <SelectItem key={p.id} value={p.id}>
-                                  {p.name} ({p.sku})
+                                  {p.name} ({p.mlItemId ?? p.sku})
                                 </SelectItem>
                               ))}
                             </SelectContent>
@@ -6720,31 +6942,39 @@ export function FinancialDashboard() {
                     <div className="flex items-start justify-between gap-2">
                       <div className="min-w-0 flex-1">
                         {mpBalanceUnavailable ? (
-                          <div>
-                            <div className="flex flex-wrap items-center gap-2">
+                          <div className="space-y-4">
+                            <div>
                               <p className="text-xs font-medium text-muted-foreground">
-                                Saldo estimado
+                                Saldo disponivel
                               </p>
-                              <Badge
-                                variant="secondary"
-                                className="text-[10px] font-normal uppercase tracking-wide"
-                              >
-                                Estimado
-                              </Badge>
+                              <p className="mt-1 text-sm text-muted-foreground">
+                                Consulte o saldo no app do Mercado Pago. A API nao tem permissao
+                                para leitura direta do saldo com o token atual.
+                              </p>
                             </div>
-                            <p className="mt-2 text-4xl font-bold tracking-tight tabular-nums">
-                              {formatCurrency(mpSaldoEstimadoSemApi)}
-                            </p>
-                            <p className="mt-3 text-xs leading-relaxed text-muted-foreground">
-                              A API nao libera o saldo oficial para esta conta. A estimativa usa os
-                              ultimos lancamentos (valor{" "}
-                              <span className="font-medium text-foreground">liquido</span> nas
-                              vendas, como no MP) mais liberacoes previstas para{" "}
-                              <span className="font-medium text-foreground">hoje</span>. Nao inclui
-                              movimentos fora dessa janela nem saldo anterior — o numero do app
-                              Mercado Pago e a referencia. Garantia no box acima, separada deste
-                              saldo.
-                            </p>
+
+                            <div className="grid grid-cols-3 gap-2">
+                              <div className="rounded-lg border border-border/60 bg-muted/30 px-3 py-2">
+                                <p className="text-[11px] text-muted-foreground">A receber bruto</p>
+                                <p className="mt-0.5 text-lg font-semibold tabular-nums">
+                                  {formatCurrency(mpFutureGross)}
+                                </p>
+                              </div>
+                              <div className="rounded-lg border border-border/60 bg-muted/30 px-3 py-2">
+                                <p className="text-[11px] text-muted-foreground">Custos/taxas</p>
+                                <p className="mt-0.5 text-lg font-semibold tabular-nums text-rose-700 dark:text-rose-400">
+                                  - {formatCurrency(mpFutureFees)}
+                                </p>
+                              </div>
+                              <div className="rounded-lg border border-border/60 bg-muted/30 px-3 py-2">
+                                <p className="text-[11px] text-muted-foreground">
+                                  A receber liquido
+                                </p>
+                                <p className="mt-0.5 text-lg font-semibold tabular-nums text-emerald-700 dark:text-emerald-400">
+                                  {formatCurrency(mpFutureNet)}
+                                </p>
+                              </div>
+                            </div>
                           </div>
                         ) : mpSaldoOculto && mpBalance ? (
                           <p className="text-4xl font-bold tracking-tight tabular-nums">R$ ••••</p>
@@ -6809,17 +7039,23 @@ export function FinancialDashboard() {
                     </button>
                   </div>
 
-                  <div className="mb-4 grid grid-cols-2 gap-6 border-b border-border/60 pb-4">
+                  <div className="mb-4 grid grid-cols-3 gap-4 border-b border-border/60 pb-4">
                     <div>
-                      <p className="text-xs text-muted-foreground">A receber</p>
-                      <p className="text-lg font-semibold tabular-nums text-emerald-600 dark:text-emerald-400">
-                        + {formatCurrency(mpFuturePendingTotal)}
+                      <p className="text-xs text-muted-foreground">Bruto</p>
+                      <p className="text-lg font-semibold tabular-nums">
+                        {formatCurrency(mpFutureGross)}
                       </p>
                     </div>
                     <div>
-                      <p className="text-xs text-muted-foreground">A pagar</p>
-                      <p className="text-lg font-semibold tabular-nums">
-                        {formatCurrency(mpFutureAPagarTotal)}
+                      <p className="text-xs text-muted-foreground">Custos/taxas</p>
+                      <p className="text-lg font-semibold tabular-nums text-rose-600 dark:text-rose-400">
+                        - {formatCurrency(mpFutureFees)}
+                      </p>
+                    </div>
+                    <div>
+                      <p className="text-xs text-muted-foreground">Liquido</p>
+                      <p className="text-lg font-semibold tabular-nums text-emerald-600 dark:text-emerald-400">
+                        {formatCurrency(mpFutureNet)}
                       </p>
                     </div>
                   </div>
@@ -6984,13 +7220,6 @@ export function FinancialDashboard() {
                     message={productFeedback.message}
                   />
                 )}
-                {!showManualStockForm ? (
-                  <div className="flex justify-end">
-                    <Button type="button" onClick={() => setShowManualStockForm(true)}>
-                      Adicionar ao estoque / Kanban
-                    </Button>
-                  </div>
-                ) : null}
                 {showManualStockForm ? (
                   <Card className="border-border/80 shadow-sm">
                     <CardHeader className="flex flex-row flex-wrap items-start justify-between gap-2 space-y-0">
@@ -7025,24 +7254,25 @@ export function FinancialDashboard() {
                             setManualStockForm((p) => ({
                               ...p,
                               name: picked.name,
-                              ...(picked.sku ? { sku: picked.sku } : {}),
+                              ...(picked.mlItemId ? { mlItemId: picked.mlItemId } : {}),
                             }))
                             setManualStockImageUrl(picked.imageUrl)
                           }}
                         />
                       </div>
                       <div className="space-y-1">
-                        <label className="text-xs text-muted-foreground">SKU (unico)</label>
+                        <label className="text-xs text-muted-foreground">MLB ID</label>
                         <Input
-                          placeholder="Ex.: MULTICOOK-PH-127"
-                          value={manualStockForm.sku}
+                          placeholder="Ex.: MLB1234567890"
+                          value={manualStockForm.mlItemId}
                           onChange={(e) =>
                             setManualStockForm((p) => ({
                               ...p,
-                              sku: e.target.value,
+                              mlItemId: e.target.value,
                             }))
                           }
                           autoComplete="off"
+                          className="font-mono"
                         />
                       </div>
                       <div className="space-y-1">
@@ -7157,7 +7387,12 @@ export function FinancialDashboard() {
                   onSaveProductEdits={handleKanbanSaveEdits}
                   onDeleteProduct={handleKanbanDelete}
                   onToggleProductHidden={handleToggleProductHidden}
+                  onSyncWithMl={handleKanbanSyncWithMl}
+                  mlSyncing={mlSyncingStock}
+                  mlSyncDisabled={!mlConnectionStatus?.connected}
                   kanbanTimelineEvents={kanbanTimelineEvents}
+                  onAddProduct={() => setShowManualStockForm((v) => !v)}
+                  showAddForm={showManualStockForm}
                 />
               </section>
             )}
@@ -7222,13 +7457,14 @@ export function FinancialDashboard() {
                       />
                     </div>
                     <div className="space-y-1.5">
-                      <p className="text-xs font-medium text-muted-foreground">SKU</p>
+                      <p className="text-xs font-medium text-muted-foreground">MLB ID</p>
                       <Input
-                        placeholder="Codigo unico"
-                        value={productForm.sku}
+                        placeholder="Ex.: MLB1234567890"
+                        value={productForm.mlItemId}
                         onChange={(event) =>
-                          setProductForm((prev) => ({ ...prev, sku: event.target.value }))
+                          setProductForm((prev) => ({ ...prev, mlItemId: event.target.value }))
                         }
+                        className="font-mono"
                       />
                     </div>
                     <div className="space-y-1.5 sm:col-span-2">
@@ -7324,12 +7560,17 @@ export function FinancialDashboard() {
                         />
                       </div>
                       <div className="space-y-1.5">
-                        <p className="text-xs font-medium text-muted-foreground">SKU</p>
+                        <p className="text-xs font-medium text-muted-foreground">MLB ID</p>
                         <Input
-                          value={productEditForm.sku}
+                          value={productEditForm.mlItemId}
                           onChange={(event) =>
-                            setProductEditForm((prev) => ({ ...prev, sku: event.target.value }))
+                            setProductEditForm((prev) => ({
+                              ...prev,
+                              mlItemId: event.target.value,
+                            }))
                           }
+                          className="font-mono"
+                          readOnly
                         />
                       </div>
                       <div className="space-y-1.5 sm:col-span-2">
@@ -7469,7 +7710,9 @@ export function FinancialDashboard() {
                                 </div>
                               </div>
                             </TableCell>
-                            <TableCell className="font-mono text-xs">{product.sku}</TableCell>
+                            <TableCell className="font-mono text-xs">
+                              {product.mlItemId ?? product.sku}
+                            </TableCell>
                             <TableCell className="hidden sm:table-cell text-muted-foreground">
                               {product.category}
                             </TableCell>
@@ -7538,7 +7781,7 @@ export function FinancialDashboard() {
                       <SelectContent>
                         {products.map((product) => (
                           <SelectItem key={product.id} value={product.id}>
-                            {product.name} ({product.sku})
+                            {product.name} ({product.mlItemId ?? product.sku})
                           </SelectItem>
                         ))}
                       </SelectContent>
@@ -7659,7 +7902,7 @@ export function FinancialDashboard() {
                                   {prod?.name ?? "Produto removido"}
                                 </TableCell>
                                 <TableCell className="hidden max-w-[12rem] break-all font-mono text-xs whitespace-normal sm:table-cell">
-                                  {prod?.sku ?? "—"}
+                                  {prod?.mlItemId ?? prod?.sku ?? "—"}
                                 </TableCell>
                                 <TableCell className="hidden max-w-[12rem] break-words text-muted-foreground whitespace-normal md:table-cell">
                                   {prod?.category ?? "—"}
@@ -8208,11 +8451,9 @@ export function FinancialDashboard() {
                                         <p className="text-xs font-mono text-muted-foreground">
                                           {listing.id}
                                         </p>
-                                        {listing.sku ? (
-                                          <p className="text-xs text-muted-foreground">
-                                            SKU: {listing.sku}
-                                          </p>
-                                        ) : null}
+                                        <p className="font-mono text-xs text-muted-foreground">
+                                          {listing.id}
+                                        </p>
                                         {listing.catalogProductId ? (
                                           <p className="text-xs text-muted-foreground">
                                             Par de catalogo ML:{" "}
@@ -8385,7 +8626,7 @@ export function FinancialDashboard() {
                             onChange={(event) => setMlOrdersOnlyNoSku(event.target.checked)}
                           />
                           <label htmlFor="orders-no-sku" className="text-sm text-muted-foreground">
-                            Sem SKU
+                            Sem MLB ID
                           </label>
                         </div>
                         <Select value={mlOrdersSortBy} onValueChange={setMlOrdersSortBy}>
@@ -8691,189 +8932,6 @@ export function FinancialDashboard() {
                     </CardContent>
                   </Card>
                 )}
-
-                {mlOrderCostAnalysis && (
-                  <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
-                    <Card className="max-h-[90vh] w-full max-w-3xl overflow-y-auto rounded-none">
-                      <CardHeader className="flex flex-row items-start justify-between space-y-0">
-                        <div>
-                          <CardTitle>Analise detalhada de custos e margens</CardTitle>
-                          <CardDescription>
-                            Pedido #{mlOrderCostAnalysis.orderId} - {mlOrderCostAnalysis.title}
-                          </CardDescription>
-                        </div>
-                        <Button
-                          size="sm"
-                          variant="outline"
-                          onClick={() => setMlOrderCostAnalysis(null)}
-                        >
-                          <X className="size-4" />
-                          Fechar
-                        </Button>
-                      </CardHeader>
-                      <CardContent className="space-y-4">
-                        <div className="rounded-none border bg-muted/30 px-3 py-2 text-xs text-muted-foreground">
-                          Fonte dos custos:{" "}
-                          {mlOrderCostAnalysis.source === "ml_api"
-                            ? "API Mercado Livre"
-                            : "API Mercado Livre + fallback interno"}
-                        </div>
-                        <Card>
-                          <CardHeader>
-                            <CardTitle className="flex items-center gap-2 text-base">
-                              <Wallet className="size-4" />
-                              Resumo financeiro
-                            </CardTitle>
-                          </CardHeader>
-                          <CardContent className="grid gap-3 sm:grid-cols-4">
-                            <div className="rounded-none border bg-muted/30 p-3">
-                              <p className="text-xs text-muted-foreground">Receita total</p>
-                              <p className="text-2xl font-semibold text-emerald-700 dark:text-emerald-400">
-                                {formatCurrency(mlOrderCostAnalysis.revenueTotal)}
-                              </p>
-                            </div>
-                            <div className="rounded-none border bg-muted/30 p-3">
-                              <p className="text-xs text-muted-foreground">Valor recebido</p>
-                              <p className="text-2xl font-semibold">
-                                {formatCurrency(mlOrderCostAnalysis.receivedAmount)}
-                              </p>
-                            </div>
-                            <div className="rounded-none border bg-muted/30 p-3">
-                              <p className="text-xs text-muted-foreground">Custo do produto</p>
-                              <p className="text-2xl font-semibold text-orange-600 dark:text-orange-400">
-                                {formatCurrency(mlOrderCostAnalysis.productCost)}
-                              </p>
-                            </div>
-                            <div className="rounded-none border bg-muted/30 p-3">
-                              <p className="text-xs text-muted-foreground">Lucro liquido</p>
-                              <p
-                                className={cn(
-                                  "text-2xl font-semibold",
-                                  mlOrderCostAnalysis.netProfit >= 0
-                                    ? "text-emerald-700 dark:text-emerald-400"
-                                    : "text-destructive",
-                                )}
-                              >
-                                {formatCurrency(mlOrderCostAnalysis.netProfit)}
-                              </p>
-                            </div>
-                          </CardContent>
-                        </Card>
-
-                        <Card>
-                          <CardHeader>
-                            <CardTitle className="flex items-center gap-2 text-base">
-                              <BarChart3 className="size-4" />
-                              Composicao de custos
-                            </CardTitle>
-                          </CardHeader>
-                          <CardContent className="space-y-4">
-                            {[
-                              {
-                                label: "Custo do produto",
-                                value: mlOrderCostAnalysis.productCost,
-                                color: "bg-orange-500",
-                              },
-                              {
-                                label: "Frete",
-                                value: mlOrderCostAnalysis.shippingCost,
-                                color: "bg-violet-500",
-                              },
-                              {
-                                label: "Centralize - envio fixo",
-                                value: mlOrderCostAnalysis.centralizeShipping,
-                                color: "bg-cyan-500",
-                              },
-                              {
-                                label: "Centralize - embalagem fixa",
-                                value: mlOrderCostAnalysis.centralizePackaging,
-                                color: "bg-sky-500",
-                              },
-                              {
-                                label: "Taxa ML",
-                                value: mlOrderCostAnalysis.mlFee,
-                                color: "bg-amber-500",
-                              },
-                              {
-                                label: "Impostos",
-                                value: mlOrderCostAnalysis.taxes,
-                                color: "bg-red-500",
-                              },
-                              {
-                                label: "Bonus frete",
-                                value: mlOrderCostAnalysis.shippingBonus,
-                                color: "bg-emerald-500",
-                                positive: true,
-                              },
-                            ].map((row) => {
-                              const base = mlOrderCostAnalysis.revenueTotal || 1
-                              const percent = Math.max(0, (row.value / base) * 100)
-                              return (
-                                <div key={row.label} className="space-y-1">
-                                  <div className="flex items-center justify-between text-sm">
-                                    <p>{row.label}</p>
-                                    <p
-                                      className={cn(
-                                        "font-medium",
-                                        row.positive
-                                          ? "text-emerald-700 dark:text-emerald-400"
-                                          : "text-foreground",
-                                      )}
-                                    >
-                                      {row.positive ? "+" : ""}
-                                      {formatCurrency(row.value)} ({percent.toFixed(1)}%)
-                                    </p>
-                                  </div>
-                                  <div className="h-2 rounded-none bg-muted">
-                                    <div
-                                      className={cn("h-2 rounded-none", row.color)}
-                                      style={{ width: `${Math.min(percent, 100)}%` }}
-                                    />
-                                  </div>
-                                </div>
-                              )
-                            })}
-                            <div className="flex items-center justify-between border-t pt-2 text-base font-semibold">
-                              <span>Total de custos</span>
-                              <span>{formatCurrency(mlOrderCostAnalysis.totalCosts)}</span>
-                            </div>
-                          </CardContent>
-                        </Card>
-
-                        <Card>
-                          <CardHeader>
-                            <CardTitle className="flex items-center gap-2 text-base">
-                              <LineChart className="size-4" />
-                              Analise de margens
-                            </CardTitle>
-                          </CardHeader>
-                          <CardContent className="grid gap-3 sm:grid-cols-2">
-                            <div className="rounded-none bg-emerald-500/10 p-3">
-                              <p className="text-sm font-medium text-emerald-700 dark:text-emerald-400">
-                                Margem de contribuicao
-                              </p>
-                              <p className="text-3xl font-semibold text-emerald-700 dark:text-emerald-400">
-                                {mlOrderCostAnalysis.contributionMargin.toFixed(1)}%
-                              </p>
-                              <p className="text-xs text-muted-foreground">
-                                {formatCurrency(mlOrderCostAnalysis.netProfit)} de lucro liquido
-                              </p>
-                            </div>
-                            <div className="rounded-none bg-primary/10 p-3">
-                              <p className="text-sm font-medium text-primary">ROI</p>
-                              <p className="text-3xl font-semibold text-primary">
-                                {mlOrderCostAnalysis.roi.toFixed(1)}%
-                              </p>
-                              <p className="text-xs text-muted-foreground">
-                                Retorno sobre investimento em produto
-                              </p>
-                            </div>
-                          </CardContent>
-                        </Card>
-                      </CardContent>
-                    </Card>
-                  </div>
-                )}
               </>
             )}
           </section>
@@ -8981,15 +9039,17 @@ export function FinancialDashboard() {
                   />
                 </div>
                 <div className="space-y-1">
-                  <label className="text-xs text-muted-foreground">SKU</label>
+                  <label className="text-xs text-muted-foreground">MLB ID</label>
                   <Input
-                    value={mlCatalogStockForm.sku}
+                    value={mlCatalogStockForm.mlItemId}
                     onChange={(e) =>
                       setMlCatalogStockForm((f) => ({
                         ...f,
-                        sku: e.target.value,
+                        mlItemId: e.target.value,
                       }))
                     }
+                    className="font-mono"
+                    readOnly
                   />
                 </div>
                 <div className="space-y-1">
@@ -9080,11 +9140,184 @@ export function FinancialDashboard() {
           </Dialog.Portal>
         </Dialog.Root>
       </section>
+
+      {mlOrderCostAnalysis && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+          <Card className="max-h-[90vh] w-full max-w-3xl overflow-y-auto rounded-none">
+            <CardHeader className="flex flex-row items-start justify-between space-y-0">
+              <div>
+                <CardTitle>Analise detalhada de custos e margens</CardTitle>
+                <CardDescription>
+                  Pedido #{mlOrderCostAnalysis.orderId} - {mlOrderCostAnalysis.title}
+                </CardDescription>
+              </div>
+              <Button size="sm" variant="outline" onClick={() => setMlOrderCostAnalysis(null)}>
+                <X className="size-4" />
+                Fechar
+              </Button>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <div className="rounded-none border bg-muted/30 px-3 py-2 text-xs text-muted-foreground">
+                Fonte dos custos:{" "}
+                {mlOrderCostAnalysis.source === "ml_api"
+                  ? "API Mercado Livre"
+                  : "API Mercado Livre + fallback interno"}
+              </div>
+              <Card>
+                <CardHeader>
+                  <CardTitle className="flex items-center gap-2 text-base">
+                    <Wallet className="size-4" />
+                    Resumo financeiro
+                  </CardTitle>
+                </CardHeader>
+                <CardContent className="grid gap-3 sm:grid-cols-4">
+                  <div className="rounded-none border bg-muted/30 p-3">
+                    <p className="text-xs text-muted-foreground">Receita total</p>
+                    <p className="text-2xl font-semibold text-emerald-700 dark:text-emerald-400">
+                      {formatCurrency(mlOrderCostAnalysis.revenueTotal)}
+                    </p>
+                  </div>
+                  <div className="rounded-none border bg-muted/30 p-3">
+                    <p className="text-xs text-muted-foreground">Valor recebido</p>
+                    <p className="text-2xl font-semibold">
+                      {formatCurrency(mlOrderCostAnalysis.receivedAmount)}
+                    </p>
+                  </div>
+                  <div className="rounded-none border bg-muted/30 p-3">
+                    <p className="text-xs text-muted-foreground">Custo do produto</p>
+                    <p className="text-2xl font-semibold text-orange-600 dark:text-orange-400">
+                      {formatCurrency(mlOrderCostAnalysis.productCost)}
+                    </p>
+                  </div>
+                  <div className="rounded-none border bg-muted/30 p-3">
+                    <p className="text-xs text-muted-foreground">Lucro liquido</p>
+                    <p
+                      className={cn(
+                        "text-2xl font-semibold",
+                        mlOrderCostAnalysis.netProfit >= 0
+                          ? "text-emerald-700 dark:text-emerald-400"
+                          : "text-destructive",
+                      )}
+                    >
+                      {formatCurrency(mlOrderCostAnalysis.netProfit)}
+                    </p>
+                  </div>
+                </CardContent>
+              </Card>
+              <Card>
+                <CardHeader>
+                  <CardTitle className="flex items-center gap-2 text-base">
+                    <BarChart3 className="size-4" />
+                    Composicao de custos
+                  </CardTitle>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                  {[
+                    {
+                      label: "Custo do produto",
+                      value: mlOrderCostAnalysis.productCost,
+                      color: "bg-orange-500",
+                    },
+                    {
+                      label: "Frete",
+                      value: mlOrderCostAnalysis.shippingCost,
+                      color: "bg-violet-500",
+                    },
+                    {
+                      label: "Centralize - envio fixo",
+                      value: mlOrderCostAnalysis.centralizeShipping,
+                      color: "bg-cyan-500",
+                    },
+                    {
+                      label: "Centralize - embalagem fixa",
+                      value: mlOrderCostAnalysis.centralizePackaging,
+                      color: "bg-sky-500",
+                    },
+                    { label: "Taxa ML", value: mlOrderCostAnalysis.mlFee, color: "bg-amber-500" },
+                    { label: "Impostos", value: mlOrderCostAnalysis.taxes, color: "bg-red-500" },
+                    {
+                      label: "Bonus frete",
+                      value: mlOrderCostAnalysis.shippingBonus,
+                      color: "bg-emerald-500",
+                      positive: true,
+                    },
+                  ].map((row) => {
+                    const base = mlOrderCostAnalysis.revenueTotal || 1
+                    const percent = Math.max(0, (row.value / base) * 100)
+                    return (
+                      <div key={row.label} className="space-y-1">
+                        <div className="flex items-center justify-between text-sm">
+                          <p>{row.label}</p>
+                          <p
+                            className={cn(
+                              "font-medium",
+                              row.positive
+                                ? "text-emerald-700 dark:text-emerald-400"
+                                : "text-foreground",
+                            )}
+                          >
+                            {row.positive ? "+" : ""}
+                            {formatCurrency(row.value)} ({percent.toFixed(1)}%)
+                          </p>
+                        </div>
+                        <div className="h-2 rounded-none bg-muted">
+                          <div
+                            className={cn("h-2 rounded-none", row.color)}
+                            style={{ width: `${Math.min(percent, 100)}%` }}
+                          />
+                        </div>
+                      </div>
+                    )
+                  })}
+                  <div className="flex items-center justify-between border-t pt-2 text-base font-semibold">
+                    <span>Total de custos</span>
+                    <span>{formatCurrency(mlOrderCostAnalysis.totalCosts)}</span>
+                  </div>
+                </CardContent>
+              </Card>
+              <Card>
+                <CardHeader>
+                  <CardTitle className="flex items-center gap-2 text-base">
+                    <LineChart className="size-4" />
+                    Analise de margens
+                  </CardTitle>
+                </CardHeader>
+                <CardContent className="grid gap-3 sm:grid-cols-2">
+                  <div className="rounded-none bg-emerald-500/10 p-3">
+                    <p className="text-sm font-medium text-emerald-700 dark:text-emerald-400">
+                      Margem de contribuicao
+                    </p>
+                    <p className="text-3xl font-semibold text-emerald-700 dark:text-emerald-400">
+                      {mlOrderCostAnalysis.contributionMargin.toFixed(1)}%
+                    </p>
+                    <p className="text-xs text-muted-foreground">
+                      {formatCurrency(mlOrderCostAnalysis.netProfit)} de lucro liquido
+                    </p>
+                  </div>
+                  <div className="rounded-none bg-primary/10 p-3">
+                    <p className="text-sm font-medium text-primary">ROI</p>
+                    <p className="text-3xl font-semibold text-primary">
+                      {mlOrderCostAnalysis.roi.toFixed(1)}%
+                    </p>
+                    <p className="text-xs text-muted-foreground">
+                      Retorno sobre investimento em produto
+                    </p>
+                  </div>
+                </CardContent>
+              </Card>
+            </CardContent>
+          </Card>
+        </div>
+      )}
     </main>
   )
 }
 
 function FinancialEvolutionChart({ data }: { data: SalesEvolutionPoint[] }) {
+  const [showRevenue, setShowRevenue] = useState(true)
+  const [showProfit, setShowProfit] = useState(true)
+  const [showOrders, setShowOrders] = useState(true)
+
   if (data.length === 0) {
     return (
       <p className="text-sm text-muted-foreground">Sem dados suficientes para montar o grafico.</p>
@@ -9100,10 +9333,10 @@ function FinancialEvolutionChart({ data }: { data: SalesEvolutionPoint[] }) {
   const chartWidth = width - paddingLeft - paddingRight
   const chartHeight = height - paddingTop - paddingBottom
 
-  const revenueMax = Math.max(...data.map((item) => item.revenue), 1)
-  const profitMax = Math.max(...data.map((item) => Math.max(0, item.profit)), 1)
-  const moneyMax = Math.max(revenueMax, profitMax, 1)
-  const ordersMax = Math.max(...data.map((item) => item.orders), 1)
+  const revenueMax = showRevenue ? Math.max(...data.map((item) => item.revenue), 1) : 1
+  const profitMax = showProfit ? Math.max(...data.map((item) => Math.max(0, item.profit)), 1) : 1
+  const moneyMax = Math.max(showRevenue ? revenueMax : 0, showProfit ? profitMax : 0, 1)
+  const ordersMax = showOrders ? Math.max(...data.map((item) => item.orders), 1) : 1
 
   const xForIndex = (index: number) =>
     paddingLeft + (index / Math.max(1, data.length - 1)) * chartWidth
@@ -9126,6 +9359,11 @@ function FinancialEvolutionChart({ data }: { data: SalesEvolutionPoint[] }) {
   const barStep = chartWidth / Math.max(1, data.length)
   const barWidth = Math.max(8, Math.min(20, barStep * 0.45))
 
+  const dayOnly = (label: string) => {
+    const parts = label.split("/")
+    return parts[0] ?? label
+  }
+
   return (
     <div className="space-y-3">
       <div className="h-[280px] rounded-none border border-border bg-muted/10 p-2">
@@ -9144,24 +9382,28 @@ function FinancialEvolutionChart({ data }: { data: SalesEvolutionPoint[] }) {
                   stroke="rgba(148,163,184,0.28)"
                   strokeDasharray="3 3"
                 />
-                <text
-                  x={paddingLeft - 10}
-                  y={y + 4}
-                  textAnchor="end"
-                  fontSize="10"
-                  className="fill-muted-foreground"
-                >
-                  {formatCurrency(moneyValue)}
-                </text>
-                <text
-                  x={paddingLeft + chartWidth + 8}
-                  y={y + 4}
-                  textAnchor="start"
-                  fontSize="10"
-                  className="fill-muted-foreground"
-                >
-                  {ordersValue}
-                </text>
+                {(showRevenue || showProfit) && (
+                  <text
+                    x={paddingLeft - 10}
+                    y={y + 4}
+                    textAnchor="end"
+                    fontSize="10"
+                    className="fill-muted-foreground"
+                  >
+                    {formatCurrency(moneyValue)}
+                  </text>
+                )}
+                {showOrders && (
+                  <text
+                    x={paddingLeft + chartWidth + 8}
+                    y={y + 4}
+                    textAnchor="start"
+                    fontSize="10"
+                    className="fill-muted-foreground"
+                  >
+                    {ordersValue}
+                  </text>
+                )}
               </g>
             )
           })}
@@ -9174,48 +9416,56 @@ function FinancialEvolutionChart({ data }: { data: SalesEvolutionPoint[] }) {
             stroke="rgba(100,116,139,0.55)"
           />
 
-          {ordersValues.map((value, index) => {
-            const xCenter = xForIndex(index)
-            const y = yForOrders(value)
-            const h = paddingTop + chartHeight - y
-            return (
-              <rect
-                key={`order-bar-${data[index]?.key ?? index}`}
-                x={xCenter - barWidth / 2}
-                y={y}
-                width={barWidth}
-                height={Math.max(1, h)}
-                fill="rgba(168,85,247,0.38)"
-                stroke="rgba(168,85,247,0.75)"
-                strokeWidth="0.8"
-                rx="3"
-              />
-            )
-          })}
+          {showOrders &&
+            ordersValues.map((value, index) => {
+              const xCenter = xForIndex(index)
+              const y = yForOrders(value)
+              const h = paddingTop + chartHeight - y
+              return (
+                <rect
+                  key={`order-bar-${data[index]?.key ?? index}`}
+                  x={xCenter - barWidth / 2}
+                  y={y}
+                  width={barWidth}
+                  height={Math.max(1, h)}
+                  fill="rgba(168,85,247,0.38)"
+                  stroke="rgba(168,85,247,0.75)"
+                  strokeWidth="0.8"
+                  rx="3"
+                />
+              )
+            })}
 
-          <polygon points={revenueArea} fill="rgba(59, 130, 246, 0.12)" />
-          <polyline points={revenuePoints} fill="none" stroke="#2563eb" strokeWidth="3" />
-          <polyline points={profitPoints} fill="none" stroke="#16a34a" strokeWidth="2.5" />
+          {showRevenue && (
+            <>
+              <polygon points={revenueArea} fill="rgba(59, 130, 246, 0.12)" />
+              <polyline points={revenuePoints} fill="none" stroke="#2563eb" strokeWidth="3" />
+              {revenueValues.map((value, index) => (
+                <circle
+                  key={`rev-dot-${data[index]?.key ?? index}`}
+                  cx={xForIndex(index)}
+                  cy={yForMoney(value)}
+                  r="3.2"
+                  fill="#2563eb"
+                />
+              ))}
+            </>
+          )}
 
-          {revenueValues.map((value, index) => (
-            <circle
-              key={`rev-dot-${data[index]?.key ?? index}`}
-              cx={xForIndex(index)}
-              cy={yForMoney(value)}
-              r="3.2"
-              fill="#2563eb"
-            />
-          ))}
-
-          {profitValues.map((value, index) => (
-            <circle
-              key={`profit-dot-${data[index]?.key ?? index}`}
-              cx={xForIndex(index)}
-              cy={yForMoney(value)}
-              r="2.8"
-              fill="#16a34a"
-            />
-          ))}
+          {showProfit && (
+            <>
+              <polyline points={profitPoints} fill="none" stroke="#16a34a" strokeWidth="2.5" />
+              {profitValues.map((value, index) => (
+                <circle
+                  key={`profit-dot-${data[index]?.key ?? index}`}
+                  cx={xForIndex(index)}
+                  cy={yForMoney(value)}
+                  r="2.8"
+                  fill="#16a34a"
+                />
+              ))}
+            </>
+          )}
 
           {data.map((item, index) => (
             <text
@@ -9226,24 +9476,46 @@ function FinancialEvolutionChart({ data }: { data: SalesEvolutionPoint[] }) {
               fontSize="10"
               className="fill-muted-foreground"
             >
-              {item.label}
+              {dayOnly(item.label)}
             </text>
           ))}
         </svg>
       </div>
       <div className="flex flex-wrap items-center gap-3 text-xs">
-        <span className="inline-flex items-center gap-1">
+        <button
+          type="button"
+          onClick={() => setShowRevenue((v) => !v)}
+          className={cn(
+            "inline-flex cursor-pointer items-center gap-1 rounded-full border px-2 py-0.5 transition-opacity",
+            !showRevenue && "opacity-40",
+          )}
+        >
           <span className="h-2 w-2 rounded-full bg-blue-600" />
           Receita
-        </span>
-        <span className="inline-flex items-center gap-1">
+        </button>
+        <button
+          type="button"
+          onClick={() => setShowProfit((v) => !v)}
+          className={cn(
+            "inline-flex cursor-pointer items-center gap-1 rounded-full border px-2 py-0.5 transition-opacity",
+            !showProfit && "opacity-40",
+          )}
+        >
           <span className="h-2 w-2 rounded-full bg-emerald-600" />
           Lucro
-        </span>
-        <span className="inline-flex items-center gap-1">
+        </button>
+        <button
+          type="button"
+          onClick={() => setShowOrders((v) => !v)}
+          className={cn(
+            "inline-flex cursor-pointer items-center gap-1 rounded-full border px-2 py-0.5 transition-opacity",
+            !showOrders && "opacity-40",
+          )}
+        >
           <span className="h-2 w-2 rounded-full bg-purple-500" />
-          Pedidos (barras)
-        </span>
+          Pedidos
+        </button>
+        <span className="text-muted-foreground">Dia</span>
       </div>
     </div>
   )
