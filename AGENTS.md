@@ -32,7 +32,7 @@ Convex agent skills for common tasks can be installed by running `npx convex ai-
 ### Gotchas
 
 - **Node.js 20** is required (`@types/node` is `^20`; CI uses Node 20). Run `nvm use 20` before any command.
-- **Clerk production keys** are domain-locked to `branchcommerce8.com`. The sign-in/sign-up pages render blank on `localhost` because Clerk JS refuses to load. Server-side rendering still works (HTTP 200). To test authenticated flows locally, Clerk development keys would be needed.
+- **Clerk production keys** are domain-locked to `branchcommercehub.com`. The sign-in/sign-up pages render blank on `localhost` because Clerk JS refuses to load. Authenticated UI flows (dashboard, ML integration, stock) **cannot be tested** by cloud agents. Validate auth-dependent logic via automated tests and Convex CLI instead.
 - **Convex agent mode**: Cloud agents must use `CONVEX_AGENT_MODE=anonymous` when running `npx convex dev` to avoid conflicting with the user's dev deployment. This creates an isolated anonymous deployment.
 - **`.env.local`** is not committed. Cloud agents must create it from injected environment secrets before starting services. Required vars: `NEXT_PUBLIC_CONVEX_URL`, `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY`, `CLERK_SECRET_KEY`, `TOKEN_ENCRYPTION_KEY`, `CONVEX_DEPLOYMENT`.
 - **Standard commands** are in `package.json` scripts — see `docs/guia-setup-ci.md` for the full CI/CD reference.
@@ -44,3 +44,18 @@ Convex agent skills for common tasks can be installed by running `npx convex ai-
 - Typecheck: `npm run typecheck`
 - Tests: `npm run test` (Vitest, 246 tests) and `npm run test:jest` (Jest smoke, 1 test)
 - Build: `npm run build`
+
+### Convex backend validation (without browser auth)
+
+Since Clerk blocks localhost, use the Convex CLI to validate backend logic:
+
+```bash
+npx convex run finance:getDashboardData '{"userId": "test-user"}'
+npx convex run finance:addCategory '{"userId": "test-user", "name": "Cat", "kind": "income"}'
+npx convex run stock:getDashboardData '{"userId": "test-user"}'
+```
+
+Public API routes that don't require Clerk auth:
+- `GET /api/ml/notifications` — ML webhook receiver
+- `POST /api/branch-hunter/cost` — extension sync (needs `BRANCH_HUNTER_SYNC_KEY`)
+- `GET /api/branch-hunter/ml-reviews` — extension reviews (needs `BRANCH_HUNTER_SYNC_KEY`)
