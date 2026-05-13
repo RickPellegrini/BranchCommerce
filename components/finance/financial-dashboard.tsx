@@ -160,6 +160,15 @@ type StockProduct = {
   supplier?: string
 }
 
+type StockKanbanCard = {
+  id: string
+  productId: string
+  kanbanStatus: KanbanStatus
+  quantity: number
+  note?: string
+  estimatedArrival?: string
+}
+
 type StockMovement = {
   id: string
   productId: string
@@ -1665,6 +1674,9 @@ export function FinancialDashboard() {
   const applyKanbanMoveMutation = useMutation(api.stock.applyKanbanMove)
   const deleteProduct = useMutation(api.stock.deleteProduct)
   const addMovement = useMutation(api.stock.addMovement)
+  const addKanbanCard = useMutation(api.stock.addKanbanCard)
+  const updateKanbanCard = useMutation(api.stock.updateKanbanCard)
+  const deleteKanbanCard = useMutation(api.stock.deleteKanbanCard)
   const setProductKanbanHidden = useMutation(api.stock.setProductKanbanHidden)
   const addManualStockEntryMutation = useMutation(api.stock.addManualStockEntry)
   const addExpenseWithPayment = useMutation(api.finance.addExpenseWithPayment)
@@ -1795,14 +1807,18 @@ export function FinancialDashboard() {
           return
         }
 
-        await loadMlOrders()
+        await loadMlOrders({
+          startDate: filters.startDate,
+          endDate: filters.endDate,
+        })
       } catch {
         // Keep financial module resilient when ML integration is unavailable.
       }
     }
 
     void loadOrdersForFinancial()
-  }, [activeModule, userId])
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- loadMlOrders is a local fetch helper; reload is driven by module/user/date range.
+  }, [activeModule, filters.endDate, filters.startDate, userId])
 
   const categories = useMemo<FinancialCategory[]>(
     () =>
@@ -1859,6 +1875,19 @@ export function FinancialDashboard() {
     [stockData?.products],
   )
 
+  const stockKanbanCards = useMemo<StockKanbanCard[]>(
+    () =>
+      (stockData?.kanbanCards ?? []).map((item) => ({
+        id: item._id,
+        productId: item.productId,
+        kanbanStatus: item.kanbanStatus,
+        quantity: item.quantity,
+        note: item.note,
+        estimatedArrival: item.estimatedArrival,
+      })),
+    [stockData?.kanbanCards],
+  )
+
   const productNameSuggestionCandidates = useMemo<ProductSuggestionCandidate[]>(
     () =>
       products
@@ -1874,28 +1903,56 @@ export function FinancialDashboard() {
     [products],
   )
 
-  const kanbanProducts = useMemo<KanbanProduct[]>(
-    () =>
-      products.map((p) => ({
-        id: p.id,
-        name: p.name,
-        sku: p.sku,
-        mlItemId: p.mlItemId,
-        mlItemAliases: p.mlItemAliases,
-        imageUrl: p.imageUrl,
-        category: p.category,
-        quantity: p.quantity,
-        minStock: p.minStock,
-        unitCost: p.unitCost,
-        sellingPrice: p.sellingPrice,
-        kanbanStatus: p.kanbanStatus ?? (p.quantity > 0 ? "in_stock" : "purchased"),
-        kanbanNote: p.kanbanNote,
-        estimatedArrival: p.estimatedArrival,
-        kanbanHidden: p.kanbanHidden,
-        supplier: p.supplier,
-      })),
-    [products],
-  )
+  const kanbanProducts = useMemo<KanbanProduct[]>(() => {
+    const baseProducts = products.map((p) => ({
+      id: p.id,
+      stockProductId: p.id,
+      name: p.name,
+      sku: p.sku,
+      mlItemId: p.mlItemId,
+      mlItemAliases: p.mlItemAliases,
+      imageUrl: p.imageUrl,
+      category: p.category,
+      quantity: p.quantity,
+      minStock: p.minStock,
+      unitCost: p.unitCost,
+      sellingPrice: p.sellingPrice,
+      kanbanStatus: p.kanbanStatus ?? (p.quantity > 0 ? "in_stock" : "purchased"),
+      kanbanNote: p.kanbanNote,
+      estimatedArrival: p.estimatedArrival,
+      kanbanHidden: p.kanbanHidden,
+      supplier: p.supplier,
+    }))
+    const byProductId = new Map(products.map((product) => [product.id, product]))
+    const extraCards = stockKanbanCards.flatMap((card) => {
+      const p = byProductId.get(card.productId)
+      if (!p) return []
+      return [
+        {
+          id: `kanban-card:${card.id}`,
+          stockProductId: p.id,
+          kanbanCardId: card.id,
+          isExtraKanbanCard: true,
+          name: p.name,
+          sku: p.sku,
+          mlItemId: p.mlItemId,
+          mlItemAliases: p.mlItemAliases,
+          imageUrl: p.imageUrl,
+          category: p.category,
+          quantity: card.quantity,
+          minStock: p.minStock,
+          unitCost: p.unitCost,
+          sellingPrice: p.sellingPrice,
+          kanbanStatus: card.kanbanStatus,
+          kanbanNote: card.note,
+          estimatedArrival: card.estimatedArrival,
+          kanbanHidden: p.kanbanHidden,
+          supplier: p.supplier,
+        },
+      ]
+    })
+    return [...baseProducts, ...extraCards]
+  }, [products, stockKanbanCards])
 
   const kanbanTimelineEvents = useMemo<ProductKanbanEventRow[]>(
     () =>
@@ -2145,12 +2202,18 @@ export function FinancialDashboard() {
   )
 
   const stockSummary = useMemo(() => {
+    const extraUnits = stockKanbanCards.reduce((total, card) => total + card.quantity, 0)
+    const extraStockValue = stockKanbanCards.reduce((total, card) => {
+      const product = productMap.get(card.productId)
+      return total + card.quantity * (product?.unitCost ?? 0)
+    }, 0)
     const totalProducts = products.length
-    const totalUnits = products.reduce((total, item) => total + item.quantity, 0)
+    const totalUnits = products.reduce((total, item) => total + item.quantity, 0) + extraUnits
     const lowStockCount = products.filter((item) => item.quantity <= item.minStock).length
-    const stockValue = products.reduce((total, item) => total + item.quantity * item.unitCost, 0)
+    const stockValue =
+      products.reduce((total, item) => total + item.quantity * item.unitCost, 0) + extraStockValue
     return { totalProducts, totalUnits, lowStockCount, stockValue }
-  }, [products])
+  }, [productMap, products, stockKanbanCards])
   const filteredMovements = useMemo(
     () =>
       movements.filter((movement) => {
@@ -3317,12 +3380,16 @@ export function FinancialDashboard() {
     target: KanbanColumnId,
     note?: string,
     estimatedArrival?: string,
+    kanbanCardId?: string,
   ) => {
     if (!userId) return
     try {
       await applyKanbanMoveMutation({
         userId,
         productId: productId as Id<"stockProducts">,
+        ...(kanbanCardId !== undefined && {
+          kanbanCardId: kanbanCardId as Id<"stockKanbanCards">,
+        }),
         target,
         ...(note !== undefined && { kanbanNote: note }),
         ...(estimatedArrival !== undefined && { estimatedArrival }),
@@ -3336,7 +3403,11 @@ export function FinancialDashboard() {
     }
   }
 
-  const handleKanbanSaveEdits = async (productId: string, updates: Partial<KanbanProduct>) => {
+  const handleKanbanSaveEdits = async (
+    productId: string,
+    updates: Partial<KanbanProduct>,
+    kanbanCardId?: string,
+  ) => {
     if (!userId) return
     const p = products.find((x) => x.id === productId)
     if (!p) return
@@ -3348,7 +3419,18 @@ export function FinancialDashboard() {
       resolvedKanban = "in_stock"
     }
     try {
-      if (p.quantity > 0 && nextQty === 0) {
+      if (kanbanCardId !== undefined) {
+        await updateKanbanCard({
+          userId,
+          kanbanCardId: kanbanCardId as Id<"stockKanbanCards">,
+          ...(updates.quantity !== undefined && { quantity: updates.quantity }),
+          ...(updates.kanbanStatus !== undefined && { kanbanStatus: updates.kanbanStatus }),
+          ...(updates.kanbanNote !== undefined && { note: updates.kanbanNote }),
+          ...(updates.estimatedArrival !== undefined && {
+            estimatedArrival: updates.estimatedArrival,
+          }),
+        })
+      } else if (p.quantity > 0 && nextQty === 0) {
         await applyKanbanMoveMutation({
           userId,
           productId: p.id as Id<"stockProducts">,
@@ -3364,14 +3446,23 @@ export function FinancialDashboard() {
         productId: p.id as Id<"stockProducts">,
         name: p.name,
         category: p.category,
-        quantity: nextQty,
+        quantity: kanbanCardId !== undefined ? p.quantity : nextQty,
         minStock: updates.minStock ?? p.minStock,
         unitCost: nextUnitCost,
         sellingPrice: p.sellingPrice,
-        kanbanStatus: resolvedKanban,
-        kanbanNote: updates.kanbanNote !== undefined ? updates.kanbanNote : p.kanbanNote,
+        kanbanStatus: kanbanCardId !== undefined ? p.kanbanStatus : resolvedKanban,
+        kanbanNote:
+          kanbanCardId !== undefined
+            ? p.kanbanNote
+            : updates.kanbanNote !== undefined
+              ? updates.kanbanNote
+              : p.kanbanNote,
         estimatedArrival:
-          updates.estimatedArrival !== undefined ? updates.estimatedArrival : p.estimatedArrival,
+          kanbanCardId !== undefined
+            ? p.estimatedArrival
+            : updates.estimatedArrival !== undefined
+              ? updates.estimatedArrival
+              : p.estimatedArrival,
         ...(updates.mlItemId !== undefined && { mlItemId: updates.mlItemId }),
         ...(updates.mlItemAliases !== undefined && { mlItemAliases: updates.mlItemAliases }),
       })
@@ -3384,9 +3475,50 @@ export function FinancialDashboard() {
     }
   }
 
-  const handleKanbanDelete = async (productId: string) => {
+  const handleKanbanDelete = async (productId: string, kanbanCardId?: string) => {
+    if (kanbanCardId && userId) {
+      try {
+        await deleteKanbanCard({
+          userId,
+          kanbanCardId: kanbanCardId as Id<"stockKanbanCards">,
+        })
+        setProductFeedback({ type: "success", message: "Card removido do Kanban." })
+      } catch (error) {
+        setProductFeedback({
+          type: "error",
+          message: error instanceof Error ? error.message : "Nao foi possivel remover o card.",
+        })
+      }
+      return
+    }
     const p = products.find((x) => x.id === productId)
     if (p) await removeProduct(p)
+  }
+
+  const handleAddKanbanCard = async (
+    productId: string,
+    target: KanbanColumnId,
+    quantity: number,
+    note?: string,
+    estimatedArrival?: string,
+  ) => {
+    if (!userId || target === "em_falta") return
+    try {
+      await addKanbanCard({
+        userId,
+        productId: productId as Id<"stockProducts">,
+        kanbanStatus: target,
+        quantity,
+        ...(note !== undefined && { note }),
+        ...(estimatedArrival !== undefined && { estimatedArrival }),
+      })
+      setProductFeedback({ type: "success", message: "Card extra criado no Kanban." })
+    } catch (error) {
+      setProductFeedback({
+        type: "error",
+        message: error instanceof Error ? error.message : "Nao foi possivel criar o card.",
+      })
+    }
   }
 
   const handleToggleProductHidden = async (productId: string, hidden: boolean) => {
@@ -3636,26 +3768,30 @@ export function FinancialDashboard() {
     }
   }
 
-  const loadMlOrders = async () => {
+  const normalizeMlOrders = (rawOrders: MlOrder[]) =>
+    rawOrders.map((order) => ({
+      ...order,
+      items: order.items.map((item) => ({
+        ...item,
+        id: item.id ? normalizeMercadoLibreItemId(item.id) : "",
+      })),
+    }))
+
+  const loadMlOrders = async (range?: { startDate?: string; endDate?: string }) => {
     setMlError(null)
     setMlOrdersLoading(true)
     try {
-      const response = await fetch("/api/ml/orders?limit=20&offset=0", { cache: "no-store" })
+      const params = new URLSearchParams({ all: "1" })
+      if (range?.startDate) params.set("startDate", range.startDate)
+      if (range?.endDate) params.set("endDate", range.endDate)
+      const response = await fetch(`/api/ml/orders?${params.toString()}`, { cache: "no-store" })
       const payload = await response.json()
       if (!response.ok || !payload.ok) {
         throw new Error(payload.error ?? "Falha ao buscar pedidos.")
       }
       setMlOrdersCount(payload.data.total ?? 0)
       const rawOrders = (payload.data.orders ?? []) as MlOrder[]
-      setMlOrders(
-        rawOrders.map((o) => ({
-          ...o,
-          items: o.items.map((i) => ({
-            ...i,
-            id: i.id ? normalizeMercadoLibreItemId(i.id) : "",
-          })),
-        })),
-      )
+      setMlOrders(normalizeMlOrders(rawOrders))
     } catch (error) {
       setMlError(error instanceof Error ? error.message : "Erro ao buscar pedidos.")
     } finally {
@@ -3934,6 +4070,7 @@ export function FinancialDashboard() {
     if (activeMlSection === "metrics" && !mlMetrics && !mlMetricsLoading) {
       void loadMlMetrics()
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- bootstrapping is controlled by section flags, not helper identity.
   }, [
     activeMlSection,
     activeModule,
@@ -7525,6 +7662,7 @@ export function FinancialDashboard() {
                   onUpdateKanbanStatus={handleKanbanUpdateStatus}
                   onSaveProductEdits={handleKanbanSaveEdits}
                   onDeleteProduct={handleKanbanDelete}
+                  onAddKanbanCard={handleAddKanbanCard}
                   onToggleProductHidden={handleToggleProductHidden}
                   onSyncWithMl={handleKanbanSyncWithMl}
                   mlSyncing={mlSyncingStock}

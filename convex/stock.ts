@@ -37,7 +37,12 @@ export const getDashboardData = query({
       .withIndex("by_user", (queryBuilder) => queryBuilder.eq("userId", args.userId))
       .collect()
 
-    return { products, movements, kanbanEvents }
+    const kanbanCards = await ctx.db
+      .query("stockKanbanCards")
+      .withIndex("by_user", (queryBuilder) => queryBuilder.eq("userId", args.userId))
+      .collect()
+
+    return { products, movements, kanbanEvents, kanbanCards }
   },
 })
 
@@ -129,6 +134,54 @@ async function logKanbanTransition(
       `[stock.logKanbanTransition] failed user=${args.userId} product=${args.productId} ${args.fromStatus}->${args.toStatus}: ${reason}`,
     )
   }
+}
+
+async function upsertKanbanCardForStatus(
+  ctx: MutationCtx,
+  args: {
+    userId: string
+    productId: Id<"stockProducts">
+    kanbanStatus:
+      | "purchased"
+      | "planned"
+      | "buying"
+      | "in_transit"
+      | "awaiting_inspection"
+      | "returned"
+      | "completed"
+      | "in_stock"
+      | "fulfillment"
+    quantity: number
+    note?: string
+  },
+) {
+  const existing = await ctx.db
+    .query("stockKanbanCards")
+    .withIndex("by_user_product_status", (q) =>
+      q
+        .eq("userId", args.userId)
+        .eq("productId", args.productId)
+        .eq("kanbanStatus", args.kanbanStatus),
+    )
+    .first()
+  const now = Date.now()
+  if (existing) {
+    await ctx.db.patch(existing._id, {
+      quantity: args.quantity,
+      ...(args.note !== undefined && { note: args.note }),
+      updatedAt: now,
+    })
+    return existing._id
+  }
+  return await ctx.db.insert("stockKanbanCards", {
+    userId: args.userId,
+    productId: args.productId,
+    kanbanStatus: args.kanbanStatus,
+    quantity: args.quantity,
+    note: args.note,
+    createdAt: now,
+    updatedAt: now,
+  })
 }
 
 export const updateProduct = mutation({
@@ -225,6 +278,101 @@ export const updateProduct = mutation({
   },
 })
 
+export const addKanbanCard = mutation({
+  args: {
+    userId: v.string(),
+    productId: v.id("stockProducts"),
+    kanbanStatus: kanbanStatusValidator,
+    quantity: v.number(),
+    note: v.optional(v.string()),
+    estimatedArrival: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => {
+    const product = await ctx.db.get(args.productId)
+    if (!product || product.userId !== args.userId) {
+      throw new Error("Produto nao encontrado.")
+    }
+    if (args.quantity < 0) {
+      throw new Error("Quantidade deve ser zero ou positiva.")
+    }
+
+    const now = Date.now()
+    const cardId = await ctx.db.insert("stockKanbanCards", {
+      userId: args.userId,
+      productId: args.productId,
+      kanbanStatus: args.kanbanStatus,
+      quantity: args.quantity,
+      note: args.note?.trim() || undefined,
+      estimatedArrival: args.estimatedArrival,
+      createdAt: now,
+      updatedAt: now,
+    })
+
+    await logKanbanTransition(ctx, {
+      userId: args.userId,
+      productId: args.productId,
+      fromStatus: "novo-card",
+      toStatus: args.kanbanStatus,
+      note: args.note,
+    })
+
+    return cardId
+  },
+})
+
+export const updateKanbanCard = mutation({
+  args: {
+    userId: v.string(),
+    kanbanCardId: v.id("stockKanbanCards"),
+    kanbanStatus: v.optional(kanbanStatusValidator),
+    quantity: v.optional(v.number()),
+    note: v.optional(v.string()),
+    estimatedArrival: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => {
+    const card = await ctx.db.get(args.kanbanCardId)
+    if (!card || card.userId !== args.userId) {
+      throw new Error("Card do Kanban nao encontrado.")
+    }
+    if (args.quantity !== undefined && args.quantity < 0) {
+      throw new Error("Quantidade deve ser zero ou positiva.")
+    }
+
+    const nextStatus = args.kanbanStatus ?? card.kanbanStatus
+    if (args.kanbanStatus !== undefined && args.kanbanStatus !== card.kanbanStatus) {
+      await logKanbanTransition(ctx, {
+        userId: args.userId,
+        productId: card.productId,
+        fromStatus: card.kanbanStatus,
+        toStatus: args.kanbanStatus,
+        note: args.note,
+      })
+    }
+
+    await ctx.db.patch(args.kanbanCardId, {
+      kanbanStatus: nextStatus,
+      ...(args.quantity !== undefined && { quantity: args.quantity }),
+      ...(args.note !== undefined && { note: args.note.trim() || undefined }),
+      ...(args.estimatedArrival !== undefined && { estimatedArrival: args.estimatedArrival }),
+      updatedAt: Date.now(),
+    })
+  },
+})
+
+export const deleteKanbanCard = mutation({
+  args: {
+    userId: v.string(),
+    kanbanCardId: v.id("stockKanbanCards"),
+  },
+  handler: async (ctx, args) => {
+    const card = await ctx.db.get(args.kanbanCardId)
+    if (!card || card.userId !== args.userId) {
+      throw new Error("Card do Kanban nao encontrado.")
+    }
+    await ctx.db.delete(args.kanbanCardId)
+  },
+})
+
 export const updateProductKanban = mutation({
   args: {
     userId: v.string(),
@@ -277,6 +425,7 @@ export const applyKanbanMove = mutation({
   args: {
     userId: v.string(),
     productId: v.id("stockProducts"),
+    kanbanCardId: v.optional(v.id("stockKanbanCards")),
     target: kanbanMoveTargetValidator,
     kanbanNote: v.optional(v.string()),
     estimatedArrival: v.optional(v.string()),
@@ -294,6 +443,38 @@ export const applyKanbanMove = mutation({
     const notePatch = args.kanbanNote !== undefined ? { kanbanNote: args.kanbanNote } : {}
     const arrivalPatch =
       args.estimatedArrival !== undefined ? { estimatedArrival: args.estimatedArrival } : {}
+
+    if (args.kanbanCardId !== undefined) {
+      const card = await ctx.db.get(args.kanbanCardId)
+      if (!card || card.userId !== args.userId || card.productId !== args.productId) {
+        throw new Error("Card do Kanban nao encontrado.")
+      }
+
+      const nextStatus = args.target === "em_falta" ? "in_stock" : args.target
+      if (args.target === "in_stock" && card.quantity <= 0) {
+        throw new Error(
+          "Sem unidades neste card. Ajuste a quantidade antes de colocar em No estoque.",
+        )
+      }
+      if (card.kanbanStatus !== nextStatus || args.target === "em_falta") {
+        await logKanbanTransition(ctx, {
+          userId: args.userId,
+          productId: args.productId,
+          fromStatus: card.kanbanStatus,
+          toStatus: args.target,
+          note: args.kanbanNote,
+        })
+      }
+
+      await ctx.db.patch(args.kanbanCardId, {
+        kanbanStatus: nextStatus,
+        ...(args.target === "em_falta" && { quantity: 0 }),
+        ...(args.kanbanNote !== undefined && { note: args.kanbanNote }),
+        ...arrivalPatch,
+        updatedAt: now,
+      })
+      return
+    }
 
     if (args.target === "em_falta") {
       const prevQty = product.quantity
@@ -611,16 +792,27 @@ export const syncFromMercadoLivre = mutation({
           sellingPrice: listing.price,
           updatedAt: now,
         }
-        if (isFull && existing.kanbanStatus !== "fulfillment") {
-          patchData.kanbanStatus = "fulfillment"
-        }
-        if (isFull) {
+        if (isFull && existing.kanbanStatus === "fulfillment") {
           patchData.quantity = nextQuantity
           patchData.stockSource = "ml_full"
         }
         await ctx.db.patch(existing._id, patchData)
 
-        if (isFull && existing.quantity !== nextQuantity) {
+        if (isFull && existing.kanbanStatus !== "fulfillment") {
+          await upsertKanbanCardForStatus(ctx, {
+            userId: args.userId,
+            productId: existing._id,
+            kanbanStatus: "fulfillment",
+            quantity: nextQuantity,
+            note: "Quantidade no Full sincronizada pelo Mercado Livre",
+          })
+        }
+
+        if (
+          isFull &&
+          existing.kanbanStatus === "fulfillment" &&
+          existing.quantity !== nextQuantity
+        ) {
           await ctx.db.insert("stockMovements", {
             userId: args.userId,
             productId: existing._id,
@@ -709,6 +901,16 @@ export const deleteProduct = mutation({
       .collect()
     for (const ev of events) {
       await ctx.db.delete(ev._id)
+    }
+
+    const kanbanCards = await ctx.db
+      .query("stockKanbanCards")
+      .withIndex("by_user_product", (q) =>
+        q.eq("userId", args.userId).eq("productId", args.productId),
+      )
+      .collect()
+    for (const card of kanbanCards) {
+      await ctx.db.delete(card._id)
     }
 
     await ctx.db.delete(args.productId)
@@ -835,22 +1037,21 @@ export const reconcileWithMlData = mutation({
         patch.sellingPrice = item.price
       }
 
+      const nextQty = isFull ? Math.max(0, Math.floor(item.availableQuantity)) : product.quantity
       if (isFull && product.kanbanStatus !== "fulfillment") {
-        await logKanbanTransition(ctx, {
+        await upsertKanbanCardForStatus(ctx, {
           userId: args.userId,
           productId: product._id,
-          fromStatus: product.kanbanStatus ?? "purchased",
-          toStatus: "fulfillment",
-          note: "Reconciliação ML (fulfillment)",
+          kanbanStatus: "fulfillment",
+          quantity: nextQty,
+          note: "Quantidade no Full sincronizada pelo Mercado Livre",
         })
-        patch.kanbanStatus = "fulfillment"
       }
       if (isFull) {
         patch.stockSource = "ml_full"
       }
 
-      const nextQty = isFull ? Math.max(0, Math.floor(item.availableQuantity)) : product.quantity
-      if (nextQty !== product.quantity) {
+      if (isFull && product.kanbanStatus === "fulfillment" && nextQty !== product.quantity) {
         patch.quantity = nextQty
         await ctx.db.insert("stockMovements", {
           userId: args.userId,
@@ -1083,6 +1284,14 @@ export const mergeProductDuplicates = mutation({
           await ctx.db.delete(e._id)
         }
 
+        const kanbanCards = await ctx.db
+          .query("stockKanbanCards")
+          .withIndex("by_user_product", (q) => q.eq("userId", args.userId).eq("productId", dup._id))
+          .collect()
+        for (const card of kanbanCards) {
+          await ctx.db.delete(card._id)
+        }
+
         await ctx.db.delete(dup._id)
         removed += 1
       }
@@ -1291,6 +1500,12 @@ export const resetStockToReality = mutation({
         .withIndex("by_user_product", (q) => q.eq("userId", args.userId).eq("productId", p._id))
         .collect()
       for (const e of events) await ctx.db.delete(e._id)
+
+      const kanbanCards = await ctx.db
+        .query("stockKanbanCards")
+        .withIndex("by_user_product", (q) => q.eq("userId", args.userId).eq("productId", p._id))
+        .collect()
+      for (const card of kanbanCards) await ctx.db.delete(card._id)
 
       await ctx.db.delete(p._id)
     }

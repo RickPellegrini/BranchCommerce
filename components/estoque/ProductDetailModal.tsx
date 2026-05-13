@@ -6,6 +6,13 @@ import { X, ChevronRight, Package, Plus } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Textarea } from "@/components/ui/textarea"
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select"
 import { KanbanStageIcon } from "./column-icons"
 import {
   type KanbanColumnId,
@@ -36,6 +43,12 @@ interface ProductDetailModalProps {
   onClose: () => void
   onMoveTo: (target: KanbanColumnId, note?: string, estimatedArrival?: string) => Promise<void>
   onSaveEdits: (updates: Partial<KanbanProduct>) => Promise<void>
+  onAddKanbanCard?: (
+    target: KanbanColumnId,
+    quantity: number,
+    note?: string,
+    estimatedArrival?: string,
+  ) => Promise<void>
 }
 
 export function ProductDetailModal({
@@ -45,6 +58,7 @@ export function ProductDetailModal({
   onClose,
   onMoveTo,
   onSaveEdits,
+  onAddKanbanCard,
 }: ProductDetailModalProps) {
   const [note, setNote] = useState(product.kanbanNote ?? "")
   const [estimatedArrival, setEstimatedArrival] = useState(product.estimatedArrival ?? "")
@@ -56,6 +70,9 @@ export function ProductDetailModal({
   const [aliases, setAliases] = useState<string[]>(product.mlItemAliases ?? [])
   const [newAlias, setNewAlias] = useState("")
   const [aliasError, setAliasError] = useState<string | null>(null)
+  const [newCardStatus, setNewCardStatus] = useState<KanbanColumnId>("fulfillment")
+  const [newCardQuantity, setNewCardQuantity] = useState("")
+  const [newCardError, setNewCardError] = useState<string | null>(null)
   const [saving, setSaving] = useState(false)
   const [imageFailed, setImageFailed] = useState(false)
 
@@ -63,7 +80,7 @@ export function ProductDetailModal({
   const dotColor = urgencyColor(urgency)
 
   const productMovements = movements
-    .filter((m) => m.productId === product.id)
+    .filter((m) => m.productId === product.stockProductId)
     .sort((a, b) => b.date.localeCompare(a.date))
     .slice(0, 10)
 
@@ -127,6 +144,28 @@ export function ProductDetailModal({
     setSaving(true)
     try {
       await onMoveTo(nextCol.id, note || undefined, estimatedArrival || undefined)
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  async function handleAddKanbanCard() {
+    if (!onAddKanbanCard) return
+    setNewCardError(null)
+    const quantity = Number(newCardQuantity)
+    if (!Number.isFinite(quantity) || quantity < 0) {
+      setNewCardError("Informe uma quantidade valida para o novo card.")
+      return
+    }
+    setSaving(true)
+    try {
+      await onAddKanbanCard(
+        newCardStatus,
+        quantity,
+        note || undefined,
+        estimatedArrival || undefined,
+      )
+      setNewCardQuantity("")
     } finally {
       setSaving(false)
     }
@@ -331,6 +370,53 @@ export function ProductDetailModal({
                 </Button>
               )}
             </div>
+
+            {onAddKanbanCard && (
+              <div className="rounded-xl border border-dashed border-border bg-muted/20 p-3">
+                <div className="mb-2">
+                  <h4 className="text-sm font-medium">Card extra no Kanban</h4>
+                  <p className="text-xs text-muted-foreground">
+                    Use para o mesmo produto aparecer em outro estágio com outra quantidade.
+                  </p>
+                </div>
+                <div className="grid gap-2 sm:grid-cols-[1fr_120px_auto]">
+                  <Select
+                    value={newCardStatus}
+                    onValueChange={(value) => setNewCardStatus(value as KanbanColumnId)}
+                  >
+                    <SelectTrigger>
+                      <SelectValue placeholder="Etapa" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {KANBAN_COLUMNS.map((column) => (
+                        <SelectItem key={column.id} value={column.id}>
+                          {column.label}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  <Input
+                    type="number"
+                    min={0}
+                    placeholder="Qtd"
+                    value={newCardQuantity}
+                    onChange={(event) => {
+                      setNewCardQuantity(event.target.value)
+                      setNewCardError(null)
+                    }}
+                  />
+                  <Button
+                    type="button"
+                    variant="outline"
+                    disabled={saving}
+                    onClick={handleAddKanbanCard}
+                  >
+                    Criar card
+                  </Button>
+                </div>
+                {newCardError && <p className="mt-2 text-xs text-destructive">{newCardError}</p>}
+              </div>
+            )}
 
             {kanbanEvents.length > 0 && (
               <div>

@@ -108,10 +108,22 @@ interface KanbanBoardProps {
     target: KanbanColumnId,
     note?: string,
     estimatedArrival?: string,
+    kanbanCardId?: string,
   ) => Promise<void>
-  onSaveProductEdits: (productId: string, updates: Partial<KanbanProduct>) => Promise<void>
-  onDeleteProduct: (productId: string) => Promise<void>
+  onSaveProductEdits: (
+    productId: string,
+    updates: Partial<KanbanProduct>,
+    kanbanCardId?: string,
+  ) => Promise<void>
+  onDeleteProduct: (productId: string, kanbanCardId?: string) => Promise<void>
   onToggleProductHidden?: (productId: string, hidden: boolean) => Promise<void>
+  onAddKanbanCard?: (
+    productId: string,
+    target: KanbanColumnId,
+    quantity: number,
+    note?: string,
+    estimatedArrival?: string,
+  ) => Promise<void>
   onSyncWithMl?: () => Promise<void>
   mlSyncing?: boolean
   mlSyncDisabled?: boolean
@@ -128,6 +140,7 @@ export function KanbanBoard({
   onSaveProductEdits,
   onDeleteProduct,
   onToggleProductHidden,
+  onAddKanbanCard,
   onSyncWithMl,
   mlSyncing = false,
   mlSyncDisabled = false,
@@ -343,7 +356,13 @@ export function KanbanBoard({
     const product = displayProducts.find((p) => p.id === active.id)
     if (!product) return
     if (getKanbanColumnId(product) === target) return
-    void onUpdateKanbanStatus(product.id, target)
+    void onUpdateKanbanStatus(
+      product.stockProductId,
+      target,
+      undefined,
+      undefined,
+      product.kanbanCardId,
+    )
   }
 
   const handleColumnDragEnd = useCallback((event: DragEndEvent) => {
@@ -531,13 +550,24 @@ export function KanbanBoard({
                         products={getColumnProducts(colId)}
                         onCardDetails={setSelectedProduct}
                         onCardMoveTo={(product, columnTarget) =>
-                          void onUpdateKanbanStatus(product.id, columnTarget)
+                          void onUpdateKanbanStatus(
+                            product.stockProductId,
+                            columnTarget,
+                            undefined,
+                            undefined,
+                            product.kanbanCardId,
+                          )
                         }
-                        onCardDelete={(product) => void onDeleteProduct(product.id)}
+                        onCardDelete={(product) =>
+                          void onDeleteProduct(product.stockProductId, product.kanbanCardId)
+                        }
                         onToggleCardHidden={
                           onToggleProductHidden
                             ? (product) =>
-                                void onToggleProductHidden(product.id, !product.kanbanHidden)
+                                void onToggleProductHidden(
+                                  product.stockProductId,
+                                  !product.kanbanHidden,
+                                )
                             : undefined
                         }
                       />
@@ -567,16 +597,42 @@ export function KanbanBoard({
         <ProductDetailModal
           product={selectedProduct}
           movements={movements}
-          kanbanEvents={kanbanTimelineEvents.filter((e) => e.productId === selectedProduct.id)}
+          kanbanEvents={kanbanTimelineEvents.filter(
+            (e) => e.productId === selectedProduct.stockProductId,
+          )}
           onClose={() => setSelectedProduct(null)}
           onMoveTo={async (target, note, arrival) => {
-            await onUpdateKanbanStatus(selectedProduct.id, target, note, arrival)
+            await onUpdateKanbanStatus(
+              selectedProduct.stockProductId,
+              target,
+              note,
+              arrival,
+              selectedProduct.kanbanCardId,
+            )
             setSelectedProduct(null)
           }}
           onSaveEdits={async (updates) => {
-            await onSaveProductEdits(selectedProduct.id, updates)
+            await onSaveProductEdits(
+              selectedProduct.stockProductId,
+              updates,
+              selectedProduct.kanbanCardId,
+            )
             setSelectedProduct(null)
           }}
+          onAddKanbanCard={
+            onAddKanbanCard
+              ? async (target, quantity, note, arrival) => {
+                  await onAddKanbanCard(
+                    selectedProduct.stockProductId,
+                    target,
+                    quantity,
+                    note,
+                    arrival,
+                  )
+                  setSelectedProduct(null)
+                }
+              : undefined
+          }
         />
       )}
     </div>
