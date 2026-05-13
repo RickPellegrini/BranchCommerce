@@ -15,6 +15,9 @@ export type UrgencyLevel = "critical" | "low" | "ok"
 
 export interface KanbanProduct {
   id: string
+  stockProductId: string
+  kanbanCardId?: string
+  isExtraKanbanCard?: boolean
   name: string
   sku: string
   mlItemId?: string

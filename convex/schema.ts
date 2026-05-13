@@ -122,6 +122,30 @@ export default defineSchema({
     .index("by_user", ["userId"])
     .index("by_user_product", ["userId", "productId"]),
 
+  stockKanbanCards: defineTable({
+    userId: v.string(),
+    productId: v.id("stockProducts"),
+    kanbanStatus: v.union(
+      v.literal("purchased"),
+      v.literal("planned"),
+      v.literal("buying"),
+      v.literal("in_transit"),
+      v.literal("awaiting_inspection"),
+      v.literal("returned"),
+      v.literal("completed"),
+      v.literal("in_stock"),
+      v.literal("fulfillment"),
+    ),
+    quantity: v.number(),
+    note: v.optional(v.string()),
+    estimatedArrival: v.optional(v.string()),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index("by_user", ["userId"])
+    .index("by_user_product", ["userId", "productId"])
+    .index("by_user_product_status", ["userId", "productId", "kanbanStatus"]),
+
   /** Log de mudanças de etapa no Kanban por produto */
   productKanbanEvents: defineTable({
     userId: v.string(),
