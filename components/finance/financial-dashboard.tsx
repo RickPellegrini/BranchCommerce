@@ -1610,14 +1610,6 @@ export function FinancialDashboard() {
     unavailableBalance: number
     totalAmount: number
     currencyId: string
-    source: "official" | "computed_from_extract"
-    /** Reason retornada pelo endpoint oficial quando recorremos ao computed. */
-    officialReason?: string
-    /** Metadata do calculo (janela e itens varridos). */
-    computedMeta?: {
-      windowSinceIso: string
-      itemsScanned: number
-    }
   } | null>(null)
   const [mpTransactions, setMpTransactions] = useState<
     Array<{
@@ -1665,33 +1657,26 @@ export function FinancialDashboard() {
       if (balJson.ok && balJson.data) {
         const d = balJson.data as {
           balanceUnavailable?: boolean
-          balanceSource?: "official" | "computed_from_extract" | "unavailable"
+          balanceSource?: "official" | "unavailable"
           availableBalance?: number | null
           unavailableBalance?: number | null
           totalAmount?: number | null
           currencyId?: string | null
-          officialReason?: string
-          computed?: {
-            windowSinceIso: string
-            itemsScanned: number
-          } | null
         }
-        const source = d.balanceSource ?? (d.balanceUnavailable ? "unavailable" : "official")
-        if (source === "unavailable" || d.availableBalance == null) {
+        const isUnavailable =
+          d.balanceUnavailable === true ||
+          d.balanceSource === "unavailable" ||
+          d.availableBalance == null
+        if (isUnavailable) {
           setMpBalance(null)
           setMpBalanceUnavailable(true)
         } else {
           setMpBalanceUnavailable(false)
           setMpBalance({
-            availableBalance: d.availableBalance,
+            availableBalance: d.availableBalance ?? 0,
             unavailableBalance: d.unavailableBalance ?? 0,
             totalAmount: d.totalAmount ?? 0,
             currencyId: d.currencyId ?? "BRL",
-            source: source === "computed_from_extract" ? "computed_from_extract" : "official",
-            officialReason: d.officialReason,
-            computedMeta: d.computed
-              ? { windowSinceIso: d.computed.windowSinceIso, itemsScanned: d.computed.itemsScanned }
-              : undefined,
           })
         }
       } else if (!balJson.ok) {
@@ -5425,11 +5410,7 @@ export function FinancialDashboard() {
                         </CardHeader>
                         <CardContent className="space-y-3 text-xs text-muted-foreground">
                           {realCashOverview.cashAvailable !== null ? (
-                            <p>
-                              {mpBalance?.source === "computed_from_extract"
-                                ? "Saldo calculado a partir do extrato real do Mercado Pago (creditos liberados − debitos). Endpoint oficial /balance indisponivel para este token."
-                                : "Saldo operacional disponivel na conta Mercado Pago conectada."}
-                            </p>
+                            <p>Saldo operacional disponível na conta Mercado Pago conectada.</p>
                           ) : (
                             <div className="space-y-2">
                               <p>
@@ -7855,21 +7836,9 @@ export function FinancialDashboard() {
                         ) : mpSaldoOculto && mpBalance ? (
                           <p className="text-4xl font-bold tracking-tight tabular-nums">R$ ••••</p>
                         ) : (
-                          <div>
-                            <p className="text-4xl font-bold tracking-tight tabular-nums">
-                              {mpBalance ? formatCurrency(mpBalance.availableBalance) : "—"}
-                            </p>
-                            {mpBalance?.source === "computed_from_extract" && (
-                              <p className="mt-1 text-[11px] text-amber-700 dark:text-amber-400">
-                                Calculado a partir do extrato real
-                                {mpBalance.computedMeta
-                                  ? ` (${mpBalance.computedMeta.itemsScanned} pagamentos)`
-                                  : ""}
-                                . Endpoint oficial /mercadopago_account/balance retornou{" "}
-                                {mpBalance.officialReason ?? "indisponivel"}.
-                              </p>
-                            )}
-                          </div>
+                          <p className="text-4xl font-bold tracking-tight tabular-nums">
+                            {mpBalance ? formatCurrency(mpBalance.availableBalance) : "—"}
+                          </p>
                         )}
                       </div>
                       {!mpBalanceUnavailable && mpBalance && (
