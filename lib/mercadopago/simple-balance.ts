@@ -24,6 +24,32 @@ export type MpTransaction = {
   status: string
 }
 
+export type OfficialBalanceProbe = {
+  url: string
+  status: number | null
+  ok: boolean
+  /** Body completo da resposta (truncado em 1500 chars). */
+  bodyPreview: string
+  /** Codigo de erro retornado pelo MP quando aplicavel. */
+  errorCode: string | null
+}
+
+export type OfficialBalanceReason =
+  | "ok"
+  | "forbidden"
+  | "unauthorized"
+  | "not_found"
+  | "rate_limited"
+  | "no_user_id"
+  | "unknown"
+
+export type OfficialBalanceResult = {
+  balance: MpBalance | null
+  resolvedUserId: string
+  probes: OfficialBalanceProbe[]
+  reason: OfficialBalanceReason
+}
+
 function mapBalance(raw: MpBalanceResponse): MpBalance {
   return {
     availableBalance: raw.available_balance,
@@ -33,28 +59,58 @@ function mapBalance(raw: MpBalanceResponse): MpBalance {
   }
 }
 
-/**
- * O endpoint de saldo do MP costuma aceitar access_token na query (doc antiga).
- * Com Bearer sozinho, tokens OAuth Mercado Livre as vezes retornam 403 ForbiddenApiError.
- */
-async function tryBalance(
-  label: string,
-  url: string,
-  headers: Record<string, string>,
-): Promise<MpBalanceResponse | null> {
+function classifyHttpReason(status: number | null): OfficialBalanceReason {
+  if (status === 401) return "unauthorized"
+  if (status === 403) return "forbidden"
+  if (status === 404) return "not_found"
+  if (status === 429) return "rate_limited"
+  return "unknown"
+}
+
+function extractErrorCode(body: string): string | null {
   try {
-    console.log(`[mp-balance] ${label} GET ${url.split("?")[0]}${url.includes("?") ? "?..." : ""}`)
-    const res = await fetch(url, { headers, cache: "no-store" })
-    if (!res.ok) {
-      const t = await res.text()
-      console.warn(`[mp-balance] ${label} → ${res.status} ${t.slice(0, 200)}`)
-      return null
+    const parsed = JSON.parse(body) as {
+      error?: string
+      message?: string
+      cause?: Array<{ code?: number | string }>
     }
-    const text = await res.text()
-    return JSON.parse(text) as MpBalanceResponse
-  } catch (e) {
-    console.warn(`[mp-balance] ${label} falhou:`, e)
+    if (parsed.error) return parsed.error
+    if (parsed.cause && parsed.cause[0]?.code != null) return String(parsed.cause[0].code)
+    if (parsed.message) return parsed.message.slice(0, 80)
     return null
+  } catch {
+    return null
+  }
+}
+
+async function probeBalance(url: string, accessToken: string): Promise<OfficialBalanceProbe> {
+  try {
+    console.log(`[mp-balance] GET ${url}`)
+    const res = await fetch(url, {
+      method: "GET",
+      headers: {
+        Accept: "application/json",
+        Authorization: `Bearer ${accessToken}`,
+      },
+      cache: "no-store",
+    })
+    const body = await res.text()
+    if (!res.ok) {
+      console.warn(`[mp-balance] ${res.status} from ${url} — ${body.slice(0, 300)}`)
+    } else {
+      console.log(`[mp-balance] OK ${res.status} from ${url}`)
+    }
+    return {
+      url,
+      status: res.status,
+      ok: res.ok,
+      bodyPreview: body.slice(0, 1500),
+      errorCode: res.ok ? null : extractErrorCode(body),
+    }
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err)
+    console.error(`[mp-balance] network error for ${url}: ${message}`)
+    return { url, status: null, ok: false, bodyPreview: message, errorCode: "network_error" }
   }
 }
 
@@ -71,53 +127,73 @@ async function resolveMpUserId(accessToken: string, hintUserId: string): Promise
         },
         cache: "no-store",
       })
-      if (!res.ok) continue
+      if (!res.ok) {
+        const body = await res.text()
+        console.warn(`[mp-balance] users/me ${res.status} from ${url}: ${body.slice(0, 200)}`)
+        continue
+      }
       const u = (await res.json()) as { id?: number }
       if (typeof u.id === "number") {
         console.log(`[mp-balance] users/me → id=${u.id}`)
         return String(u.id)
       }
-    } catch {
-      /* next */
+    } catch (err) {
+      console.warn(`[mp-balance] users/me network error: ${String(err)}`)
     }
   }
   return ""
 }
 
 /**
- * @param accessToken Token MP (OAuth do usuario, app token ou fallback ML).
- * @param hintUserId  Quando vem do OAuth MP, o mpUserId ja esta resolvido —
- *                    pula a chamada /users/me. Pode ser "" para forcar resolve.
+ * Fetches the wallet balance directly from Mercado Pago. Tries the v1 path
+ * first, then the legacy path. Never throws — instead returns a rich result
+ * with the probes and reason so callers can decide whether to fall back to
+ * the computed-from-extract source.
  */
-export async function getBalance(accessToken: string, hintUserId: string): Promise<MpBalance> {
+export async function fetchOfficialBalance(
+  accessToken: string,
+  hintUserId: string,
+): Promise<OfficialBalanceResult> {
   const userId = await resolveMpUserId(accessToken, hintUserId)
   if (!userId) {
-    throw new Error(
-      `Mercado Pago API error: nao foi possivel resolver o user_id da conta (token sem permissao em /users/me).`,
-    )
-  }
-
-  const headers: Record<string, string> = {
-    Accept: "application/json",
-    Authorization: `Bearer ${accessToken}`,
-  }
-
-  const candidates = [
-    `${MP_API}/users/${userId}/mercadopago_account/balance`,
-    `${MP_API}/v1/users/${userId}/mercadopago_account/balance`,
-  ]
-
-  for (const url of candidates) {
-    const raw = await tryBalance(url, url, headers)
-    if (raw && typeof raw.available_balance === "number") {
-      console.log(`[mp-balance] OK via ${url}`)
-      return mapBalance(raw)
+    return {
+      balance: null,
+      resolvedUserId: "",
+      probes: [],
+      reason: "no_user_id",
     }
   }
 
-  throw new Error(
-    `Mercado Pago API error: 403 — ForbiddenApiError para userId=${userId} (token nao tem permissao no endpoint /mercadopago_account/balance).`,
-  )
+  const candidates = [
+    `${MP_API}/v1/users/${userId}/mercadopago_account/balance`,
+    `${MP_API}/users/${userId}/mercadopago_account/balance`,
+  ]
+
+  const probes: OfficialBalanceProbe[] = []
+  for (const url of candidates) {
+    const probeResult = await probeBalance(url, accessToken)
+    probes.push(probeResult)
+    if (probeResult.ok) {
+      try {
+        const parsed = JSON.parse(probeResult.bodyPreview) as MpBalanceResponse
+        if (typeof parsed.available_balance === "number") {
+          return {
+            balance: mapBalance(parsed),
+            resolvedUserId: userId,
+            probes,
+            reason: "ok",
+          }
+        }
+      } catch (err) {
+        console.warn(`[mp-balance] body parsing failed for ${url}: ${String(err)}`)
+      }
+    }
+  }
+
+  // Pega a razao do PRIMEIRO erro (geralmente o mais informativo).
+  const firstFailure = probes.find((p) => !p.ok)
+  const reason = firstFailure ? classifyHttpReason(firstFailure.status) : "unknown"
+  return { balance: null, resolvedUserId: userId, probes, reason }
 }
 
 type MpPaymentSearchRow = {
@@ -136,6 +212,9 @@ type MpPaymentSearchRow = {
   collector?: { id?: string | number }
   payer_id?: number
   collector_id?: number
+  /** Presente em /v1/payments/search; usado pelo computed balance. */
+  money_release_status?: string
+  money_release_date?: string | null
 }
 
 type MpSearchResponse = {
@@ -170,8 +249,6 @@ export function classifyMpTransactionType(
   const me = String(accountUserId).trim()
   const op = (p.operation_type ?? "").toLowerCase()
 
-  // Refund/chargeback: dinheiro sai do collector (voce) para o payer (comprador).
-  // Mesmo se voce e o collector original, o efeito no saldo e negativo.
   if (op === "refund" || op === "chargeback") {
     return "debit"
   }
@@ -222,10 +299,6 @@ export function classifyMpTransactionType(
   return "credit"
 }
 
-/**
- * Saldo do MP reflete valor liquido nas vendas (apos taxas). O extrato usava
- * `transaction_amount` (bruto), inflando o "saldo estimado" vs app oficial.
- */
 function amountForBalanceLine(p: MpPaymentSearchRow, type: "credit" | "debit"): number {
   if (type === "debit") {
     return p.transaction_amount
@@ -249,20 +322,13 @@ export type MpTransactionsResult = {
   transactions: MpTransaction[]
   totalCredits: number
   totalDebits: number
-  /** Filtro inicial (oldest aceito). Util pra UI explicar a janela usada. */
   windowSinceIso: string
-  /** Numero de paginas consumidas. */
   pagesFetched: number
 }
 
 const PAGE_SIZE = 50
-const MAX_PAGES = 20 // hard cap pra nao explodir em conta antiga
+const MAX_PAGES = 20
 
-/**
- * Busca pagamentos do MP em uma janela de dias com paginacao. Para o nome
- * "limit" retornar mais que 50, percorremos pages com `offset`.
- * Quando `limit` e suficientemente pequeno (legado), pula a paginacao.
- */
 export async function getTransactions(
   accessToken: string,
   accountUserId: string,
@@ -279,9 +345,7 @@ export async function getTransactionsWindow(
   accessToken: string,
   accountUserId: string,
   opts: {
-    /** Limite total de items retornados (default 1000). */
     maxItems?: number
-    /** Quantos dias para tras filtrar. Null = sem filtro de data. Default 180. */
     windowDays?: number | null
   } = {},
 ): Promise<MpTransactionsResult> {
@@ -362,6 +426,138 @@ export async function getTransactionsWindow(
     totalCredits,
     totalDebits,
     windowSinceIso: sinceIso,
+    pagesFetched,
+  }
+}
+
+export type ComputedBalanceResult = {
+  balance: MpBalance
+  /** Janela usada para varrer o extrato (ISO oldest). */
+  windowSinceIso: string
+  /** Total de pagamentos varridos (paginados). */
+  itemsScanned: number
+  /** Total de creditos ja liberados (entram em `availableBalance`). */
+  releasedCredits: number
+  /** Total de creditos ainda pendentes de release (entram em `unavailableBalance`). */
+  pendingCredits: number
+  /** Total de debitos no periodo. */
+  debits: number
+  /** Numero de paginas consumidas. */
+  pagesFetched: number
+}
+
+const COMPUTED_BALANCE_MAX_PAGES = 60
+const COMPUTED_BALANCE_PAGE_SIZE = 100
+
+/**
+ * Reconstroi um proxy auditavel do saldo MP a partir do extrato real
+ * (`/v1/payments/search`) quando o endpoint oficial de balance retorna 403.
+ *
+ * available_balance = soma dos creditos liquidos ja liberados − soma de debitos
+ *                     (incluindo refunds, chargebacks, transfers para banco e
+ *                     payouts no periodo).
+ * unavailable_balance = soma dos creditos liquidos ainda nao liberados
+ *                       (money_release_status != "released").
+ *
+ * Importante: a janela e finita (default 365 dias, 60 paginas de 100 = 6000
+ * items max). Para contas com mais movimento que isso, o numero subestima o
+ * saldo real, mas continua sendo a fonte auditavel mais proxima.
+ */
+export async function computeBalanceFromExtract(
+  accessToken: string,
+  accountUserId: string,
+  opts: { windowDays?: number; maxItems?: number; currencyId?: string } = {},
+): Promise<ComputedBalanceResult> {
+  const windowDays = opts.windowDays ?? 365
+  const maxItems = opts.maxItems ?? COMPUTED_BALANCE_MAX_PAGES * COMPUTED_BALANCE_PAGE_SIZE
+  const currencyId = opts.currencyId ?? "BRL"
+
+  const sinceDate = new Date(Date.now() - windowDays * 24 * 60 * 60 * 1000)
+  const sinceIso = sinceDate.toISOString()
+  const nowIso = new Date().toISOString()
+
+  const rows: MpPaymentSearchRow[] = []
+  let offset = 0
+  let pagesFetched = 0
+  let reachedWindowEdge = false
+
+  while (
+    pagesFetched < COMPUTED_BALANCE_MAX_PAGES &&
+    rows.length < maxItems &&
+    !reachedWindowEdge
+  ) {
+    const pageSize = Math.min(COMPUTED_BALANCE_PAGE_SIZE, maxItems - rows.length)
+    const url =
+      `/v1/payments/search?sort=date_created&criteria=desc` +
+      `&limit=${pageSize}&offset=${offset}` +
+      `&range=date_created&begin_date=${encodeURIComponent(sinceIso)}&end_date=${encodeURIComponent(nowIso)}`
+    const page = await mpFetch<MpSearchResponse>(url, accessToken)
+    pagesFetched += 1
+    if (page.results.length === 0) break
+    for (const row of page.results) {
+      if (row.date_created && new Date(row.date_created) < sinceDate) {
+        reachedWindowEdge = true
+        break
+      }
+      rows.push(row)
+      if (rows.length >= maxItems) break
+    }
+    if (page.results.length < pageSize) break
+    if (offset + page.results.length >= page.paging.total) break
+    offset += page.results.length
+  }
+
+  const classified = rows.map((p) => ({ p, type: classifyMpTransactionType(p, accountUserId) }))
+
+  // Para creditos liberados queremos o `net_received_amount` real — buscamos
+  // detail para os approved+released. Limita a 200 detalhes por seguranca; o
+  // restante usa amountForBalanceLine (fallback bom-o-suficiente).
+  const releasedCreditIds = classified
+    .filter(
+      (r) =>
+        r.type === "credit" && r.p.status === "approved" && r.p.money_release_status === "released",
+    )
+    .map((r) => r.p.id)
+  const uniqueReleased = [...new Set(releasedCreditIds)].slice(0, 200)
+  const detailsById =
+    uniqueReleased.length > 0
+      ? await fetchMpPaymentDetailsForIds(uniqueReleased, accessToken)
+      : new Map()
+
+  let releasedCredits = 0
+  let pendingCredits = 0
+  let debits = 0
+
+  for (const { p, type } of classified) {
+    if (type === "debit") {
+      debits += amountForBalanceLine(p, type)
+      continue
+    }
+    if (p.status !== "approved") continue
+    const detail = detailsById.get(p.id)
+    const amount = detail ? paymentNetReceivedFromDetail(detail) : amountForBalanceLine(p, "credit")
+    if (p.money_release_status === "released") {
+      releasedCredits += amount
+    } else {
+      pendingCredits += amount
+    }
+  }
+
+  const availableBalance = releasedCredits - debits
+  const unavailableBalance = pendingCredits
+
+  return {
+    balance: {
+      availableBalance,
+      unavailableBalance,
+      totalAmount: availableBalance + unavailableBalance,
+      currencyId,
+    },
+    windowSinceIso: sinceIso,
+    itemsScanned: rows.length,
+    releasedCredits,
+    pendingCredits,
+    debits,
     pagesFetched,
   }
 }
