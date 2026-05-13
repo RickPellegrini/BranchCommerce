@@ -1,13 +1,13 @@
 import { jsonError, jsonOk } from "@/lib/mercadolivre/http"
-import { requireMlConnection } from "@/lib/mercadolivre/server"
 import { getBalance } from "@/lib/mercadopago/simple-balance"
+import { requireMpConnection } from "@/lib/mercadopago/server"
 
 function isBalanceForbidden(detail: string): boolean {
   const d = detail.toLowerCase()
   return d.includes("403") || d.includes("forbidden") || d.includes("forbiddenapierror")
 }
 
-/** Resposta quando o MP nao libera GET .../mercadopago_account/balance (comum com OAuth ML). */
+/** Resposta quando o MP nao libera GET .../mercadopago_account/balance. */
 const BALANCE_UNAVAILABLE_PAYLOAD = {
   balanceUnavailable: true as const,
   availableBalance: null as null,
@@ -18,18 +18,22 @@ const BALANCE_UNAVAILABLE_PAYLOAD = {
 
 export async function GET() {
   try {
-    const { connection } = await requireMlConnection()
+    const mp = await requireMpConnection()
 
     try {
-      const balance = await getBalance(connection.accessToken, connection.mlUserId)
-      return jsonOk({ balanceUnavailable: false as const, ...balance })
+      const balance = await getBalance(mp.accessToken, mp.accountUserId)
+      return jsonOk({
+        balanceUnavailable: false as const,
+        tokenSource: mp.source,
+        ...balance,
+      })
     } catch (balanceErr) {
       const detail = balanceErr instanceof Error ? balanceErr.message : String(balanceErr)
       if (isBalanceForbidden(detail)) {
         console.warn(
-          "[mp/balance] Endpoint de saldo retornou 403 (esperado para varios tokens de vendedor). UI usara estado neutro.",
+          `[mp/balance] 403 com token ${mp.source}. UI exibira CTA para conexao OAuth dedicada.`,
         )
-        return jsonOk(BALANCE_UNAVAILABLE_PAYLOAD)
+        return jsonOk({ ...BALANCE_UNAVAILABLE_PAYLOAD, tokenSource: mp.source })
       }
       throw balanceErr
     }

@@ -1,24 +1,23 @@
 import { jsonError, jsonOk } from "@/lib/mercadolivre/http"
-import { requireMlConnection } from "@/lib/mercadolivre/server"
 import { getTransactions, getTransactionsWindow } from "@/lib/mercadopago/simple-balance"
+import { requireMpConnection } from "@/lib/mercadopago/server"
 
 export async function GET(request: Request) {
   try {
-    const { connection } = await requireMlConnection()
+    const mp = await requireMpConnection()
 
     const url = new URL(request.url)
     const rawWindow = url.searchParams.get("windowDays")
     const limit = Math.min(Number(url.searchParams.get("limit") ?? 30), 1000)
 
-    // Modo legado: sem windowDays, retorna apenas array (compat com chamadas antigas).
     if (!rawWindow) {
-      const transactions = await getTransactions(connection.accessToken, connection.mlUserId, limit)
+      const transactions = await getTransactions(mp.accessToken, mp.accountUserId, limit)
       return jsonOk(transactions)
     }
 
     const parsed = Number(rawWindow)
     const windowDays = Number.isFinite(parsed) ? Math.max(1, Math.min(parsed, 365)) : 180
-    const result = await getTransactionsWindow(connection.accessToken, connection.mlUserId, {
+    const result = await getTransactionsWindow(mp.accessToken, mp.accountUserId, {
       maxItems: limit,
       windowDays,
     })

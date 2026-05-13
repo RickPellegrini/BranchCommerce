@@ -76,7 +76,6 @@ import {
 import {
   calculateCostBreakdown,
   calculateProductChampions,
-  cashFlowByPeriod,
   expensesByCategory,
   filterTransactions,
   forecastFinancialTrend,
@@ -115,12 +114,6 @@ import type { ProductSuggestionCandidate } from "@/lib/stock/product-name-sugges
 import { normalizeMercadoLibreItemId } from "@/lib/mercadolivre/item-id"
 import { suggestUnitCostFromInventory, type ProductCostLookup } from "@/lib/stock/suggest-unit-cost"
 
-/**
- * Valor fixo só quando a API de saldo está indisponível: referência de garantia.
- * Saldo estimado não usa complemento manual — alinha com líquido do MP (taxas).
- */
-const MP_SALDO_ESTIMADO_GARANTIA_MANUAL_BRL = 250
-
 type ModuleKey = "home" | "finance" | "stock" | "mercadolivre" | "branchhunter"
 type FinanceSection =
   | "overview"
@@ -131,6 +124,8 @@ type FinanceSection =
   | "reports"
   | "history"
   | "cashflow"
+type FinanceSourceFilter = "all" | "mercado_livre" | "mercado_pago" | "manual"
+type FinanceTypeFilter = "all" | "income" | "expense"
 type StockSection = "overview" | "products" | "history"
 type MlSection = "catalogo" | "anuncios" | "orders" | "metrics"
 type MlSidebarGroup = "anuncios" | "pedidos" | "metricas"
@@ -306,7 +301,9 @@ type OrderCostAnalysis = {
   netProfit: number
   productCost: number
   shippingCost: number
+  /** R$ 5,00 / item — taxa de envio/processamento Centralize. */
   centralizeShipping: number
+  /** R$ 1,50 / item — custo medio de embalagem. */
   centralizePackaging: number
   mlFee: number
   taxes: number
@@ -318,8 +315,18 @@ type OrderCostAnalysis = {
 }
 
 const today = new Date().toISOString().slice(0, 10)
+/**
+ * Custos reais da operacao Centralize, cobrados por item processado. Aplicados
+ * em CIMA de `order.shippingCostAmount` (que e o frete ML cobrado do vendedor),
+ * porque sao etapas distintas:
+ *  - HUB_CENTRALIZE_SHIPPING_PER_ITEM: taxa fixa de logistica/processamento por item (R$ 5,00).
+ *  - HUB_CENTRALIZE_PACKAGING_PER_ITEM: custo medio de embalagem por item (R$ 1,50).
+ * Entram na DRE em "Custos de Fulfillment", separados de Frete ML, Taxas ML e CMV.
+ */
 const HUB_CENTRALIZE_SHIPPING_PER_ITEM = 5
 const HUB_CENTRALIZE_PACKAGING_PER_ITEM = 1.5
+const HUB_CENTRALIZE_FULFILLMENT_PER_ITEM =
+  HUB_CENTRALIZE_SHIPPING_PER_ITEM + HUB_CENTRALIZE_PACKAGING_PER_ITEM
 const HUB_ML_AVG_FEE_RATE = 0.16
 
 // Mesmo tokenize usado em convex/stock.ts enrichPhotosFromMl — fallback para
@@ -434,13 +441,6 @@ function valueToneClass(value: number) {
   if (value > 0) return "text-emerald-700 dark:text-emerald-400"
   if (value < 0) return "text-destructive"
   return "text-foreground"
-}
-
-function valueBadgeClass(value: number) {
-  if (value > 0)
-    return "bg-emerald-100 dark:bg-emerald-900/40 text-emerald-700 dark:text-emerald-400"
-  if (value < 0) return "bg-destructive/10 text-destructive"
-  return "bg-muted text-muted-foreground"
 }
 
 function monthDateRange(year: number, month1to12: number) {
@@ -665,7 +665,7 @@ function calculateDreSnapshot({
   const shippingBonus = 0
   const returnsAmount = 0
   let productCosts = 0
-  let packagingCost = 0
+  let fulfillmentCost = 0
   let taxes = 0
   let ordersCount = 0
 
@@ -678,24 +678,24 @@ function calculateDreSnapshot({
 
   for (const order of validOrders) {
     ordersCount += 1
-    const totalQty = order.items.reduce((s, i) => s + Math.max(0, i.quantity), 0)
+    const totalQty = order.items.reduce((sum, item) => sum + Math.max(0, item.quantity), 0)
     revenueConfirmed += Math.max(0, order.totalAmount)
     marketplaceFees += Math.max(0, order.mlFeeAmount)
     shippingPaidBySeller += Math.max(0, order.shippingCostAmount)
     taxes += Math.max(0, order.taxesAmount)
-    packagingCost += totalQty * HUB_CENTRALIZE_PACKAGING_PER_ITEM
+    fulfillmentCost += totalQty * HUB_CENTRALIZE_FULFILLMENT_PER_ITEM
 
-    const estimatedCost = order.items.reduce((total, item) => {
+    const cogs = order.items.reduce((total, item) => {
       const byItem = item.id ? productByMlItemId.get(item.id) : undefined
       const bySku = item.sku ? productBySku.get(item.sku.toLowerCase()) : undefined
       const mapped = byItem ?? bySku
       return total + (mapped?.unitCost ?? 0) * Math.max(0, item.quantity)
     }, 0)
-    productCosts += estimatedCost
+    productCosts += cogs
   }
 
   const netReceived = revenueConfirmed - marketplaceFees - shippingPaidBySeller + shippingBonus
-  const grossProfit = netReceived - returnsAmount - productCosts - packagingCost - taxes
+  const grossProfit = netReceived - returnsAmount - productCosts - fulfillmentCost - taxes
 
   let operationalExpenses = 0
   let fixedCosts = 0
@@ -724,7 +724,7 @@ function calculateDreSnapshot({
     netReceived,
     returnsAmount,
     productCosts,
-    packagingCost,
+    fulfillmentCost,
     taxes,
     grossProfit,
     operationalExpenses,
@@ -779,6 +779,25 @@ type SalesEvolutionPoint = {
   orders: number
 }
 
+type CommerceCashFlowRow = {
+  label: string
+  salesIncome: number
+  manualIncome: number
+  mpReleases: number
+  mpDebits: number
+  cogs: number
+  mlFees: number
+  shipping: number
+  /** Custo Centralize (envio R$ 5/item + embalagem R$ 1,50/item). */
+  fulfillment: number
+  taxes: number
+  manualExpenses: number
+  income: number
+  expense: number
+  net: number
+  details: string[]
+}
+
 function financePeriodKey(dateValue: string, period: FinancialPeriod) {
   if (period === "day") return dateValue
   const [year, month, day] = dateValue.split("-").map(Number)
@@ -801,6 +820,25 @@ type OrdersFinancialSummary = {
   soldItems: number
 }
 
+type RealCashOverview = {
+  /** Saldo real do Mercado Pago. null = API nao retornou saldo (sem fallback). */
+  cashAvailable: number | null
+  receivables7d: number
+  payables7d: number
+  entriesPeriod: number
+  exitsPeriod: number
+  netCashPeriod: number
+  accountingProfit: number
+  cashProfitDifference: number
+  marketplaceRevenue: number
+  marketplaceCosts: number
+  marketplaceProfit: number
+  manualIncome: number
+  manualExpenses: number
+  mpCredits: number
+  mpDebits: number
+}
+
 type AbcProductRow = {
   productId: string
   productName: string
@@ -816,6 +854,15 @@ type AbcProductRow = {
   abcClass: "A" | "B" | "C"
 }
 
+type TopProductRow = AbcProductRow & {
+  mlbId: string
+  cogs: number
+  feesAndShipping: number
+  velocity: number
+  stockCritical: boolean
+  stockQuantity: number
+}
+
 type DreSnapshot = {
   revenueConfirmed: number
   marketplaceFees: number
@@ -824,7 +871,8 @@ type DreSnapshot = {
   netReceived: number
   returnsAmount: number
   productCosts: number
-  packagingCost: number
+  /** Custo Centralize: envio fixo (R$ 5/item) + embalagem (R$ 1,50/item). */
+  fulfillmentCost: number
   taxes: number
   grossProfit: number
   operationalExpenses: number
@@ -907,7 +955,7 @@ function buildOrdersSalesEvolutionData(
     const bucket = buckets.get(key)
     if (!bucket) continue
 
-    const totalQty = order.items.reduce((s, i) => s + Math.max(0, i.quantity), 0)
+    const totalQty = order.items.reduce((sum, item) => sum + Math.max(0, item.quantity), 0)
     const productCost = order.items.reduce((sum, item) => {
       const mappedProduct = resolve({ id: item.id, title: item.title, sku: item.sku })
       return sum + (mappedProduct?.unitCost ?? 0) * Math.max(0, item.quantity)
@@ -915,8 +963,8 @@ function buildOrdersSalesEvolutionData(
     const shippingCost = Math.max(0, order.shippingCostAmount)
     const taxes = Math.max(0, order.taxesAmount)
     const mlFee = Math.max(0, order.mlFeeAmount)
-    const packagingCost = totalQty * HUB_CENTRALIZE_PACKAGING_PER_ITEM
-    const totalCosts = productCost + shippingCost + taxes + mlFee + packagingCost
+    const fulfillmentCost = totalQty * HUB_CENTRALIZE_FULFILLMENT_PER_ITEM
+    const totalCosts = productCost + shippingCost + taxes + mlFee + fulfillmentCost
     const revenue = Math.max(0, order.totalAmount)
 
     bucket.revenue += revenue
@@ -953,8 +1001,8 @@ function buildOrdersFinancialSummary(
       const shippingCost = Math.max(0, order.shippingCostAmount)
       const taxes = Math.max(0, order.taxesAmount)
       const mlFee = Math.max(0, order.mlFeeAmount)
-      const packagingCost = totalQty * HUB_CENTRALIZE_PACKAGING_PER_ITEM
-      const orderCosts = productCost + shippingCost + taxes + mlFee + packagingCost
+      const fulfillmentCost = totalQty * HUB_CENTRALIZE_FULFILLMENT_PER_ITEM
+      const orderCosts = productCost + shippingCost + taxes + mlFee + fulfillmentCost
 
       acc.grossRevenue += Math.max(0, order.totalAmount)
       acc.totalCosts += orderCosts
@@ -971,6 +1019,74 @@ function buildOrdersFinancialSummary(
       soldItems: 0,
     },
   )
+}
+
+function isValidMarketplaceOrder(order: MlOrder) {
+  return order.status.toLowerCase() !== "cancelled"
+}
+
+function orderInRange(order: MlOrder, range?: { startDate?: string; endDate?: string }) {
+  const orderDate = order.dateCreated.slice(0, 10)
+  if (range?.startDate && orderDate < range.startDate) return false
+  if (range?.endDate && orderDate > range.endDate) return false
+  return true
+}
+
+function daysBetweenInclusive(startDate?: string, endDate?: string) {
+  if (!startDate || !endDate) return 30
+  const start = new Date(`${startDate}T00:00:00`)
+  const end = new Date(`${endDate}T00:00:00`)
+  const diff = Math.floor((end.getTime() - start.getTime()) / 86_400_000) + 1
+  return Math.max(1, diff)
+}
+
+function sourceAllows(source: FinanceSourceFilter, target: Exclude<FinanceSourceFilter, "all">) {
+  return source === "all" || source === target
+}
+
+function typeAllows(type: FinanceTypeFilter, target: "income" | "expense") {
+  return type === "all" || type === target
+}
+
+function transactionIsManualAdjustment(transaction: FinancialTransaction) {
+  return transaction.origin !== "Venda online"
+}
+
+function buildTopProductRows({
+  abcRows,
+  products,
+  rangeDays,
+}: {
+  abcRows: AbcProductRow[]
+  products: StockProduct[]
+  rangeDays: number
+}): TopProductRow[] {
+  const bySku = new Map<string, StockProduct>()
+  const byMl = new Map<string, StockProduct>()
+  for (const product of products) {
+    bySku.set(product.sku.toLowerCase(), product)
+    if (product.mlItemId) byMl.set(product.mlItemId, product)
+    for (const alias of product.mlItemAliases ?? []) byMl.set(alias, product)
+  }
+
+  return abcRows
+    .map((row) => {
+      const product = byMl.get(row.productId) ?? bySku.get(row.sku.toLowerCase())
+      const cogs = (product?.unitCost ?? 0) * row.quantitySold
+      const feesAndShipping = Math.max(0, row.totalCost - cogs)
+      const stockQuantity = product?.quantity ?? 0
+      const minStock = product?.minStock ?? 0
+      return {
+        ...row,
+        mlbId: product?.mlItemId ?? row.productId,
+        cogs,
+        feesAndShipping,
+        velocity: row.quantitySold / rangeDays,
+        stockCritical: stockQuantity <= minStock,
+        stockQuantity,
+      }
+    })
+    .sort((a, b) => b.profit - a.profit)
 }
 
 function buildOrdersCostComposition(
@@ -993,12 +1109,12 @@ function buildOrdersCostComposition(
     products: 0,
     fees: 0,
     shipping: 0,
+    fulfillment: 0,
     taxes: 0,
-    packaging: 0,
   }
 
   for (const order of filteredOrders) {
-    const totalQty = order.items.reduce((s, i) => s + Math.max(0, i.quantity), 0)
+    const totalQty = order.items.reduce((sum, item) => sum + Math.max(0, item.quantity), 0)
     const productCost = order.items.reduce((sum, item) => {
       const mappedProduct = resolve({ id: item.id, title: item.title, sku: item.sku })
       return sum + (mappedProduct?.unitCost ?? 0) * Math.max(0, item.quantity)
@@ -1007,15 +1123,15 @@ function buildOrdersCostComposition(
     totals.products += productCost
     totals.fees += Math.max(0, order.mlFeeAmount)
     totals.shipping += Math.max(0, order.shippingCostAmount)
+    totals.fulfillment += totalQty * HUB_CENTRALIZE_FULFILLMENT_PER_ITEM
     totals.taxes += Math.max(0, order.taxesAmount)
-    totals.packaging += totalQty * HUB_CENTRALIZE_PACKAGING_PER_ITEM
   }
 
   return [
     { categoryName: "Produtos", total: totals.products },
     { categoryName: "Taxas ML", total: totals.fees },
-    { categoryName: "Envio", total: totals.shipping },
-    { categoryName: "Embalagem", total: totals.packaging },
+    { categoryName: "Frete ML", total: totals.shipping },
+    { categoryName: "Centralize (envio + embalagem)", total: totals.fulfillment },
     { categoryName: "Impostos", total: totals.taxes },
   ].filter((item) => item.total > 0)
 }
@@ -1451,6 +1567,8 @@ export function FinancialDashboard() {
   const [financeOverviewProjection, setFinanceOverviewProjection] = useState<"none" | "month">(
     "none",
   )
+  const [financeSourceFilter, setFinanceSourceFilter] = useState<FinanceSourceFilter>("all")
+  const [financeTypeFilter, setFinanceTypeFilter] = useState<FinanceTypeFilter>("all")
   const [expandedReportMonth, setExpandedReportMonth] = useState<string | null>(null)
   const [financeAbcMetric, setFinanceAbcMetric] = useState<"revenue" | "quantity" | "profit">(
     "revenue",
@@ -2030,7 +2148,13 @@ export function FinancialDashboard() {
     }
     return map
   }, [products])
-  const productMapBySku = productMapByMlItemId
+  const productMapBySku = useMemo(() => {
+    const map = new Map<string, StockProduct>()
+    for (const product of products) {
+      if (product.sku) map.set(product.sku.toLowerCase(), product)
+    }
+    return map
+  }, [products])
 
   // Fallback safety net: quando o item do pedido nao tem mlItemId vinculado
   // a nenhum produto, tentamos casar por similaridade de titulo. Tokenizamos
@@ -2053,6 +2177,10 @@ export function FinancialDashboard() {
         const direct = productMapByMlItemId.get(item.id)
         if (direct) return direct
       }
+      if (item.sku) {
+        const bySku = productMapBySku.get(item.sku.toLowerCase())
+        if (bySku) return bySku
+      }
       if (item.title) {
         const itemTokens = tokenizeTitle(item.title)
         if (itemTokens.length === 0) return undefined
@@ -2072,7 +2200,7 @@ export function FinancialDashboard() {
       }
       return undefined
     },
-    [productMapByMlItemId, productTokenIndex],
+    [productMapByMlItemId, productMapBySku, productTokenIndex],
   )
   const expenseCategories = categories.filter((category) => category.kind === "expense")
   const incomeCategories = categories.filter((category) => category.kind === "income")
@@ -2150,21 +2278,7 @@ export function FinancialDashboard() {
       transactions.filter((transaction) => transaction.date.startsWith(currentMonth)),
     )
   }, [transactions])
-  const flowData = useMemo(
-    () => cashFlowByPeriod(filteredTransactions, period),
-    [filteredTransactions, period],
-  )
   const evolutionReport = useMemo(() => monthlyEvolution(transactions), [transactions])
-  const flowDetailsByLabel = useMemo(() => {
-    const map = new Map<string, FinancialTransaction[]>()
-    for (const transaction of filteredTransactions) {
-      const key = financePeriodKey(transaction.date, period)
-      const current = map.get(key) ?? []
-      current.push(transaction)
-      map.set(key, current)
-    }
-    return map
-  }, [filteredTransactions, period])
   const evolutionDetailsByLabel = useMemo(() => {
     const labels = new Set(evolutionReport.map((item) => item.monthLabel))
     const map = new Map<string, FinancialTransaction[]>()
@@ -2261,10 +2375,6 @@ export function FinancialDashboard() {
     productMapByMlItemId,
     findProductByOrderItem,
   ])
-  const costCompositionTotal = useMemo(
-    () => costComposition.reduce((sum, item) => sum + item.total, 0),
-    [costComposition],
-  )
   const ordersFinancialSummary = useMemo(
     () =>
       buildOrdersFinancialSummary(
@@ -2279,6 +2389,229 @@ export function FinancialDashboard() {
     [filters.endDate, filters.startDate, mlOrders, productMapByMlItemId, findProductByOrderItem],
   )
   const hasOrdersFinancialData = ordersFinancialSummary.ordersCount > 0
+  const rangeDays = useMemo(
+    () => daysBetweenInclusive(filters.startDate, filters.endDate),
+    [filters.endDate, filters.startDate],
+  )
+  const manualTransactionsInFilter = useMemo(
+    () => filteredTransactions.filter(transactionIsManualAdjustment),
+    [filteredTransactions],
+  )
+  const manualIncomeInFilter = useMemo(
+    () =>
+      manualTransactionsInFilter
+        .filter((transaction) => transaction.kind === "income")
+        .reduce((total, transaction) => total + transaction.amount, 0),
+    [manualTransactionsInFilter],
+  )
+  const manualExpensesInFilter = useMemo(
+    () =>
+      manualTransactionsInFilter
+        .filter((transaction) => transaction.kind === "expense")
+        .reduce((total, transaction) => total + transaction.amount, 0),
+    [manualTransactionsInFilter],
+  )
+  const mpTransactionsInFilter = useMemo(
+    () =>
+      mpTransactions.filter((transaction) => {
+        const date = transaction.date.slice(0, 10)
+        if (filters.startDate && date < filters.startDate) return false
+        if (filters.endDate && date > filters.endDate) return false
+        return true
+      }),
+    [filters.endDate, filters.startDate, mpTransactions],
+  )
+  const mpCreditsInFilter = useMemo(
+    () =>
+      mpTransactionsInFilter
+        .filter((transaction) => transaction.type === "credit")
+        .reduce((total, transaction) => total + transaction.amount, 0),
+    [mpTransactionsInFilter],
+  )
+  const mpDebitsInFilter = useMemo(
+    () =>
+      mpTransactionsInFilter
+        .filter((transaction) => transaction.type === "debit")
+        .reduce((total, transaction) => total + transaction.amount, 0),
+    [mpTransactionsInFilter],
+  )
+  const receivablesNext7d = useMemo(() => {
+    const now = new Date()
+    const todayIso = now.toISOString().slice(0, 10)
+    const end = new Date(now)
+    end.setDate(now.getDate() + 7)
+    const endIso = end.toISOString().slice(0, 10)
+    return mpDayGroups
+      .filter((day) => day.date >= todayIso && day.date <= endIso)
+      .reduce((total, day) => total + day.total, 0)
+  }, [mpDayGroups])
+  const payablesNext7d = useMemo(() => {
+    const now = new Date()
+    const todayIso = now.toISOString().slice(0, 10)
+    const end = new Date(now)
+    end.setDate(now.getDate() + 7)
+    const endIso = end.toISOString().slice(0, 10)
+    return transactions
+      .filter((transaction) => {
+        if (transaction.kind !== "expense") return false
+        if (transaction.payStatus === "paid") return false
+        return transaction.date >= todayIso && transaction.date <= endIso
+      })
+      .reduce((total, transaction) => total + transaction.amount, 0)
+  }, [transactions])
+  const realCashOverview = useMemo<RealCashOverview>(() => {
+    const includeMl = sourceAllows(financeSourceFilter, "mercado_livre")
+    const includeMp = sourceAllows(financeSourceFilter, "mercado_pago")
+    const includeManual = sourceAllows(financeSourceFilter, "manual")
+    const includeIncome = typeAllows(financeTypeFilter, "income")
+    const includeExpense = typeAllows(financeTypeFilter, "expense")
+
+    const marketplaceRevenue = includeMl && includeIncome ? ordersFinancialSummary.grossRevenue : 0
+    const marketplaceCosts = includeMl && includeExpense ? ordersFinancialSummary.totalCosts : 0
+    const manualIncome = includeManual && includeIncome ? manualIncomeInFilter : 0
+    const manualExpenses = includeManual && includeExpense ? manualExpensesInFilter : 0
+    const mpCredits = includeMp && includeIncome ? mpCreditsInFilter : 0
+    const mpDebits = includeMp && includeExpense ? mpDebitsInFilter : 0
+
+    const marketplaceProfit = marketplaceRevenue - marketplaceCosts
+    const entriesPeriod = mpCredits
+    const exitsPeriod = mpDebits
+    const accountingProfit = marketplaceProfit + manualIncome - manualExpenses
+    const netCashPeriod = entriesPeriod - exitsPeriod
+    // Caixa real = saldo real do Mercado Pago. Sem API => null (UI mostra empty state).
+    const cashAvailable =
+      !mpBalanceUnavailable && mpBalance?.availableBalance != null
+        ? mpBalance.availableBalance
+        : null
+
+    return {
+      cashAvailable,
+      receivables7d: includeMp ? receivablesNext7d : 0,
+      payables7d: includeManual ? payablesNext7d : 0,
+      entriesPeriod,
+      exitsPeriod,
+      netCashPeriod,
+      accountingProfit,
+      cashProfitDifference: netCashPeriod - accountingProfit,
+      marketplaceRevenue,
+      marketplaceCosts,
+      marketplaceProfit,
+      manualIncome,
+      manualExpenses,
+      mpCredits,
+      mpDebits,
+    }
+  }, [
+    financeSourceFilter,
+    financeTypeFilter,
+    manualExpensesInFilter,
+    manualIncomeInFilter,
+    mpBalance?.availableBalance,
+    mpBalanceUnavailable,
+    mpCreditsInFilter,
+    mpDebitsInFilter,
+    ordersFinancialSummary.grossRevenue,
+    ordersFinancialSummary.totalCosts,
+    payablesNext7d,
+    receivablesNext7d,
+  ])
+  const commerceFlowData = useMemo(() => {
+    const buckets = new Map<string, CommerceCashFlowRow>()
+    const getBucket = (dateValue: string) => {
+      const key = financePeriodKey(dateValue, period)
+      const current = buckets.get(key)
+      if (current) return current
+      const next: CommerceCashFlowRow = {
+        label: key,
+        salesIncome: 0,
+        manualIncome: 0,
+        mpReleases: 0,
+        mpDebits: 0,
+        cogs: 0,
+        mlFees: 0,
+        shipping: 0,
+        fulfillment: 0,
+        taxes: 0,
+        manualExpenses: 0,
+        income: 0,
+        expense: 0,
+        net: 0,
+        details: [],
+      }
+      buckets.set(key, next)
+      return next
+    }
+
+    for (const order of mlOrders) {
+      if (
+        !isValidMarketplaceOrder(order) ||
+        !orderInRange(order, { startDate: filters.startDate, endDate: filters.endDate })
+      ) {
+        continue
+      }
+      const date = order.dateCreated.slice(0, 10)
+      const bucket = getBucket(date)
+      const cogs = order.items.reduce((sum, item) => {
+        const product = findProductByOrderItem({ id: item.id, title: item.title, sku: item.sku })
+        return sum + (product?.unitCost ?? 0) * Math.max(0, item.quantity)
+      }, 0)
+      const fees = Math.max(0, order.mlFeeAmount)
+      const shipping = Math.max(0, order.shippingCostAmount)
+      const taxes = Math.max(0, order.taxesAmount)
+      const totalQty = order.items.reduce((sum, item) => sum + Math.max(0, item.quantity), 0)
+      const fulfillment = totalQty * HUB_CENTRALIZE_FULFILLMENT_PER_ITEM
+      bucket.salesIncome += Math.max(0, order.totalAmount)
+      bucket.cogs += cogs
+      bucket.mlFees += fees
+      bucket.shipping += shipping
+      bucket.fulfillment += fulfillment
+      bucket.taxes += taxes
+      bucket.details.push(`ML #${order.id}: ${formatCurrency(order.totalAmount)}`)
+    }
+
+    for (const transaction of filteredTransactions) {
+      if (!transactionIsManualAdjustment(transaction)) continue
+      const bucket = getBucket(transaction.date)
+      if (transaction.kind === "income") {
+        bucket.manualIncome += transaction.amount
+      } else if (transaction.payStatus !== "pending") {
+        bucket.manualExpenses += transaction.amount
+      }
+      bucket.details.push(`${transaction.origin || "Manual"}: ${transaction.description}`)
+    }
+
+    for (const transaction of mpTransactionsInFilter) {
+      const date = transaction.date.slice(0, 10)
+      const bucket = getBucket(date)
+      if (transaction.type === "credit") {
+        bucket.mpReleases += transaction.amount
+      } else {
+        bucket.mpDebits += transaction.amount
+      }
+      bucket.details.push(`MP: ${transaction.description}`)
+    }
+
+    return Array.from(buckets.values())
+      .map((row) => {
+        const income = row.mpReleases
+        const expense = row.mpDebits
+        return {
+          ...row,
+          income,
+          expense,
+          net: income - expense,
+        }
+      })
+      .sort((a, b) => a.label.localeCompare(b.label))
+  }, [
+    filteredTransactions,
+    filters.endDate,
+    filters.startDate,
+    findProductByOrderItem,
+    mlOrders,
+    mpTransactionsInFilter,
+    period,
+  ])
   const salesEvolution = useMemo(() => {
     const options = {
       period: "day" as FinancialPeriod,
@@ -2348,7 +2681,7 @@ export function FinancialDashboard() {
     ? homeDreSnapshot.marketplaceFees +
       homeDreSnapshot.shippingPaidBySeller +
       homeDreSnapshot.productCosts +
-      homeDreSnapshot.packagingCost +
+      homeDreSnapshot.fulfillmentCost +
       homeDreSnapshot.taxes +
       homeDreSnapshot.operationalExpenses +
       homeDreSnapshot.fixedCosts -
@@ -2705,6 +3038,22 @@ export function FinancialDashboard() {
       return matchesSku && matchesTitle
     })
   }, [abcRows, financeOrdersSkuFilter, financeOrdersTitleFilter])
+  const topProductRows = useMemo(
+    () =>
+      buildTopProductRows({
+        abcRows: abcRowsFiltered,
+        products,
+        rangeDays,
+      }),
+    [abcRowsFiltered, products, rangeDays],
+  )
+  const highVelocityThreshold = useMemo(() => {
+    if (topProductRows.length === 0) return 0
+    return Math.max(
+      1,
+      topProductRows.reduce((sum, row) => sum + row.velocity, 0) / topProductRows.length,
+    )
+  }, [topProductRows])
   const abcSummary = useMemo(() => {
     const byClass = {
       A: { count: 0, share: 0 },
@@ -2774,7 +3123,10 @@ export function FinancialDashboard() {
       },
       { label: "(-) Devolucoes", value: -dreSnapshot.returnsAmount },
       { label: "(-) Custo dos Produtos", value: -dreSnapshot.productCosts },
-      { label: "(-) Custo de Embalagem", value: -dreSnapshot.packagingCost },
+      {
+        label: "(-) Custos Centralize (envio R$ 5/item + embalagem R$ 1,50/item)",
+        value: -dreSnapshot.fulfillmentCost,
+      },
       { label: "(-) Impostos", value: -dreSnapshot.taxes },
       {
         label: "= Lucro Bruto",
@@ -3970,7 +4322,7 @@ export function FinancialDashboard() {
       totalCosts,
       contributionMargin,
       roi,
-      source: unitCost > 0 ? "fallback" : "fallback",
+      source: "ml_api",
     })
   }
 
@@ -4219,7 +4571,7 @@ export function FinancialDashboard() {
             />
             <SidebarButton
               icon={TrendingDown}
-              label="Lancamentos"
+              label="Ajustes"
               isActive={
                 activeFinanceSection === "expenses" || activeFinanceSection === "categories"
               }
@@ -4872,13 +5224,10 @@ export function FinancialDashboard() {
                   <CardHeader className="pb-3">
                     <CardTitle className="inline-flex items-center gap-2 text-xl">
                       <Wallet className="size-5 text-orange-500 dark:text-orange-400" />
-                      Resumo Financeiro
+                      Financeiro
                     </CardTitle>
                     <CardDescription>
-                      Acompanhe receitas, custos e margens das suas vendas.
-                      {hasOrdersFinancialData
-                        ? " Base principal: pedidos vendidos do Mercado Livre."
-                        : " Sem pedidos no periodo: exibindo financeiro interno."}
+                      Visão real de caixa, vendas, custos e lucro da operação.
                     </CardDescription>
                   </CardHeader>
                   <CardContent className="space-y-4">
@@ -4914,36 +5263,28 @@ export function FinancialDashboard() {
 
                         <div className="flex min-w-[290px] flex-wrap items-end gap-1.5 rounded-md border border-border/60 bg-background px-2 py-1.5">
                           <p className="basis-full text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
-                            Lancamentos
+                            Origem / tipo
                           </p>
                           <Select
-                            value={filters.categoryId ?? "all-categories"}
+                            value={financeSourceFilter}
                             onValueChange={(value) =>
-                              setFilters((prev) => ({
-                                ...prev,
-                                categoryId: value === "all-categories" ? undefined : value,
-                              }))
+                              setFinanceSourceFilter(value as FinanceSourceFilter)
                             }
                           >
                             <SelectTrigger className="h-8 w-[150px]">
-                              <SelectValue placeholder="Categoria" />
+                              <SelectValue placeholder="Origem" />
                             </SelectTrigger>
                             <SelectContent>
-                              <SelectItem value="all-categories">Todas categorias</SelectItem>
-                              {categories.map((category) => (
-                                <SelectItem key={category.id} value={category.id}>
-                                  {category.name}
-                                </SelectItem>
-                              ))}
+                              <SelectItem value="all">Todas origens</SelectItem>
+                              <SelectItem value="mercado_livre">Mercado Livre</SelectItem>
+                              <SelectItem value="mercado_pago">Mercado Pago</SelectItem>
+                              <SelectItem value="manual">Manual</SelectItem>
                             </SelectContent>
                           </Select>
                           <Select
-                            value={filters.kind ?? "all"}
+                            value={financeTypeFilter}
                             onValueChange={(value) =>
-                              setFilters((prev) => ({
-                                ...prev,
-                                kind: value as TransactionFilters["kind"],
-                              }))
+                              setFinanceTypeFilter(value as FinanceTypeFilter)
                             }
                           >
                             <SelectTrigger className="h-8 w-[135px]">
@@ -5049,73 +5390,115 @@ export function FinancialDashboard() {
                       </div>
                     </div>
 
-                    <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-5">
-                      <Card className="border-emerald-200/70 bg-emerald-50/40 dark:border-emerald-800/50 dark:bg-emerald-950/30">
+                    <div className="grid gap-3 lg:grid-cols-4">
+                      <Card className="border-sky-200/80 bg-sky-50/60 shadow-sm dark:border-sky-800/50 dark:bg-sky-950/30 lg:col-span-2 lg:row-span-2">
                         <CardHeader className="pb-2">
-                          <CardDescription className="inline-flex items-center gap-1 text-emerald-700 dark:text-emerald-400">
+                          <CardDescription className="inline-flex items-center gap-1 text-sky-700 dark:text-sky-300">
                             <Wallet className="size-3.5" />
-                            Lucro Liquido
+                            Caixa disponível hoje
                           </CardDescription>
-                          <CardTitle className={valueToneClass(operatingResultFinal)}>
-                            {formatCurrency(operatingResultFinal)}
+                          <CardTitle className="text-3xl text-sky-800 dark:text-sky-200">
+                            {realCashOverview.cashAvailable !== null
+                              ? formatCurrency(realCashOverview.cashAvailable)
+                              : "—"}
                           </CardTitle>
                         </CardHeader>
-                        <CardContent className="text-xs text-muted-foreground">
+                        <CardContent className="space-y-3 text-xs text-muted-foreground">
+                          {realCashOverview.cashAvailable !== null ? (
+                            <p>Saldo operacional disponível na conta Mercado Pago conectada.</p>
+                          ) : (
+                            <div className="space-y-2">
+                              <p>
+                                A API do Mercado Pago não retornou saldo. Conecte sua conta para
+                                liberar leitura direta do saldo.
+                              </p>
+                              <a
+                                href="/api/mp/connect"
+                                className="inline-flex items-center gap-1 rounded-md bg-sky-600 px-2 py-1 text-[11px] font-medium text-white hover:bg-sky-700 dark:bg-sky-700 dark:hover:bg-sky-600"
+                              >
+                                Conectar Mercado Pago
+                              </a>
+                            </div>
+                          )}
                           <span
                             className={cn(
                               "inline-flex items-center gap-1 rounded-full px-2 py-1 font-medium",
-                              valueBadgeClass(operatingMarginFinal),
+                              realCashOverview.netCashPeriod >= 0
+                                ? "bg-emerald-500/10 text-emerald-700 dark:text-emerald-300"
+                                : "bg-rose-500/10 text-rose-700 dark:text-rose-300",
                             )}
                           >
-                            {operatingMarginFinal >= 0 ? (
-                              <TrendingUp className="size-3.5" />
-                            ) : (
-                              <TrendingDown className="size-3.5" />
-                            )}
-                            {operatingMarginFinal.toFixed(1)}% margem
+                            Caixa líquido no período:{" "}
+                            {formatCurrency(realCashOverview.netCashPeriod)}
                           </span>
                         </CardContent>
                       </Card>
-                      <Card className="border-blue-200/70 bg-blue-50/40 dark:border-blue-800/50 dark:bg-blue-950/30">
+                      <Card className="border-emerald-200/70 bg-emerald-50/40 dark:border-emerald-800/50 dark:bg-emerald-950/30">
                         <CardHeader className="pb-2">
-                          <CardDescription className="inline-flex items-center gap-1 text-blue-700 dark:text-blue-300">
-                            <ShoppingBag className="size-3.5" />
-                            Vendas Brutas
+                          <CardDescription className="inline-flex items-center gap-1 text-emerald-700 dark:text-emerald-400">
+                            <ArrowDownLeft className="size-3.5" />A receber 7 dias
                           </CardDescription>
-                          <CardTitle className="text-blue-700 dark:text-blue-300">
-                            {formatCurrency(salesInFilterFinal)}
+                          <CardTitle className="text-emerald-700 dark:text-emerald-400">
+                            {formatCurrency(realCashOverview.receivables7d)}
                           </CardTitle>
                         </CardHeader>
                         <CardContent className="text-xs text-muted-foreground">
-                          {soldItemsFinal} itens vendidos
+                          Releases Mercado Pago conhecidos
+                        </CardContent>
+                      </Card>
+                      <Card className="border-orange-200/70 bg-orange-50/40 dark:border-orange-800/50 dark:bg-orange-950/30">
+                        <CardHeader className="pb-2">
+                          <CardDescription className="inline-flex items-center gap-1 text-orange-700 dark:text-orange-400">
+                            <ArrowUpRight className="size-3.5" />A pagar 7 dias
+                          </CardDescription>
+                          <CardTitle className="text-orange-700 dark:text-orange-400">
+                            {formatCurrency(realCashOverview.payables7d)}
+                          </CardTitle>
+                        </CardHeader>
+                        <CardContent className="text-xs text-muted-foreground">
+                          Custos manuais pendentes
                         </CardContent>
                       </Card>
                       <Card className="border-emerald-200/70 bg-emerald-50/40 dark:border-emerald-800/50 dark:bg-emerald-950/30">
                         <CardHeader className="pb-2">
                           <CardDescription className="inline-flex items-center gap-1 text-emerald-700 dark:text-emerald-400">
                             <CircleDollarSign className="size-3.5" />
-                            Receita
+                            Lucro líquido do mês
                           </CardDescription>
-                          <CardTitle className="text-emerald-700 dark:text-emerald-400">
+                          <CardTitle className={valueToneClass(realCashOverview.accountingProfit)}>
+                            {formatCurrency(realCashOverview.accountingProfit)}
+                          </CardTitle>
+                        </CardHeader>
+                        <CardContent className="text-xs text-muted-foreground">
+                          Resultado por competência, não caixa disponível
+                        </CardContent>
+                      </Card>
+                      <Card className="border-violet-200/70 bg-violet-50/40 dark:border-violet-800/50 dark:bg-violet-950/30">
+                        <CardHeader className="pb-2">
+                          <CardDescription className="inline-flex items-center gap-1 text-violet-700 dark:text-violet-300">
+                            <Percent className="size-3.5" />
+                            Margem líquida
+                          </CardDescription>
+                          <CardTitle className={valueToneClass(operatingMarginFinal)}>
+                            {operatingMarginFinal.toFixed(1)}%
+                          </CardTitle>
+                        </CardHeader>
+                        <CardContent className="text-xs text-muted-foreground">
+                          Sobre vendas confirmadas
+                        </CardContent>
+                      </Card>
+                      <Card className="border-blue-200/70 bg-blue-50/40 dark:border-blue-800/50 dark:bg-blue-950/30">
+                        <CardHeader className="pb-2">
+                          <CardDescription className="inline-flex items-center gap-1 text-blue-700 dark:text-blue-300">
+                            <ShoppingBag className="size-3.5" />
+                            Vendas confirmadas
+                          </CardDescription>
+                          <CardTitle className="text-blue-700 dark:text-blue-300">
                             {formatCurrency(salesInFilterFinal)}
                           </CardTitle>
                         </CardHeader>
                         <CardContent className="text-xs text-muted-foreground">
-                          {salesCountFinal} vendas confirmadas
-                        </CardContent>
-                      </Card>
-                      <Card className="border-orange-200/70 bg-orange-50/40 dark:border-orange-800/50 dark:bg-orange-950/30">
-                        <CardHeader className="pb-2">
-                          <CardDescription className="inline-flex items-center gap-1 text-orange-700 dark:text-orange-400">
-                            <TrendingDown className="size-3.5" />
-                            Custos Totais
-                          </CardDescription>
-                          <CardTitle className="text-orange-700 dark:text-orange-400">
-                            {formatCurrency(expensesInFilterFinal)}
-                          </CardTitle>
-                        </CardHeader>
-                        <CardContent className="text-xs text-muted-foreground">
-                          Soma de todos os custos
+                          {salesCountFinal} pedidos · {soldItemsFinal} itens
                         </CardContent>
                       </Card>
                       <Card className="border-violet-200/70 bg-violet-50/40 dark:border-violet-800/50 dark:bg-violet-950/30">
@@ -5133,6 +5516,80 @@ export function FinancialDashboard() {
                         </CardContent>
                       </Card>
                     </div>
+
+                    <Card className="border-border/70 bg-muted/10">
+                      <CardHeader className="pb-3">
+                        <CardDescription className="uppercase tracking-wide">
+                          Caixa Real
+                        </CardDescription>
+                        <CardTitle>Caixa não é a mesma coisa que lucro</CardTitle>
+                        <CardDescription>
+                          Vendas confirmadas formam lucro contábil. Releases do Mercado Pago e
+                          ajustes manuais explicam o caixa disponível.
+                        </CardDescription>
+                      </CardHeader>
+                      <CardContent className="space-y-4">
+                        <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+                          <div className="rounded-lg border bg-background p-3">
+                            <p className="text-xs text-muted-foreground">
+                              Entradas de caixa no período
+                            </p>
+                            <p className="mt-1 text-lg font-semibold text-emerald-700 dark:text-emerald-400">
+                              {formatCurrency(realCashOverview.entriesPeriod)}
+                            </p>
+                            <p className="mt-1 text-[11px] text-muted-foreground">
+                              Somente releases Mercado Pago já liberados. Vendas ML ficam em receita
+                              ou recebíveis.
+                            </p>
+                          </div>
+                          <div className="rounded-lg border bg-background p-3">
+                            <p className="text-xs text-muted-foreground">
+                              Saídas de caixa no período
+                            </p>
+                            <p className="mt-1 text-lg font-semibold text-rose-700 dark:text-rose-400">
+                              {formatCurrency(realCashOverview.exitsPeriod)}
+                            </p>
+                            <p className="mt-1 text-[11px] text-muted-foreground">
+                              Débitos/saídas registrados no extrato Mercado Pago.
+                            </p>
+                          </div>
+                          <div className="rounded-lg border bg-background p-3">
+                            <p className="text-xs text-muted-foreground">Saldo líquido de caixa</p>
+                            <p
+                              className={cn(
+                                "mt-1 text-lg font-semibold",
+                                valueToneClass(realCashOverview.netCashPeriod),
+                              )}
+                            >
+                              {formatCurrency(realCashOverview.netCashPeriod)}
+                            </p>
+                            <p className="mt-1 text-[11px] text-muted-foreground">
+                              Não soma receita de vendas; venda entra em recebíveis até liberar.
+                            </p>
+                          </div>
+                          <div className="rounded-lg border bg-background p-3">
+                            <p className="text-xs text-muted-foreground">Diferença caixa x lucro</p>
+                            <p
+                              className={cn(
+                                "mt-1 text-lg font-semibold",
+                                valueToneClass(realCashOverview.cashProfitDifference),
+                              )}
+                            >
+                              {formatCurrency(realCashOverview.cashProfitDifference)}
+                            </p>
+                            <p className="mt-1 text-[11px] text-muted-foreground">
+                              Recebíveis ainda não liberados explicam parte da diferença.
+                            </p>
+                          </div>
+                        </div>
+                        <div className="rounded-lg border border-amber-200/70 bg-amber-50/70 px-3 py-2 text-xs text-amber-900 dark:border-amber-900/60 dark:bg-amber-950/30 dark:text-amber-200">
+                          Regra de consistência: receita é pedido ML confirmado; recebível é valor
+                          futuro do Mercado Pago; caixa disponível é apenas saldo real retornado
+                          pela API do Mercado Pago; lucro é receita menos CMV, taxas, frete e
+                          custos. Ajustes manuais não aumentam o saldo disponível.
+                        </div>
+                      </CardContent>
+                    </Card>
 
                     {(financeOverviewCompare !== "none" ||
                       financeOverviewProjection === "month") && (
@@ -5256,16 +5713,16 @@ export function FinancialDashboard() {
                       </div>
                     )}
 
-                    <div className="grid gap-4 xl:grid-cols-3">
-                      <Card className="xl:col-span-2">
+                    <div className="grid gap-4">
+                      <Card>
                         <CardHeader className="flex flex-row items-start justify-between">
                           <div>
                             <CardDescription className="uppercase tracking-wide">
-                              Evolucao
+                              Gráfico principal
                             </CardDescription>
-                            <CardTitle>Evolucao de Vendas</CardTitle>
+                            <CardTitle>Receita, lucro e pedidos por dia</CardTitle>
                             <CardDescription>
-                              Acompanhe o desempenho por data no intervalo filtrado.
+                              Uma única leitura para entender entrada, resultado e volume.
                             </CardDescription>
                           </div>
                           <Button size="sm" variant="outline">
@@ -5276,22 +5733,115 @@ export function FinancialDashboard() {
                           <FinancialEvolutionChart data={salesEvolution} />
                         </CardContent>
                       </Card>
-                      <Card>
-                        <CardHeader>
-                          <CardDescription className="uppercase tracking-wide">
-                            Custos
-                          </CardDescription>
-                          <CardTitle>Composicao de Custos</CardTitle>
-                          <CardDescription>Distribuicao dos custos</CardDescription>
-                        </CardHeader>
-                        <CardContent>
-                          <CostCompositionChart
-                            items={costComposition}
-                            total={costCompositionTotal}
-                          />
-                        </CardContent>
-                      </Card>
                     </div>
+
+                    <Card>
+                      <CardHeader>
+                        <CardDescription>Top produtos</CardDescription>
+                        <CardTitle>Produtos que mais sustentam o lucro</CardTitle>
+                        <CardDescription>
+                          Ordenado por lucro líquido, com CMV, taxas/frete, giro e alertas de
+                          margem/estoque.
+                        </CardDescription>
+                      </CardHeader>
+                      <CardContent>
+                        {topProductRows.length === 0 ? (
+                          <p className="text-sm text-muted-foreground">
+                            Sem vendas suficientes no período filtrado.
+                          </p>
+                        ) : (
+                          <Table>
+                            <TableHeader>
+                              <TableRow>
+                                <TableHead>Produto</TableHead>
+                                <TableHead>SKU / MLB</TableHead>
+                                <TableHead className="text-right">Qtd</TableHead>
+                                <TableHead className="text-right">Receita</TableHead>
+                                <TableHead className="text-right">CMV</TableHead>
+                                <TableHead className="text-right">Taxas/Frete</TableHead>
+                                <TableHead className="text-right">Lucro líquido</TableHead>
+                                <TableHead className="text-right">Margem</TableHead>
+                                <TableHead className="text-right">Giro</TableHead>
+                                <TableHead>ABC</TableHead>
+                              </TableRow>
+                            </TableHeader>
+                            <TableBody>
+                              {topProductRows.slice(0, 8).map((row) => {
+                                const badges: string[] = [
+                                  row.profit < 0 ? "Prejuízo" : null,
+                                  row.marginPercent >= 30 ? "Alta margem" : null,
+                                  row.marginPercent > 0 && row.marginPercent < 12
+                                    ? "Baixa margem"
+                                    : null,
+                                  row.velocity >= highVelocityThreshold ? "Alto giro" : null,
+                                  row.stockCritical ? "Estoque crítico" : null,
+                                ].filter((badge): badge is string => Boolean(badge))
+
+                                return (
+                                  <TableRow key={row.productId}>
+                                    <TableCell className="max-w-[280px]">
+                                      <div className="truncate font-medium">{row.productName}</div>
+                                      <div className="mt-1 flex flex-wrap gap-1">
+                                        {badges.map((badge) => (
+                                          <Badge
+                                            key={badge}
+                                            variant={
+                                              badge === "Prejuízo" ? "destructive" : "secondary"
+                                            }
+                                            className="rounded-full text-[10px]"
+                                          >
+                                            {badge}
+                                          </Badge>
+                                        ))}
+                                      </div>
+                                    </TableCell>
+                                    <TableCell className="max-w-[160px] truncate text-xs text-muted-foreground">
+                                      {row.sku || "sem SKU"} · {row.mlbId}
+                                    </TableCell>
+                                    <TableCell className="text-right font-medium">
+                                      {row.quantitySold}
+                                    </TableCell>
+                                    <TableCell className="text-right font-medium text-blue-700 dark:text-blue-300">
+                                      {formatCurrency(row.revenue)}
+                                    </TableCell>
+                                    <TableCell className="text-right text-rose-700 dark:text-rose-400">
+                                      {formatCurrency(row.cogs)}
+                                    </TableCell>
+                                    <TableCell className="text-right text-orange-700 dark:text-orange-400">
+                                      {formatCurrency(row.feesAndShipping)}
+                                    </TableCell>
+                                    <TableCell
+                                      className={cn(
+                                        "text-right font-semibold",
+                                        valueToneClass(row.profit),
+                                      )}
+                                    >
+                                      {formatCurrency(row.profit)}
+                                    </TableCell>
+                                    <TableCell
+                                      className={cn(
+                                        "text-right font-semibold",
+                                        valueToneClass(row.marginPercent),
+                                      )}
+                                    >
+                                      {row.marginPercent.toFixed(1)}%
+                                    </TableCell>
+                                    <TableCell className="text-right font-medium">
+                                      {row.velocity.toFixed(1)}/dia
+                                    </TableCell>
+                                    <TableCell>
+                                      <Badge variant="outline" className="rounded-full">
+                                        Classe {row.abcClass}
+                                      </Badge>
+                                    </TableCell>
+                                  </TableRow>
+                                )
+                              })}
+                            </TableBody>
+                          </Table>
+                        )}
+                      </CardContent>
+                    </Card>
 
                     <div className="grid grid-cols-2 gap-2">
                       <Button
@@ -5966,7 +6516,7 @@ export function FinancialDashboard() {
                     variant="default"
                     onClick={() => setActiveFinanceSection("expenses")}
                   >
-                    Novo lancamento
+                    Novo ajuste manual
                   </Button>
                   <Button
                     size="sm"
@@ -5980,11 +6530,12 @@ export function FinancialDashboard() {
                   <CardHeader>
                     <CardTitle className="inline-flex items-center gap-2">
                       <ReceiptText className="size-5 text-primary" />
-                      Registrar lancamento
+                      Registrar ajuste manual
                     </CardTitle>
                     <CardDescription>
-                      Lance despesas da empresa ou entradas de capital com tipo e periodicidade. Use
-                      a area de comprovantes abaixo ao registrar o custo; em{" "}
+                      Use para aportes, custos fixos, impostos manuais, devoluções e correções. As
+                      vendas ML entram automaticamente no financeiro e não precisam ser duplicadas
+                      aqui. Use a area de comprovantes abaixo ao registrar o custo; em{" "}
                       <button
                         type="button"
                         className="font-medium text-primary underline-offset-2 hover:underline"
@@ -6367,6 +6918,10 @@ export function FinancialDashboard() {
                   <Card>
                     <CardHeader>
                       <CardTitle>Fluxo de caixa (dia/semana/mes)</CardTitle>
+                      <CardDescription>
+                        Saldo usa apenas caixa movimentado. Vendas, CMV e taxas aparecem como
+                        resultado operacional para não duplicar releases do Mercado Pago.
+                      </CardDescription>
                     </CardHeader>
                     <CardContent className="space-y-4">
                       <div className="flex flex-wrap gap-2">
@@ -6385,35 +6940,60 @@ export function FinancialDashboard() {
                         <TableHeader>
                           <TableRow>
                             <TableHead>Periodo</TableHead>
-                            <TableHead>Entradas</TableHead>
-                            <TableHead>Saidas</TableHead>
-                            <TableHead className="text-right">Saldo</TableHead>
+                            <TableHead className="text-right">Vendas</TableHead>
+                            <TableHead className="text-right">Ajustes manuais</TableHead>
+                            <TableHead className="text-right">MP liberado</TableHead>
+                            <TableHead className="text-right">Débitos MP</TableHead>
+                            <TableHead className="text-right">CMV</TableHead>
+                            <TableHead className="text-right">Taxas/Frete</TableHead>
+                            <TableHead className="text-right">Centralize</TableHead>
+                            <TableHead className="text-right">Impostos</TableHead>
+                            <TableHead className="text-right">Saldo de caixa</TableHead>
                           </TableRow>
                         </TableHeader>
                         <TableBody>
-                          {flowData.map((item) => (
+                          {commerceFlowData.map((item) => (
                             <TableRow key={item.label}>
                               <TableCell>
                                 <div className="font-medium">{item.label}</div>
                                 <div className="mt-1 space-y-0.5 text-xs text-muted-foreground">
-                                  {(flowDetailsByLabel.get(item.label) ?? [])
-                                    .slice(0, 3)
-                                    .map((transaction) => (
-                                      <p key={transaction.id} className="truncate">
-                                        {transaction.description}
-                                      </p>
-                                    ))}
-                                  {(flowDetailsByLabel.get(item.label)?.length ?? 0) > 3 && (
-                                    <p>
-                                      + {(flowDetailsByLabel.get(item.label)?.length ?? 0) - 3}{" "}
-                                      itens
+                                  {item.details.slice(0, 3).map((detail, index) => (
+                                    <p key={`${item.label}-${index}`} className="truncate">
+                                      {detail}
                                     </p>
+                                  ))}
+                                  {item.details.length > 3 && (
+                                    <p>+ {item.details.length - 3} itens</p>
                                   )}
                                 </div>
                               </TableCell>
-                              <TableCell>{formatCurrency(item.income)}</TableCell>
-                              <TableCell>{formatCurrency(item.expense)}</TableCell>
                               <TableCell className="text-right">
+                                {formatCurrency(item.salesIncome)}
+                              </TableCell>
+                              <TableCell className="text-right">
+                                {formatCurrency(item.manualIncome - item.manualExpenses)}
+                              </TableCell>
+                              <TableCell className="text-right">
+                                {formatCurrency(item.mpReleases)}
+                              </TableCell>
+                              <TableCell className="text-right">
+                                {formatCurrency(item.mpDebits)}
+                              </TableCell>
+                              <TableCell className="text-right">
+                                {formatCurrency(item.cogs)}
+                              </TableCell>
+                              <TableCell className="text-right">
+                                {formatCurrency(item.mlFees + item.shipping)}
+                              </TableCell>
+                              <TableCell className="text-right">
+                                {formatCurrency(item.fulfillment)}
+                              </TableCell>
+                              <TableCell className="text-right">
+                                {formatCurrency(item.taxes)}
+                              </TableCell>
+                              <TableCell
+                                className={cn("text-right font-semibold", valueToneClass(item.net))}
+                              >
                                 {formatCurrency(item.net)}
                               </TableCell>
                             </TableRow>
@@ -7202,13 +7782,6 @@ export function FinancialDashboard() {
 
                 {mpError && <p className="text-sm text-destructive">{mpError}</p>}
 
-                <div className="rounded-xl border border-border/80 bg-muted/50 px-4 py-3 shadow-sm dark:bg-muted/30">
-                  <p className="text-xs text-muted-foreground">Dinheiro em garantia</p>
-                  <p className="text-lg font-semibold tabular-nums">
-                    {formatCurrency(MP_SALDO_ESTIMADO_GARANTIA_MANUAL_BRL)}
-                  </p>
-                </div>
-
                 <Card className="overflow-hidden border-border/80 shadow-sm">
                   <CardContent className="space-y-5 pt-6 pb-5">
                     <div className="flex items-start justify-between gap-2">
@@ -7220,9 +7793,16 @@ export function FinancialDashboard() {
                                 Saldo disponivel
                               </p>
                               <p className="mt-1 text-sm text-muted-foreground">
-                                Consulte o saldo no app do Mercado Pago. A API nao tem permissao
-                                para leitura direta do saldo com o token atual.
+                                Conecte sua conta do Mercado Pago via OAuth para liberar leitura
+                                direta do saldo. Enquanto isso, exibimos somente a previsao de
+                                releases.
                               </p>
+                              <a
+                                href="/api/mp/connect"
+                                className="mt-2 inline-flex items-center gap-1 rounded-md bg-sky-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-sky-700 dark:bg-sky-700 dark:hover:bg-sky-600"
+                              >
+                                Conectar Mercado Pago
+                              </a>
                             </div>
 
                             <div className="grid grid-cols-3 gap-2">
@@ -8942,12 +9522,15 @@ export function FinancialDashboard() {
                           ? productMapByMlItemId.get(firstItem.id)
                           : undefined
                         const quantity = firstItem?.quantity ?? 0
-                        const estimatedCost =
-                          (stockProduct?.unitCost ?? 0) * quantity +
-                          quantity * HUB_CENTRALIZE_SHIPPING_PER_ITEM +
-                          quantity * HUB_CENTRALIZE_PACKAGING_PER_ITEM
+                        const productCost = (stockProduct?.unitCost ?? 0) * quantity
+                        const orderFees = Math.max(0, order.mlFeeAmount)
+                        const orderShipping = Math.max(0, order.shippingCostAmount)
+                        const orderTaxes = Math.max(0, order.taxesAmount)
+                        const orderCentralize = quantity * HUB_CENTRALIZE_FULFILLMENT_PER_ITEM
+                        const orderTotalCost =
+                          productCost + orderFees + orderShipping + orderTaxes + orderCentralize
                         const payout = order.totalPaidAmount
-                        const profit = payout - estimatedCost
+                        const profit = payout - orderTotalCost
                         const margin = payout > 0 ? (profit / payout) * 100 : 0
                         return (
                           <Card key={order.id} className="rounded-none">
@@ -9496,17 +10079,17 @@ export function FinancialDashboard() {
                       color: "bg-orange-500",
                     },
                     {
-                      label: "Frete",
+                      label: "Frete ML",
                       value: mlOrderCostAnalysis.shippingCost,
                       color: "bg-violet-500",
                     },
                     {
-                      label: "Centralize - envio fixo",
+                      label: "Centralize — envio (R$ 5/item)",
                       value: mlOrderCostAnalysis.centralizeShipping,
                       color: "bg-cyan-500",
                     },
                     {
-                      label: "Centralize - embalagem fixa",
+                      label: "Centralize — embalagem (R$ 1,50/item)",
                       value: mlOrderCostAnalysis.centralizePackaging,
                       color: "bg-sky-500",
                     },
@@ -9809,81 +10392,6 @@ function FinancialEvolutionChart({ data }: { data: SalesEvolutionPoint[] }) {
           Pedidos
         </button>
         <span className="text-muted-foreground">Dia</span>
-      </div>
-    </div>
-  )
-}
-
-function CostCompositionChart({
-  items,
-  total,
-}: {
-  items: Array<{ categoryName: string; total: number }>
-  total: number
-}) {
-  if (!items.length || total <= 0) {
-    return (
-      <p className="text-sm text-muted-foreground">Sem custos suficientes para compor grafico.</p>
-    )
-  }
-
-  const palette = [
-    "#06b6d4",
-    "#22c55e",
-    "#ef4444",
-    "#8b5cf6",
-    "#3b82f6",
-    "#f97316",
-    "#d946ef",
-    "#14b8a6",
-    "#eab308",
-    "#84cc16",
-    "#fb923c",
-    "#f59e0b",
-  ]
-  const segments: string[] = []
-  let accumulated = 0
-  for (let index = 0; index < items.length; index++) {
-    const item = items[index]
-    const start = (accumulated / total) * 360
-    accumulated += item.total
-    const end = (accumulated / total) * 360
-    segments.push(`${palette[index % palette.length]} ${start}deg ${end}deg`)
-  }
-
-  return (
-    <div className="grid gap-4 md:grid-cols-[170px_1fr] md:items-center">
-      <div className="mx-auto flex h-40 w-40 items-center justify-center rounded-full border-8 border-background bg-background shadow-inner">
-        <div
-          className="relative h-36 w-36 rounded-full"
-          style={{
-            background: `conic-gradient(${segments.join(",")})`,
-          }}
-        >
-          <div className="absolute left-1/2 top-1/2 flex h-20 w-20 -translate-x-1/2 -translate-y-1/2 flex-col items-center justify-center rounded-full bg-background text-center shadow-inner">
-            <span className="text-[10px] uppercase tracking-wide text-muted-foreground">Total</span>
-            <span className="text-xs font-semibold">{formatCurrency(total)}</span>
-          </div>
-        </div>
-      </div>
-      <div className="space-y-1.5 text-sm">
-        {items.map((item, index) => {
-          const percentage = (item.total / total) * 100
-          return (
-            <div key={item.categoryName} className="flex items-center justify-between gap-2">
-              <span className="inline-flex items-center gap-2 text-muted-foreground">
-                <span
-                  className="h-2.5 w-2.5 rounded-full"
-                  style={{ backgroundColor: palette[index % palette.length] }}
-                />
-                <span className="max-w-[170px] truncate">{item.categoryName}</span>
-              </span>
-              <span className="font-medium">
-                {formatCurrency(item.total)} ({percentage.toFixed(1)}%)
-              </span>
-            </div>
-          )
-        })}
       </div>
     </div>
   )

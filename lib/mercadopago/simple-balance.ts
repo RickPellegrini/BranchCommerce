@@ -1,7 +1,5 @@
-import { getMercadoLivreConfig } from "@/lib/mercadolivre/config"
-
 import { fetchMpPaymentDetailsForIds, paymentNetReceivedFromDetail } from "./future-releases"
-import { mpFetch } from "./http"
+import { MP_API, mpFetch } from "./http"
 
 type MpBalanceResponse = {
   available_balance: number
@@ -60,8 +58,10 @@ async function tryBalance(
   }
 }
 
-async function resolveMpUserId(accessToken: string, mlUserId: string): Promise<string> {
-  const urls = ["https://api.mercadopago.com/users/me", "https://api.mercadopago.com/v1/users/me"]
+async function resolveMpUserId(accessToken: string, hintUserId: string): Promise<string> {
+  if (hintUserId) return hintUserId
+
+  const urls = [`${MP_API}/users/me`, `${MP_API}/v1/users/me`]
   for (const url of urls) {
     try {
       const res = await fetch(url, {
@@ -81,44 +81,42 @@ async function resolveMpUserId(accessToken: string, mlUserId: string): Promise<s
       /* next */
     }
   }
-  return mlUserId
+  return ""
 }
 
-export async function getBalance(accessToken: string, mlUserId: string): Promise<MpBalance> {
-  const mpBase = "https://api.mercadopago.com"
-  const mlBase = getMercadoLivreConfig().apiUrl.replace(/\/$/, "")
-  const userId = await resolveMpUserId(accessToken, mlUserId)
-
-  const paths = [
-    `/users/${userId}/mercadopago_account/balance`,
-    `/v1/users/${userId}/mercadopago_account/balance`,
-  ]
-
-  const attempts: Array<{ label: string; url: string; headers: Record<string, string> }> = []
-
-  for (const base of [mpBase, mlBase]) {
-    for (const path of paths) {
-      attempts.push({
-        label: `${base} bearer${path}`,
-        url: `${base}${path}`,
-        headers: {
-          Accept: "application/json",
-          Authorization: `Bearer ${accessToken}`,
-        },
-      })
-    }
+/**
+ * @param accessToken Token MP (OAuth do usuario, app token ou fallback ML).
+ * @param hintUserId  Quando vem do OAuth MP, o mpUserId ja esta resolvido —
+ *                    pula a chamada /users/me. Pode ser "" para forcar resolve.
+ */
+export async function getBalance(accessToken: string, hintUserId: string): Promise<MpBalance> {
+  const userId = await resolveMpUserId(accessToken, hintUserId)
+  if (!userId) {
+    throw new Error(
+      `Mercado Pago API error: nao foi possivel resolver o user_id da conta (token sem permissao em /users/me).`,
+    )
   }
 
-  for (const a of attempts) {
-    const raw = await tryBalance(a.label, a.url, a.headers)
+  const headers: Record<string, string> = {
+    Accept: "application/json",
+    Authorization: `Bearer ${accessToken}`,
+  }
+
+  const candidates = [
+    `${MP_API}/users/${userId}/mercadopago_account/balance`,
+    `${MP_API}/v1/users/${userId}/mercadopago_account/balance`,
+  ]
+
+  for (const url of candidates) {
+    const raw = await tryBalance(url, url, headers)
     if (raw && typeof raw.available_balance === "number") {
-      console.log(`[mp-balance] OK via ${a.label}`)
+      console.log(`[mp-balance] OK via ${url}`)
       return mapBalance(raw)
     }
   }
 
   throw new Error(
-    `Mercado Pago API error: 403 — {"error":"ForbiddenApiError","cause":"forbidden","message":"forbidden"} — todas as variantes (query/bearer, /users e /v1/users, api.mercadopago e api.mercadolibre) falharam para userId=${userId}`,
+    `Mercado Pago API error: 403 — ForbiddenApiError para userId=${userId} (token nao tem permissao no endpoint /mercadopago_account/balance).`,
   )
 }
 

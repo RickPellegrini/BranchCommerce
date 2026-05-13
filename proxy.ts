@@ -4,6 +4,7 @@ const isPublicRoute = createRouteMatcher([
   "/sign-in(.*)",
   "/sign-up(.*)",
   "/api/ml/notifications(.*)",
+  "/api/mp/notifications(.*)",
   "/api/branch-hunter/(.*)",
 ])
 

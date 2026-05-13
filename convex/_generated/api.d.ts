@@ -11,6 +11,7 @@
 import type * as dedupeHelpers from "../dedupeHelpers.js";
 import type * as finance from "../finance.js";
 import type * as mercadolivre from "../mercadolivre.js";
+import type * as mercadopago from "../mercadopago.js";
 import type * as stock from "../stock.js";
 
 import type {
@@ -23,6 +24,7 @@ declare const fullApi: ApiFromModules<{
   dedupeHelpers: typeof dedupeHelpers;
   finance: typeof finance;
   mercadolivre: typeof mercadolivre;
+  mercadopago: typeof mercadopago;
   stock: typeof stock;
 }>;
 

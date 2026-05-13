@@ -125,12 +125,14 @@ export async function getFutureReleases(accessToken: string): Promise<DayGroup[]
     if (offset >= 500) break
   }
 
-  const today = new Date().toISOString().slice(0, 10)
+  const nowTimestamp = Date.now()
 
   const pending = allPayments.filter((p) => {
     if (!p.money_release_date) return false
     if (p.money_release_status === "released") return false
-    return localDate(p.money_release_date) >= today
+    const releaseTimestamp = new Date(p.money_release_date).getTime()
+    if (!Number.isFinite(releaseTimestamp)) return false
+    return releaseTimestamp > nowTimestamp
   })
 
   console.log(`[release] ${pending.length} pagamentos pendentes. Buscando detalhes individuais...`)

@@ -209,4 +209,21 @@ export default defineSchema({
   })
     .index("by_app_user", ["appUserId"])
     .index("by_ml_user", ["mlUserId"]),
+
+  mercadoPagoAccounts: defineTable({
+    appUserId: v.string(),
+    mpUserId: v.string(),
+    accessToken: v.string(),
+    refreshToken: v.string(),
+    tokenType: v.optional(v.string()),
+    scope: v.optional(v.string()),
+    publicKey: v.optional(v.string()),
+    liveMode: v.optional(v.boolean()),
+    expiresIn: v.number(),
+    expiresAt: v.number(),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index("by_app_user", ["appUserId"])
+    .index("by_mp_user", ["mpUserId"]),
 })

@@ -1,11 +1,11 @@
 import { jsonError, jsonOk } from "@/lib/mercadolivre/http"
-import { requireMlConnection } from "@/lib/mercadolivre/server"
 import { getFutureReleases } from "@/lib/mercadopago/future-releases"
+import { requireMpConnection } from "@/lib/mercadopago/server"
 
 export async function GET() {
   try {
-    const { connection } = await requireMlConnection()
-    const releases = await getFutureReleases(connection.accessToken)
+    const mp = await requireMpConnection()
+    const releases = await getFutureReleases(mp.accessToken)
     return jsonOk(releases)
   } catch (error) {
     const detail = error instanceof Error ? error.message : String(error)
