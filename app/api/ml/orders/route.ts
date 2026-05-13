@@ -3,6 +3,7 @@ import { fetchMlApi } from "@/lib/mercadolivre/storage"
 import { requireMlConnection } from "@/lib/mercadolivre/server"
 import { fetchItemDetailsBatched } from "@/lib/mercadolivre/batch-fetch"
 import { normalizeMercadoLibreItemId } from "@/lib/mercadolivre/item-id"
+import { fetchMlOrdersSearchPages } from "@/lib/mercadolivre/orders-pagination"
 
 type MlOrdersResponse = {
   results: Array<{
@@ -73,14 +74,22 @@ type MlShipmentCostResponse = {
 export async function GET(request: Request) {
   try {
     const url = new URL(request.url)
-    const limit = Number(url.searchParams.get("limit") ?? "20")
+    const limit = Math.min(Math.max(Number(url.searchParams.get("limit") ?? "20"), 1), 50)
     const offset = Number(url.searchParams.get("offset") ?? "0")
+    const loadAll = url.searchParams.get("all") === "1"
+    const startDate = url.searchParams.get("startDate")
+    const endDate = url.searchParams.get("endDate")
 
     const { connection } = await requireMlConnection()
-    const payload = await fetchMlApi<MlOrdersResponse>(
-      `/orders/search?seller=${connection.mlUserId}&sort=date_desc&limit=${limit}&offset=${offset}`,
-      connection.accessToken,
-    )
+    const payload = await fetchMlOrdersSearchPages({
+      sellerId: connection.mlUserId,
+      loadAll,
+      limit,
+      offset,
+      startDate,
+      endDate,
+      fetchPage: (path) => fetchMlApi<MlOrdersResponse>(path, connection.accessToken),
+    })
 
     const uniqueItemIds = Array.from(
       new Set(
@@ -212,8 +221,8 @@ export async function GET(request: Request) {
 
     return jsonOk({
       total: payload.paging?.total ?? payload.results.length,
-      limit: payload.paging?.limit ?? limit,
-      offset: payload.paging?.offset ?? offset,
+      limit: loadAll ? payload.results.length : (payload.paging?.limit ?? limit),
+      offset: loadAll ? 0 : (payload.paging?.offset ?? offset),
       orders,
     })
   } catch (error) {

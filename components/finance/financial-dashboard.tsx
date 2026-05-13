@@ -1791,14 +1791,18 @@ export function FinancialDashboard() {
           return
         }
 
-        await loadMlOrders()
+        await loadMlOrders({
+          startDate: filters.startDate,
+          endDate: filters.endDate,
+        })
       } catch {
         // Keep financial module resilient when ML integration is unavailable.
       }
     }
 
     void loadOrdersForFinancial()
-  }, [activeModule, userId])
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- loadMlOrders is a local fetch helper; reload is driven by module/user/date range.
+  }, [activeModule, filters.endDate, filters.startDate, userId])
 
   const categories = useMemo<FinancialCategory[]>(
     () =>
@@ -3714,26 +3718,30 @@ export function FinancialDashboard() {
     }
   }
 
-  const loadMlOrders = async () => {
+  const normalizeMlOrders = (rawOrders: MlOrder[]) =>
+    rawOrders.map((order) => ({
+      ...order,
+      items: order.items.map((item) => ({
+        ...item,
+        id: item.id ? normalizeMercadoLibreItemId(item.id) : "",
+      })),
+    }))
+
+  const loadMlOrders = async (range?: { startDate?: string; endDate?: string }) => {
     setMlError(null)
     setMlOrdersLoading(true)
     try {
-      const response = await fetch("/api/ml/orders?limit=20&offset=0", { cache: "no-store" })
+      const params = new URLSearchParams({ all: "1" })
+      if (range?.startDate) params.set("startDate", range.startDate)
+      if (range?.endDate) params.set("endDate", range.endDate)
+      const response = await fetch(`/api/ml/orders?${params.toString()}`, { cache: "no-store" })
       const payload = await response.json()
       if (!response.ok || !payload.ok) {
         throw new Error(payload.error ?? "Falha ao buscar pedidos.")
       }
       setMlOrdersCount(payload.data.total ?? 0)
       const rawOrders = (payload.data.orders ?? []) as MlOrder[]
-      setMlOrders(
-        rawOrders.map((o) => ({
-          ...o,
-          items: o.items.map((i) => ({
-            ...i,
-            id: i.id ? normalizeMercadoLibreItemId(i.id) : "",
-          })),
-        })),
-      )
+      setMlOrders(normalizeMlOrders(rawOrders))
     } catch (error) {
       setMlError(error instanceof Error ? error.message : "Erro ao buscar pedidos.")
     } finally {
@@ -3994,6 +4002,7 @@ export function FinancialDashboard() {
     if (activeMlSection === "metrics" && !mlMetrics && !mlMetricsLoading) {
       void loadMlMetrics()
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- bootstrapping is controlled by section flags, not helper identity.
   }, [
     activeMlSection,
     activeModule,
