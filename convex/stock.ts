@@ -66,17 +66,6 @@ export const addProduct = mutation({
       throw new Error("Quantidade, estoque minimo e custo devem ser maiores ou iguais a zero.")
     }
 
-    const existing = await ctx.db
-      .query("stockProducts")
-      .withIndex("by_user_ml_item", (qb) =>
-        qb.eq("userId", args.userId).eq("mlItemId", normalizedMl),
-      )
-      .first()
-
-    if (existing) {
-      throw new Error("Ja existe produto com este MLB ID no estoque.")
-    }
-
     const now = Date.now()
     const today = new Date().toISOString().slice(0, 10)
 
@@ -89,6 +78,7 @@ export const addProduct = mutation({
       minStock: args.minStock,
       unitCost: args.unitCost,
       unitCostSource: "manual",
+      stockSource: "manual",
       sellingPrice: args.sellingPrice,
       ...(args.imageUrl?.trim() && { imageUrl: args.imageUrl.trim() }),
       mlItemId: normalizedMl,
@@ -188,13 +178,6 @@ export const updateProduct = mutation({
     let mlSuffix: { mlItemId: string; sku: string } | Record<string, never> = {}
     if (args.mlItemId !== undefined && args.mlItemId.trim()) {
       const nid = normalizeMlItemIdForStock(args.mlItemId)
-      const dupMl = await ctx.db
-        .query("stockProducts")
-        .withIndex("by_user_ml_item", (qb) => qb.eq("userId", args.userId).eq("mlItemId", nid))
-        .first()
-      if (dupMl && dupMl._id !== args.productId) {
-        throw new Error("Ja existe produto vinculado a este ID de anuncio ML.")
-      }
       mlSuffix = { mlItemId: nid, sku: nid }
     }
 
@@ -277,6 +260,14 @@ export const updateProductKanban = mutation({
 })
 
 const kanbanMoveTargetValidator = v.union(v.literal("em_falta"), kanbanStatusValidator)
+
+function stockSourceForProduct(product: { stockSource?: string; kanbanStatus?: string }) {
+  return product.stockSource ?? (product.kanbanStatus === "fulfillment" ? "ml_full" : "manual")
+}
+
+function isMlFullStockProduct(product: { stockSource?: string; kanbanStatus?: string }) {
+  return stockSourceForProduct(product) === "ml_full"
+}
 
 /**
  * Move no Kanban com persistência correta: ir para "Em falta" zera quantidade,
@@ -445,14 +436,6 @@ export const addManualStockEntry = mutation({
       throw new Error("Quantidade e custo devem ser zero ou positivos.")
     }
 
-    const mlTaken = await ctx.db
-      .query("stockProducts")
-      .withIndex("by_user_ml_item", (q) => q.eq("userId", args.userId).eq("mlItemId", normalizedMl))
-      .first()
-    if (mlTaken) {
-      throw new Error("Ja existe produto com este MLB ID no estoque.")
-    }
-
     const dedupeKey = manualStockDedupeKey(
       args.userId,
       normalizedName,
@@ -503,6 +486,7 @@ export const addManualStockEntry = mutation({
       minStock: 0,
       unitCost: args.unitCost,
       unitCostSource: "manual",
+      stockSource: "manual",
       kanbanStatus,
       estimatedArrival: args.estimatedArrival,
       kanbanNote: args.observations,
@@ -607,17 +591,19 @@ export const syncFromMercadoLivre = mutation({
     for (const listing of args.listings) {
       const nextQuantity = Math.max(0, Math.floor(listing.availableQuantity))
 
-      const byMlItem = await ctx.db
+      const byMlItems = await ctx.db
         .query("stockProducts")
         .withIndex("by_user_ml_item", (queryBuilder) =>
           queryBuilder.eq("userId", args.userId).eq("mlItemId", listing.id),
         )
-        .first()
+        .collect()
 
-      const existing = byMlItem
+      const isFull = listing.logisticType === "fulfillment"
+      const existing = isFull
+        ? (byMlItems.find(isMlFullStockProduct) ?? null)
+        : (byMlItems[0] ?? null)
 
       if (existing) {
-        const isFull = listing.logisticType === "fulfillment"
         const patchData: Record<string, unknown> = {
           mlItemId: listing.id,
           sku: listing.id,
@@ -630,6 +616,7 @@ export const syncFromMercadoLivre = mutation({
         }
         if (isFull) {
           patchData.quantity = nextQuantity
+          patchData.stockSource = "ml_full"
         }
         await ctx.db.patch(existing._id, patchData)
 
@@ -649,7 +636,6 @@ export const syncFromMercadoLivre = mutation({
         continue
       }
 
-      const isFull = listing.logisticType === "fulfillment"
       if (!isFull) continue
 
       const productId = await ctx.db.insert("stockProducts", {
@@ -662,6 +648,7 @@ export const syncFromMercadoLivre = mutation({
         quantity: nextQuantity,
         minStock: 0,
         unitCost: 0,
+        stockSource: "ml_full",
         sellingPrice: listing.price,
         kanbanStatus: "fulfillment",
         createdAt: now,
@@ -783,16 +770,17 @@ export const reconcileWithMlData = mutation({
     }
 
     for (const item of args.items) {
-      const byMlItem = await ctx.db
+      const byMlItems = await ctx.db
         .query("stockProducts")
         .withIndex("by_user_ml_item", (q) =>
           q.eq("userId", args.userId).eq("mlItemId", item.mlItemId),
         )
-        .first()
-
-      const product = byMlItem ?? aliasOwner.get(item.mlItemId) ?? null
+        .collect()
 
       const isFull = item.logisticType === "fulfillment"
+      const product = isFull
+        ? (byMlItems.find(isMlFullStockProduct) ?? null)
+        : (byMlItems[0] ?? aliasOwner.get(item.mlItemId) ?? null)
 
       if (!product) {
         if (!isFull) continue
@@ -808,6 +796,7 @@ export const reconcileWithMlData = mutation({
           quantity: nextQty,
           minStock: 0,
           unitCost: 0,
+          stockSource: "ml_full",
           sellingPrice: item.price,
           kanbanStatus: "fulfillment",
           createdAt: now,
@@ -839,7 +828,7 @@ export const reconcileWithMlData = mutation({
       if (!isAlias && item.title && item.title !== product.name) {
         patch.name = item.title
       }
-      if (!isAlias && item.imageUrl && item.imageUrl !== product.imageUrl) {
+      if (item.imageUrl && item.imageUrl !== product.imageUrl && (!isAlias || !product.imageUrl)) {
         patch.imageUrl = item.imageUrl
       }
       if (!isAlias && item.price > 0 && item.price !== product.sellingPrice) {
@@ -855,6 +844,9 @@ export const reconcileWithMlData = mutation({
           note: "Reconciliação ML (fulfillment)",
         })
         patch.kanbanStatus = "fulfillment"
+      }
+      if (isFull) {
+        patch.stockSource = "ml_full"
       }
 
       const nextQty = isFull ? Math.max(0, Math.floor(item.availableQuantity)) : product.quantity

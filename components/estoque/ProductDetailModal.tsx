@@ -57,6 +57,7 @@ export function ProductDetailModal({
   const [newAlias, setNewAlias] = useState("")
   const [aliasError, setAliasError] = useState<string | null>(null)
   const [saving, setSaving] = useState(false)
+  const [imageFailed, setImageFailed] = useState(false)
 
   const urgency = getUrgency(product)
   const dotColor = urgencyColor(urgency)
@@ -139,11 +140,12 @@ export function ProductDetailModal({
           {/* Header */}
           <div className="mb-4 flex items-start gap-3">
             <div className="h-12 w-12 flex-shrink-0 overflow-hidden rounded-xl border bg-muted">
-              {product.imageUrl ? (
+              {product.imageUrl && !imageFailed ? (
                 <img
                   src={product.imageUrl}
                   alt={product.name}
                   className="h-full w-full object-cover"
+                  onError={() => setImageFailed(true)}
                 />
               ) : (
                 <div className="flex h-full w-full items-center justify-center">

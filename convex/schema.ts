@@ -79,6 +79,7 @@ export default defineSchema({
     minStock: v.number(),
     unitCost: v.number(),
     unitCostSource: v.optional(v.union(v.literal("manual"), v.literal("extension"))),
+    stockSource: v.optional(v.union(v.literal("manual"), v.literal("ml_full"))),
     sellingPrice: v.optional(v.number()),
     kanbanStatus: v.optional(
       v.union(
@@ -106,6 +107,7 @@ export default defineSchema({
     .index("by_user", ["userId"])
     .index("by_user_sku", ["userId", "sku"])
     .index("by_user_ml_item", ["userId", "mlItemId"])
+    .index("by_user_ml_item_source", ["userId", "mlItemId", "stockSource"])
     .index("by_ml_item", ["mlItemId"])
     .index("by_user_manual_dedupe", ["userId", "manualDedupeKey"]),
 

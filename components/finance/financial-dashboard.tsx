@@ -770,6 +770,20 @@ type SalesEvolutionPoint = {
   orders: number
 }
 
+function financePeriodKey(dateValue: string, period: FinancialPeriod) {
+  if (period === "day") return dateValue
+  const [year, month, day] = dateValue.split("-").map(Number)
+  const date = new Date(year, (month ?? 1) - 1, day ?? 1)
+  if (period === "week") {
+    const start = new Date(date)
+    const weekday = date.getDay()
+    const diff = weekday === 0 ? -6 : 1 - weekday
+    start.setDate(date.getDate() + diff)
+    return start.toISOString().slice(0, 10)
+  }
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}`
+}
+
 type OrdersFinancialSummary = {
   grossRevenue: number
   totalCosts: number
@@ -1370,6 +1384,7 @@ export function FinancialDashboard() {
   const mlCatalogTabBootstrapped = useRef(false)
   const mlAnunciosTabBootstrapped = useRef(false)
   const mlOrdersSectionBootstrapped = useRef(false)
+  const mlAppBootstrapUserRef = useRef<string | null>(null)
   const [mlMetrics, setMlMetrics] = useState<{
     listingsTotal: number
     ordersTotal: number
@@ -1427,6 +1442,7 @@ export function FinancialDashboard() {
   const [financeOverviewProjection, setFinanceOverviewProjection] = useState<"none" | "month">(
     "none",
   )
+  const [expandedReportMonth, setExpandedReportMonth] = useState<string | null>(null)
   const [financeAbcMetric, setFinanceAbcMetric] = useState<"revenue" | "quantity" | "profit">(
     "revenue",
   )
@@ -1649,7 +1665,6 @@ export function FinancialDashboard() {
   const applyKanbanMoveMutation = useMutation(api.stock.applyKanbanMove)
   const deleteProduct = useMutation(api.stock.deleteProduct)
   const addMovement = useMutation(api.stock.addMovement)
-  const syncStockFromMercadoLivre = useMutation(api.stock.syncFromMercadoLivre)
   const setProductKanbanHidden = useMutation(api.stock.setProductKanbanHidden)
   const addManualStockEntryMutation = useMutation(api.stock.addManualStockEntry)
   const addExpenseWithPayment = useMutation(api.finance.addExpenseWithPayment)
@@ -1739,7 +1754,8 @@ export function FinancialDashboard() {
   }, [activeModule, mlConnectionStatus?.connected, userId])
 
   useEffect(() => {
-    if (activeModule !== "stock" || !mlConnectionStatus?.connected || !userId) return
+    if (activeModule !== "stock" || !mlConnectionStatus?.connected || !userId || mlLastSyncAt)
+      return
     const autoSync = async () => {
       setMlSyncingStock(true)
       setMlError(null)
@@ -1766,7 +1782,7 @@ export function FinancialDashboard() {
       }
     }
     void autoSync()
-  }, [activeModule, mlConnectionStatus?.connected, userId])
+  }, [activeModule, mlConnectionStatus?.connected, mlLastSyncAt, userId])
 
   useEffect(() => {
     if ((activeModule !== "finance" && activeModule !== "home") || !userId) return
@@ -1941,10 +1957,18 @@ export function FinancialDashboard() {
   )
   const productMapByMlItemId = useMemo(() => {
     const map = new Map<string, StockProduct>()
+    const pickCostSource = (current: StockProduct | undefined, candidate: StockProduct) => {
+      if (!current) return candidate
+      if (current.unitCost <= 0 && candidate.unitCost > 0) return candidate
+      if (current.kanbanStatus === "fulfillment" && candidate.kanbanStatus !== "fulfillment") {
+        return candidate
+      }
+      return current
+    }
     for (const p of products) {
-      if (p.mlItemId) map.set(p.mlItemId, p)
+      if (p.mlItemId) map.set(p.mlItemId, pickCostSource(map.get(p.mlItemId), p))
       for (const alias of p.mlItemAliases ?? []) {
-        if (!map.has(alias)) map.set(alias, p)
+        map.set(alias, pickCostSource(map.get(alias), p))
       }
     }
     return map
@@ -2074,6 +2098,32 @@ export function FinancialDashboard() {
     [filteredTransactions, period],
   )
   const evolutionReport = useMemo(() => monthlyEvolution(transactions), [transactions])
+  const flowDetailsByLabel = useMemo(() => {
+    const map = new Map<string, FinancialTransaction[]>()
+    for (const transaction of filteredTransactions) {
+      const key = financePeriodKey(transaction.date, period)
+      const current = map.get(key) ?? []
+      current.push(transaction)
+      map.set(key, current)
+    }
+    return map
+  }, [filteredTransactions, period])
+  const evolutionDetailsByLabel = useMemo(() => {
+    const labels = new Set(evolutionReport.map((item) => item.monthLabel))
+    const map = new Map<string, FinancialTransaction[]>()
+    for (const transaction of transactions) {
+      const [year, month] = transaction.date.split("-").map(Number)
+      const label = new Date(year, (month ?? 1) - 1, 1).toLocaleDateString("pt-BR", {
+        month: "short",
+        year: "2-digit",
+      })
+      if (!labels.has(label)) continue
+      const current = map.get(label) ?? []
+      current.push(transaction)
+      map.set(label, current)
+    }
+    return map
+  }, [evolutionReport, transactions])
   const forecastReport = useMemo(() => forecastFinancialTrend(transactions, 4, 6), [transactions])
   const forecastMaxValue = Math.max(
     ...forecastReport.map((item) =>
@@ -3666,36 +3716,25 @@ export function FinancialDashboard() {
   }
 
   const syncStockWithMl = async () => {
-    if (!userId) return
+    if (!userId || mlSyncingStock) return
     const startedAt = Date.now()
     setMlSyncingStock(true)
     setMlError(null)
     setMlInfo(null)
 
     try {
-      const response = await fetch("/api/ml/listings?limit=50&offset=0", { cache: "no-store" })
+      const response = await fetch("/api/stock/sync-ml", {
+        method: "POST",
+        cache: "no-store",
+      })
       const payload = await response.json()
       if (!response.ok || !payload.ok) {
-        throw new Error(payload.error ?? "Falha ao carregar anuncios para sincronizar estoque.")
+        throw new Error(payload.error ?? "Falha ao sincronizar com Mercado Livre.")
       }
 
-      const listings = (payload.data.listings ?? []) as MlListing[]
-      const syncResult = await syncStockFromMercadoLivre({
-        userId,
-        listings: listings.map((listing) => ({
-          id: listing.id,
-          title: listing.title,
-          price: listing.price,
-          availableQuantity: listing.available_quantity,
-          thumbnail: listing.thumbnail,
-          sku: listing.sku,
-          logisticType: listing.logisticType ?? undefined,
-        })),
-      })
-
-      setMlListingsCount(payload.data.total ?? listings.length)
+      const syncResult = payload.data ?? {}
       setMlInfo(
-        `Sincronizacao concluida: ${syncResult.updated} atualizados, ${syncResult.created} criados.`,
+        `Sincronização concluída: ${syncResult.totalMlItems ?? 0} anúncios, ${syncResult.updated ?? 0} atualizados, ${syncResult.created ?? 0} criados.`,
       )
       setMlLastSyncAt(Date.now())
       setMlLastSyncDurationMs(Date.now() - startedAt)
@@ -3714,30 +3753,8 @@ export function FinancialDashboard() {
   }
 
   const handleKanbanSyncWithMl = async () => {
-    if (!userId || !mlConnectionStatus?.connected) return
-    setMlSyncingStock(true)
-    setMlError(null)
-    setMlInfo(null)
-    try {
-      const response = await fetch("/api/stock/sync-ml", {
-        method: "POST",
-        cache: "no-store",
-      })
-      const payload = await response.json()
-      if (!response.ok || !payload.ok) {
-        throw new Error(payload.error ?? "Falha ao sincronizar com Mercado Livre.")
-      }
-
-      const d = payload.data ?? {}
-      setMlInfo(
-        `Sincronização concluída: ${d.totalMlItems ?? 0} anúncios, ${d.updated ?? 0} atualizados, ${d.notFound ?? 0} sem vínculo.`,
-      )
-      setMlLastSyncAt(Date.now())
-    } catch (error) {
-      setMlError(error instanceof Error ? error.message : "Erro ao reconciliar com Mercado Livre.")
-    } finally {
-      setMlSyncingStock(false)
-    }
+    if (!mlConnectionStatus?.connected) return
+    await syncStockWithMl()
   }
 
   const openAnalysis = (itemId: string) => setAnalysisItemId(itemId)
@@ -3820,6 +3837,57 @@ export function FinancialDashboard() {
       source: unitCost > 0 ? "fallback" : "fallback",
     })
   }
+
+  useEffect(() => {
+    if (!isLoaded) return
+    if (!userId) {
+      mlAppBootstrapUserRef.current = null
+      setMlConnectionStatus(null)
+      return
+    }
+    if (mlAppBootstrapUserRef.current === userId) return
+
+    mlAppBootstrapUserRef.current = userId
+    let cancelled = false
+
+    const bootstrapConnectedMlData = async () => {
+      setMlLoading(true)
+      try {
+        const response = await fetch("/api/ml/account", { cache: "no-store" })
+        const payload = await response.json()
+        if (!response.ok || !payload.ok) {
+          throw new Error(payload.error ?? "Falha ao carregar status do Mercado Livre.")
+        }
+
+        if (cancelled) return
+        const connectionData = payload.data as MlConnectionStatus
+        setMlConnectionStatus(connectionData)
+        if (!connectionData.connected) return
+
+        await Promise.allSettled([
+          syncStockWithMl(),
+          loadMlOverviewCards(),
+          loadMlOrders(),
+          fetchMpData(),
+          fetchFutureReleases(),
+        ])
+      } catch (error) {
+        if (!cancelled) {
+          setMlError(
+            error instanceof Error ? error.message : "Erro ao atualizar dados do Mercado Livre.",
+          )
+        }
+      } finally {
+        if (!cancelled) setMlLoading(false)
+      }
+    }
+
+    void bootstrapConnectedMlData()
+    return () => {
+      cancelled = true
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- bootstraps once per authenticated user; loaders are invoked as a single startup refresh batch.
+  }, [fetchFutureReleases, fetchMpData, isLoaded, userId])
 
   useEffect(() => {
     if (!mlConnectionStatus?.connected) {
@@ -4015,14 +4083,10 @@ export function FinancialDashboard() {
             <SidebarButton
               icon={TrendingDown}
               label="Lancamentos"
-              isActive={activeFinanceSection === "expenses"}
+              isActive={
+                activeFinanceSection === "expenses" || activeFinanceSection === "categories"
+              }
               onClick={() => setActiveFinanceSection("expenses")}
-            />
-            <SidebarButton
-              icon={FolderTree}
-              label="Categorias"
-              isActive={activeFinanceSection === "categories"}
-              onClick={() => setActiveFinanceSection("categories")}
             />
             <SidebarButton
               icon={BarChart3}
@@ -4681,169 +4745,170 @@ export function FinancialDashboard() {
                     </CardDescription>
                   </CardHeader>
                   <CardContent className="space-y-4">
-                    <div className="rounded-lg border border-border/70 bg-muted/15 px-4 py-3 shadow-sm">
-                      <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
-                        <div className="flex items-center gap-1.5 text-muted-foreground">
-                          <CalendarDays className="size-3.5" />
-                          <span className="text-xs font-semibold">Filtros</span>
+                    <div className="rounded-lg border border-border/70 bg-muted/15 px-3 py-2.5 shadow-sm">
+                      <div className="flex flex-wrap items-end gap-2">
+                        <div className="min-w-[215px] space-y-1 rounded-md border border-border/60 bg-background px-2 py-1.5">
+                          <p className="inline-flex items-center gap-1 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+                            <CalendarDays className="size-3" />
+                            Periodo
+                          </p>
+                          <div className="flex items-center gap-1.5">
+                            <BrDateInput
+                              value={filters.startDate ?? ""}
+                              onValueChange={(value) =>
+                                setFilters((prev) => ({
+                                  ...prev,
+                                  startDate: value || undefined,
+                                }))
+                              }
+                            />
+                            <span className="text-xs text-muted-foreground">-</span>
+                            <BrDateInput
+                              value={filters.endDate ?? ""}
+                              onValueChange={(value) =>
+                                setFilters((prev) => ({
+                                  ...prev,
+                                  endDate: value || undefined,
+                                }))
+                              }
+                            />
+                          </div>
                         </div>
 
-                        <div className="flex min-w-0 flex-wrap items-center gap-1.5 rounded-md border border-border/60 bg-background px-2 py-1">
-                          <BrDateInput
-                            value={filters.startDate ?? ""}
+                        <div className="flex min-w-[290px] flex-wrap items-end gap-1.5 rounded-md border border-border/60 bg-background px-2 py-1.5">
+                          <p className="basis-full text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+                            Lancamentos
+                          </p>
+                          <Select
+                            value={filters.categoryId ?? "all-categories"}
                             onValueChange={(value) =>
                               setFilters((prev) => ({
                                 ...prev,
-                                startDate: value || undefined,
+                                categoryId: value === "all-categories" ? undefined : value,
                               }))
                             }
-                          />
-                          <span className="text-xs text-muted-foreground">-</span>
-                          <BrDateInput
-                            value={filters.endDate ?? ""}
+                          >
+                            <SelectTrigger className="h-8 w-[150px]">
+                              <SelectValue placeholder="Categoria" />
+                            </SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value="all-categories">Todas categorias</SelectItem>
+                              {categories.map((category) => (
+                                <SelectItem key={category.id} value={category.id}>
+                                  {category.name}
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                          <Select
+                            value={filters.kind ?? "all"}
                             onValueChange={(value) =>
                               setFilters((prev) => ({
                                 ...prev,
-                                endDate: value || undefined,
+                                kind: value as TransactionFilters["kind"],
                               }))
                             }
-                          />
+                          >
+                            <SelectTrigger className="h-8 w-[135px]">
+                              <SelectValue placeholder="Tipo" />
+                            </SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value="all">Entradas e saidas</SelectItem>
+                              <SelectItem value="income">Entradas</SelectItem>
+                              <SelectItem value="expense">Saidas</SelectItem>
+                            </SelectContent>
+                          </Select>
                         </div>
 
-                        <Select
-                          value={filters.categoryId ?? "all-categories"}
-                          onValueChange={(value) =>
-                            setFilters((prev) => ({
-                              ...prev,
-                              categoryId: value === "all-categories" ? undefined : value,
-                            }))
-                          }
-                        >
-                          <SelectTrigger className="h-8 w-auto min-w-[140px]">
-                            <SelectValue placeholder="Categoria" />
-                          </SelectTrigger>
-                          <SelectContent>
-                            <SelectItem value="all-categories">Todas categorias</SelectItem>
-                            {categories.map((category) => (
-                              <SelectItem key={category.id} value={category.id}>
-                                {category.name}
-                              </SelectItem>
-                            ))}
-                          </SelectContent>
-                        </Select>
+                        <div className="flex min-w-[390px] flex-wrap items-end gap-1.5 rounded-md border border-border/60 bg-background px-2 py-1.5">
+                          <p className="basis-full text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+                            Pedidos ML
+                          </p>
+                          <Input
+                            className="h-8 w-[150px]"
+                            placeholder="Titulo"
+                            value={financeOrdersTitleFilter}
+                            onChange={(event) => setFinanceOrdersTitleFilter(event.target.value)}
+                          />
+                          <Input
+                            className="h-8 w-[105px]"
+                            placeholder="MLB ID"
+                            value={financeOrdersSkuFilter}
+                            onChange={(event) => setFinanceOrdersSkuFilter(event.target.value)}
+                          />
+                          <Select
+                            value={financeOrdersStatusFilter}
+                            onValueChange={setFinanceOrdersStatusFilter}
+                          >
+                            <SelectTrigger className="h-8 w-[130px]">
+                              <SelectValue placeholder="Status" />
+                            </SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value="all">Todos</SelectItem>
+                              <SelectItem value="paid">Pago</SelectItem>
+                              <SelectItem value="ready_to_ship">Pronto envio</SelectItem>
+                              <SelectItem value="shipped">Enviado</SelectItem>
+                              <SelectItem value="delivered">Entregue</SelectItem>
+                            </SelectContent>
+                          </Select>
+                        </div>
 
-                        <Select
-                          value={filters.kind ?? "all"}
-                          onValueChange={(value) =>
-                            setFilters((prev) => ({
-                              ...prev,
-                              kind: value as TransactionFilters["kind"],
-                            }))
-                          }
-                        >
-                          <SelectTrigger className="h-8 w-auto min-w-[140px]">
-                            <SelectValue placeholder="Tipo" />
-                          </SelectTrigger>
-                          <SelectContent>
-                            <SelectItem value="all">Entradas e saidas</SelectItem>
-                            <SelectItem value="income">Entradas</SelectItem>
-                            <SelectItem value="expense">Saidas</SelectItem>
-                          </SelectContent>
-                        </Select>
-
-                        <Separator orientation="vertical" className="hidden h-6 sm:block" />
-
-                        <Input
-                          className="h-8 w-auto min-w-[140px] max-w-[180px]"
-                          placeholder="Titulo do pedido"
-                          value={financeOrdersTitleFilter}
-                          onChange={(event) => setFinanceOrdersTitleFilter(event.target.value)}
-                        />
-                        <Input
-                          className="h-8 w-auto min-w-[100px] max-w-[140px]"
-                          placeholder="MLB ID"
-                          value={financeOrdersSkuFilter}
-                          onChange={(event) => setFinanceOrdersSkuFilter(event.target.value)}
-                        />
-                        <Select
-                          value={financeOrdersStatusFilter}
-                          onValueChange={setFinanceOrdersStatusFilter}
-                        >
-                          <SelectTrigger className="h-8 w-auto min-w-[140px]">
-                            <SelectValue placeholder="Status" />
-                          </SelectTrigger>
-                          <SelectContent>
-                            <SelectItem value="all">Todos os status</SelectItem>
-                            <SelectItem value="paid">Pago</SelectItem>
-                            <SelectItem value="ready_to_ship">Pronto para envio</SelectItem>
-                            <SelectItem value="shipped">Enviado</SelectItem>
-                            <SelectItem value="delivered">Entregue</SelectItem>
-                          </SelectContent>
-                        </Select>
-                        <Select value="all-accounts" onValueChange={() => undefined}>
-                          <SelectTrigger className="h-8 w-auto min-w-[140px]">
-                            <SelectValue placeholder="Conta" />
-                          </SelectTrigger>
-                          <SelectContent>
-                            <SelectItem value="all-accounts">Todas as contas</SelectItem>
-                            <SelectItem value={financeAccountLabel}>
-                              {financeAccountLabel}
-                            </SelectItem>
-                          </SelectContent>
-                        </Select>
-                      </div>
-
-                      <div className="mt-2 flex flex-wrap items-center gap-2 border-t border-border/50 pt-2">
-                        <span className="mr-1 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
-                          Comparar / projetar
-                        </span>
-                        <Button
-                          type="button"
-                          size="sm"
-                          variant={financeOverviewCompare === "none" ? "secondary" : "outline"}
-                          className="h-7 rounded-none px-2.5 text-[10px] font-normal"
-                          onClick={() => setFinanceOverviewCompare("none")}
-                        >
-                          Sem comparar
-                        </Button>
-                        <Button
-                          type="button"
-                          size="sm"
-                          variant={
-                            financeOverviewCompare === "prev_month" ? "secondary" : "outline"
-                          }
-                          className="h-7 rounded-none px-2.5 text-[10px] font-normal"
-                          onClick={() => setFinanceOverviewCompare("prev_month")}
-                        >
-                          vs Mes anterior
-                        </Button>
-                        <Button
-                          type="button"
-                          size="sm"
-                          variant={financeOverviewCompare === "prev_year" ? "secondary" : "outline"}
-                          className="h-7 rounded-none px-2.5 text-[10px] font-normal"
-                          onClick={() => setFinanceOverviewCompare("prev_year")}
-                        >
-                          vs Ano anterior
-                        </Button>
-                        <Button
-                          type="button"
-                          size="sm"
-                          variant={financeOverviewProjection === "none" ? "secondary" : "outline"}
-                          className="h-7 rounded-none px-2.5 text-[10px] font-normal"
-                          onClick={() => setFinanceOverviewProjection("none")}
-                        >
-                          Sem projecao
-                        </Button>
-                        <Button
-                          type="button"
-                          size="sm"
-                          variant={financeOverviewProjection === "month" ? "secondary" : "outline"}
-                          className="h-7 rounded-none px-2.5 text-[10px] font-normal"
-                          onClick={() => setFinanceOverviewProjection("month")}
-                        >
-                          Projecao do mes
-                        </Button>
+                        <div className="flex min-w-[190px] flex-wrap items-end gap-1.5 rounded-md border border-border/60 bg-background px-2 py-1.5">
+                          <p className="basis-full text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+                            Analise
+                          </p>
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant={financeOverviewCompare === "none" ? "secondary" : "outline"}
+                            className="h-7 rounded-none px-2.5 text-[10px] font-normal"
+                            onClick={() => setFinanceOverviewCompare("none")}
+                          >
+                            Sem comparar
+                          </Button>
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant={
+                              financeOverviewCompare === "prev_month" ? "secondary" : "outline"
+                            }
+                            className="h-7 rounded-none px-2.5 text-[10px] font-normal"
+                            onClick={() => setFinanceOverviewCompare("prev_month")}
+                          >
+                            vs Mes anterior
+                          </Button>
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant={
+                              financeOverviewCompare === "prev_year" ? "secondary" : "outline"
+                            }
+                            className="h-7 rounded-none px-2.5 text-[10px] font-normal"
+                            onClick={() => setFinanceOverviewCompare("prev_year")}
+                          >
+                            vs Ano anterior
+                          </Button>
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant={financeOverviewProjection === "none" ? "secondary" : "outline"}
+                            className="h-7 rounded-none px-2.5 text-[10px] font-normal"
+                            onClick={() => setFinanceOverviewProjection("none")}
+                          >
+                            Sem projecao
+                          </Button>
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant={
+                              financeOverviewProjection === "month" ? "secondary" : "outline"
+                            }
+                            className="h-7 rounded-none px-2.5 text-[10px] font-normal"
+                            onClick={() => setFinanceOverviewProjection("month")}
+                          >
+                            Projecao do mes
+                          </Button>
+                        </div>
                       </div>
                     </div>
 
@@ -5757,283 +5822,326 @@ export function FinancialDashboard() {
             )}
 
             {activeFinanceSection === "expenses" && (
-              <Card className="border-primary/20 bg-primary/5">
-                <CardHeader>
-                  <CardTitle className="inline-flex items-center gap-2">
-                    <ReceiptText className="size-5 text-primary" />
-                    Registrar lancamento
-                  </CardTitle>
-                  <CardDescription>
-                    Lance despesas da empresa ou entradas de capital com tipo e periodicidade. Use a
-                    area de comprovantes abaixo ao registrar o custo; em{" "}
-                    <button
-                      type="button"
-                      className="font-medium text-primary underline-offset-2 hover:underline"
-                      onClick={() => setActiveFinanceSection("history")}
-                    >
-                      Historico
-                    </button>{" "}
-                    voce ainda pode abrir o modal de anexos por linha.
-                  </CardDescription>
-                </CardHeader>
-                <CardContent className="grid gap-3 md:grid-cols-2">
-                  {launchFeedback && (
-                    <div
-                      className={cn(
-                        "md:col-span-2 flex items-center gap-2 rounded-none border px-3 py-2 text-sm",
-                        launchFeedback.type === "success"
-                          ? "border-emerald-300 dark:border-emerald-800 bg-emerald-50 dark:bg-emerald-950/30 text-emerald-700 dark:text-emerald-400"
-                          : "border-destructive/30 bg-destructive/10 text-destructive",
-                      )}
-                    >
-                      {launchFeedback.type === "success" ? (
-                        <CheckCircle2 className="size-4" />
-                      ) : (
-                        <AlertCircle className="size-4" />
-                      )}
-                      <span>{launchFeedback.message}</span>
-                    </div>
-                  )}
-                  <div className="space-y-1">
-                    <p className="inline-flex items-center gap-1 text-xs text-muted-foreground">
-                      <Tag className="size-3.5" />
-                      Tipo do lancamento
-                    </p>
-                    <Select
-                      value={launchForm.kind}
-                      onValueChange={(value) =>
-                        setLaunchForm((prev) => ({
-                          ...prev,
-                          kind: value as FinancialTransaction["kind"],
-                          categoryId: "",
-                        }))
-                      }
-                    >
-                      <SelectTrigger className="w-full border-primary/20 bg-background">
-                        <SelectValue placeholder="Tipo do lancamento" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="expense">Despesa</SelectItem>
-                        <SelectItem value="income">Entrada de capital</SelectItem>
-                      </SelectContent>
-                    </Select>
-                  </div>
-                  <div className="space-y-1">
-                    <p className="inline-flex items-center gap-1 text-xs text-muted-foreground">
-                      <CircleDollarSign className="size-3.5" />
-                      Valor
-                    </p>
-                    <Input
-                      type="number"
-                      className="border-primary/20 bg-background"
-                      placeholder="Valor"
-                      value={launchForm.amount}
-                      onChange={(event) =>
-                        setLaunchForm((prev) => ({ ...prev, amount: event.target.value }))
-                      }
-                    />
-                  </div>
-                  <div className="space-y-1">
-                    <p className="inline-flex items-center gap-1 text-xs text-muted-foreground">
-                      <CalendarDays className="size-3.5" />
-                      Data
-                    </p>
-                    <BrDateInput
-                      className="border-primary/20 bg-background"
-                      value={launchForm.date}
-                      onValueChange={(value) => setLaunchForm((prev) => ({ ...prev, date: value }))}
-                    />
-                  </div>
-                  <div className="space-y-1 md:col-span-2">
-                    <p className="inline-flex items-center gap-1 text-xs text-muted-foreground">
-                      <FileText className="size-3.5" />
-                      Descricao
-                    </p>
-                    <Input
-                      className="border-primary/20 bg-background"
-                      placeholder="Descricao"
-                      value={launchForm.description}
-                      onChange={(event) =>
-                        setLaunchForm((prev) => ({ ...prev, description: event.target.value }))
-                      }
-                    />
-                  </div>
-                  <div className="space-y-1">
-                    <p className="inline-flex items-center gap-1 text-xs text-muted-foreground">
-                      <FolderTree className="size-3.5" />
-                      Categoria
-                    </p>
-                    <Select
-                      value={launchForm.categoryId || undefined}
-                      onValueChange={(value) =>
-                        setLaunchForm((prev) => ({
-                          ...prev,
-                          categoryId: value as Id<"categories">,
-                        }))
-                      }
-                    >
-                      <SelectTrigger className="w-full border-primary/20 bg-background">
-                        <SelectValue placeholder="Categoria" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {(launchForm.kind === "income" ? incomeCategories : expenseCategories).map(
-                          (category) => (
-                            <SelectItem key={category.id} value={category.id}>
-                              {category.name}
-                            </SelectItem>
-                          ),
+              <>
+                <div className="flex flex-wrap gap-2">
+                  <Button
+                    size="sm"
+                    variant="default"
+                    onClick={() => setActiveFinanceSection("expenses")}
+                  >
+                    Novo lancamento
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={() => setActiveFinanceSection("categories")}
+                  >
+                    Categorias
+                  </Button>
+                </div>
+                <Card className="border-primary/20 bg-primary/5">
+                  <CardHeader>
+                    <CardTitle className="inline-flex items-center gap-2">
+                      <ReceiptText className="size-5 text-primary" />
+                      Registrar lancamento
+                    </CardTitle>
+                    <CardDescription>
+                      Lance despesas da empresa ou entradas de capital com tipo e periodicidade. Use
+                      a area de comprovantes abaixo ao registrar o custo; em{" "}
+                      <button
+                        type="button"
+                        className="font-medium text-primary underline-offset-2 hover:underline"
+                        onClick={() => setActiveFinanceSection("history")}
+                      >
+                        Historico
+                      </button>{" "}
+                      voce ainda pode abrir o modal de anexos por linha.
+                    </CardDescription>
+                  </CardHeader>
+                  <CardContent className="grid gap-3 md:grid-cols-2">
+                    {launchFeedback && (
+                      <div
+                        className={cn(
+                          "md:col-span-2 flex items-center gap-2 rounded-none border px-3 py-2 text-sm",
+                          launchFeedback.type === "success"
+                            ? "border-emerald-300 dark:border-emerald-800 bg-emerald-50 dark:bg-emerald-950/30 text-emerald-700 dark:text-emerald-400"
+                            : "border-destructive/30 bg-destructive/10 text-destructive",
                         )}
-                      </SelectContent>
-                    </Select>
-                  </div>
-                  {launchForm.kind === "expense" ? (
+                      >
+                        {launchFeedback.type === "success" ? (
+                          <CheckCircle2 className="size-4" />
+                        ) : (
+                          <AlertCircle className="size-4" />
+                        )}
+                        <span>{launchFeedback.message}</span>
+                      </div>
+                    )}
                     <div className="space-y-1">
                       <p className="inline-flex items-center gap-1 text-xs text-muted-foreground">
-                        <CreditCard className="size-3.5" />
-                        Tipo da despesa
+                        <Tag className="size-3.5" />
+                        Tipo do lancamento
                       </p>
                       <Select
-                        value={launchForm.expenseType}
+                        value={launchForm.kind}
                         onValueChange={(value) =>
-                          setLaunchForm((prev) => ({ ...prev, expenseType: value as ExpenseType }))
+                          setLaunchForm((prev) => ({
+                            ...prev,
+                            kind: value as FinancialTransaction["kind"],
+                            categoryId: "",
+                          }))
                         }
                       >
                         <SelectTrigger className="w-full border-primary/20 bg-background">
-                          <SelectValue placeholder="Tipo da despesa" />
+                          <SelectValue placeholder="Tipo do lancamento" />
                         </SelectTrigger>
                         <SelectContent>
-                          <SelectItem value="fixed">Fixo</SelectItem>
-                          <SelectItem value="variable">Variavel</SelectItem>
+                          <SelectItem value="expense">Despesa</SelectItem>
+                          <SelectItem value="income">Entrada de capital</SelectItem>
                         </SelectContent>
                       </Select>
                     </div>
-                  ) : (
                     <div className="space-y-1">
                       <p className="inline-flex items-center gap-1 text-xs text-muted-foreground">
-                        <Store className="size-3.5" />
-                        Origem da entrada
+                        <CircleDollarSign className="size-3.5" />
+                        Valor
                       </p>
                       <Input
+                        type="number"
                         className="border-primary/20 bg-background"
-                        placeholder="Origem da entrada (ex: aporte)"
-                        value={launchForm.origin}
+                        placeholder="Valor"
+                        value={launchForm.amount}
                         onChange={(event) =>
-                          setLaunchForm((prev) => ({ ...prev, origin: event.target.value }))
+                          setLaunchForm((prev) => ({ ...prev, amount: event.target.value }))
                         }
                       />
                     </div>
-                  )}
-                  <div className="space-y-1 md:col-span-2">
-                    <p className="inline-flex items-center gap-1 text-xs text-muted-foreground">
-                      <Repeat className="size-3.5" />
-                      Periodicidade
-                    </p>
-                    <Select
-                      value={launchForm.periodicity}
-                      onValueChange={(value) =>
-                        setLaunchForm((prev) => ({
-                          ...prev,
-                          periodicity: value as TransactionPeriodicity,
-                        }))
-                      }
-                    >
-                      <SelectTrigger className="w-full border-primary/20 bg-background">
-                        <SelectValue placeholder="Periodicidade" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="one_time">Unico</SelectItem>
-                        <SelectItem value="weekly">Semanal</SelectItem>
-                        <SelectItem value="monthly">Mensal</SelectItem>
-                        <SelectItem value="quarterly">Trimestral</SelectItem>
-                        <SelectItem value="semiannual">Semestral</SelectItem>
-                        <SelectItem value="annual">Anual</SelectItem>
-                      </SelectContent>
-                    </Select>
-                  </div>
-                  {launchForm.kind === "expense" ? (
-                    <>
-                      <div className="space-y-1 md:col-span-2">
+                    <div className="space-y-1">
+                      <p className="inline-flex items-center gap-1 text-xs text-muted-foreground">
+                        <CalendarDays className="size-3.5" />
+                        Data
+                      </p>
+                      <BrDateInput
+                        className="border-primary/20 bg-background"
+                        value={launchForm.date}
+                        onValueChange={(value) =>
+                          setLaunchForm((prev) => ({ ...prev, date: value }))
+                        }
+                      />
+                    </div>
+                    <div className="space-y-1 md:col-span-2">
+                      <p className="inline-flex items-center gap-1 text-xs text-muted-foreground">
+                        <FileText className="size-3.5" />
+                        Descricao
+                      </p>
+                      <Input
+                        className="border-primary/20 bg-background"
+                        placeholder="Descricao"
+                        value={launchForm.description}
+                        onChange={(event) =>
+                          setLaunchForm((prev) => ({ ...prev, description: event.target.value }))
+                        }
+                      />
+                    </div>
+                    <div className="space-y-1">
+                      <p className="inline-flex items-center gap-1 text-xs text-muted-foreground">
+                        <FolderTree className="size-3.5" />
+                        Categoria
+                      </p>
+                      <Select
+                        value={launchForm.categoryId || undefined}
+                        onValueChange={(value) =>
+                          setLaunchForm((prev) => ({
+                            ...prev,
+                            categoryId: value as Id<"categories">,
+                          }))
+                        }
+                      >
+                        <SelectTrigger className="w-full border-primary/20 bg-background">
+                          <SelectValue placeholder="Categoria" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {(launchForm.kind === "income"
+                            ? incomeCategories
+                            : expenseCategories
+                          ).map((category) => (
+                            <SelectItem key={category.id} value={category.id}>
+                              {category.name}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    {launchForm.kind === "expense" ? (
+                      <div className="space-y-1">
                         <p className="inline-flex items-center gap-1 text-xs text-muted-foreground">
                           <CreditCard className="size-3.5" />
-                          Forma de pagamento
+                          Tipo da despesa
                         </p>
                         <Select
-                          value={launchForm.paymentMethod}
+                          value={launchForm.expenseType}
                           onValueChange={(value) =>
                             setLaunchForm((prev) => ({
                               ...prev,
-                              paymentMethod: value as PaymentMethod,
+                              expenseType: value as ExpenseType,
                             }))
                           }
                         >
                           <SelectTrigger className="w-full border-primary/20 bg-background">
-                            <SelectValue />
+                            <SelectValue placeholder="Tipo da despesa" />
                           </SelectTrigger>
                           <SelectContent>
-                            <SelectItem value="pix">Pix</SelectItem>
-                            <SelectItem value="debit">Debito</SelectItem>
-                            <SelectItem value="credit">Credito (parcelas)</SelectItem>
-                            <SelectItem value="boleto">Boleto</SelectItem>
+                            <SelectItem value="fixed">Fixo</SelectItem>
+                            <SelectItem value="variable">Variavel</SelectItem>
                           </SelectContent>
                         </Select>
                       </div>
-                      {launchForm.paymentMethod === "credit" ? (
-                        <>
-                          <div className="space-y-1">
-                            <p className="text-xs text-muted-foreground">Parcelas (1 a 24)</p>
-                            <Input
-                              type="number"
-                              min={1}
-                              max={24}
-                              className="border-primary/20 bg-background"
-                              value={launchForm.installmentCount}
-                              onChange={(event) =>
-                                setLaunchForm((prev) => ({
-                                  ...prev,
-                                  installmentCount: event.target.value,
-                                }))
-                              }
-                            />
-                          </div>
-                          <div className="space-y-1">
-                            <p className="text-xs text-muted-foreground">Primeira cobranca</p>
-                            <BrDateInput
-                              className="border-primary/20 bg-background"
-                              value={launchForm.firstChargeDate}
-                              onValueChange={(value) =>
-                                setLaunchForm((prev) => ({ ...prev, firstChargeDate: value }))
-                              }
-                            />
-                          </div>
-                        </>
-                      ) : null}
-                    </>
-                  ) : null}
-                  <LancamentoFormAnexos
-                    anexos={launchFormAnexos}
-                    onAnexosChange={setLaunchFormAnexos}
-                    disabled={launchSaving}
-                  />
-                  <Button
-                    className="md:col-span-2 gap-2 bg-primary hover:bg-primary/90"
-                    onClick={saveLaunch}
-                    disabled={launchSaving}
-                  >
-                    {launchSaving ? (
-                      <RefreshCw className="size-4 animate-spin" />
                     ) : (
-                      <CheckCircle2 className="size-4" />
+                      <div className="space-y-1">
+                        <p className="inline-flex items-center gap-1 text-xs text-muted-foreground">
+                          <Store className="size-3.5" />
+                          Origem da entrada
+                        </p>
+                        <Input
+                          className="border-primary/20 bg-background"
+                          placeholder="Origem da entrada (ex: aporte)"
+                          value={launchForm.origin}
+                          onChange={(event) =>
+                            setLaunchForm((prev) => ({ ...prev, origin: event.target.value }))
+                          }
+                        />
+                      </div>
                     )}
-                    {launchSaving ? "Salvando..." : "Salvar lancamento"}
-                  </Button>
-                </CardContent>
-              </Card>
+                    <div className="space-y-1 md:col-span-2">
+                      <p className="inline-flex items-center gap-1 text-xs text-muted-foreground">
+                        <Repeat className="size-3.5" />
+                        Periodicidade
+                      </p>
+                      <Select
+                        value={launchForm.periodicity}
+                        onValueChange={(value) =>
+                          setLaunchForm((prev) => ({
+                            ...prev,
+                            periodicity: value as TransactionPeriodicity,
+                          }))
+                        }
+                      >
+                        <SelectTrigger className="w-full border-primary/20 bg-background">
+                          <SelectValue placeholder="Periodicidade" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="one_time">Unico</SelectItem>
+                          <SelectItem value="weekly">Semanal</SelectItem>
+                          <SelectItem value="monthly">Mensal</SelectItem>
+                          <SelectItem value="quarterly">Trimestral</SelectItem>
+                          <SelectItem value="semiannual">Semestral</SelectItem>
+                          <SelectItem value="annual">Anual</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    {launchForm.kind === "expense" ? (
+                      <>
+                        <div className="space-y-1 md:col-span-2">
+                          <p className="inline-flex items-center gap-1 text-xs text-muted-foreground">
+                            <CreditCard className="size-3.5" />
+                            Forma de pagamento
+                          </p>
+                          <Select
+                            value={launchForm.paymentMethod}
+                            onValueChange={(value) =>
+                              setLaunchForm((prev) => ({
+                                ...prev,
+                                paymentMethod: value as PaymentMethod,
+                              }))
+                            }
+                          >
+                            <SelectTrigger className="w-full border-primary/20 bg-background">
+                              <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value="pix">Pix</SelectItem>
+                              <SelectItem value="debit">Debito</SelectItem>
+                              <SelectItem value="credit">Credito (parcelas)</SelectItem>
+                              <SelectItem value="boleto">Boleto</SelectItem>
+                            </SelectContent>
+                          </Select>
+                        </div>
+                        {launchForm.paymentMethod === "credit" ? (
+                          <>
+                            <div className="space-y-1">
+                              <p className="text-xs text-muted-foreground">Parcelas (1 a 24)</p>
+                              <Input
+                                type="number"
+                                min={1}
+                                max={24}
+                                className="border-primary/20 bg-background"
+                                value={launchForm.installmentCount}
+                                onChange={(event) =>
+                                  setLaunchForm((prev) => ({
+                                    ...prev,
+                                    installmentCount: event.target.value,
+                                  }))
+                                }
+                              />
+                            </div>
+                            <div className="space-y-1">
+                              <p className="text-xs text-muted-foreground">Primeira cobranca</p>
+                              <BrDateInput
+                                className="border-primary/20 bg-background"
+                                value={launchForm.firstChargeDate}
+                                onValueChange={(value) =>
+                                  setLaunchForm((prev) => ({ ...prev, firstChargeDate: value }))
+                                }
+                              />
+                            </div>
+                          </>
+                        ) : null}
+                      </>
+                    ) : null}
+                    <LancamentoFormAnexos
+                      anexos={launchFormAnexos}
+                      onAnexosChange={setLaunchFormAnexos}
+                      disabled={launchSaving}
+                    />
+                    <Button
+                      className="md:col-span-2 gap-2 bg-primary hover:bg-primary/90"
+                      onClick={saveLaunch}
+                      disabled={launchSaving}
+                    >
+                      {launchSaving ? (
+                        <RefreshCw className="size-4 animate-spin" />
+                      ) : (
+                        <CheckCircle2 className="size-4" />
+                      )}
+                      {launchSaving ? "Salvando..." : "Salvar lancamento"}
+                    </Button>
+                  </CardContent>
+                </Card>
+              </>
             )}
 
             {activeFinanceSection === "categories" && (
               <Card>
                 <CardHeader>
-                  <CardTitle>Categorias de despesa</CardTitle>
+                  <div className="flex flex-wrap items-start justify-between gap-3">
+                    <div>
+                      <CardTitle>Categorias de lancamentos</CardTitle>
+                      <CardDescription>
+                        Subaba de lancamentos para organizar receitas e despesas.
+                      </CardDescription>
+                    </div>
+                    <div className="flex gap-2">
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={() => setActiveFinanceSection("expenses")}
+                      >
+                        Novo lancamento
+                      </Button>
+                      <Button size="sm" variant="default">
+                        Categorias
+                      </Button>
+                    </div>
+                  </div>
                 </CardHeader>
                 <CardContent className="space-y-4">
                   <div className="grid gap-3 md:grid-cols-[1fr_200px_auto]">
@@ -6148,7 +6256,24 @@ export function FinancialDashboard() {
                         <TableBody>
                           {flowData.map((item) => (
                             <TableRow key={item.label}>
-                              <TableCell>{item.label}</TableCell>
+                              <TableCell>
+                                <div className="font-medium">{item.label}</div>
+                                <div className="mt-1 space-y-0.5 text-xs text-muted-foreground">
+                                  {(flowDetailsByLabel.get(item.label) ?? [])
+                                    .slice(0, 3)
+                                    .map((transaction) => (
+                                      <p key={transaction.id} className="truncate">
+                                        {transaction.description}
+                                      </p>
+                                    ))}
+                                  {(flowDetailsByLabel.get(item.label)?.length ?? 0) > 3 && (
+                                    <p>
+                                      + {(flowDetailsByLabel.get(item.label)?.length ?? 0) - 3}{" "}
+                                      itens
+                                    </p>
+                                  )}
+                                </div>
+                              </TableCell>
                               <TableCell>{formatCurrency(item.income)}</TableCell>
                               <TableCell>{formatCurrency(item.expense)}</TableCell>
                               <TableCell className="text-right">
@@ -6165,15 +6290,74 @@ export function FinancialDashboard() {
                       <CardTitle>Evolucao mensal</CardTitle>
                     </CardHeader>
                     <CardContent className="grid gap-2">
-                      {evolutionReport.map((item) => (
-                        <div
-                          key={item.monthLabel}
-                          className="flex items-center justify-between rounded-none border border-border p-2 text-sm"
-                        >
-                          <span>{item.monthLabel}</span>
-                          <span>{formatCurrency(item.result)}</span>
-                        </div>
-                      ))}
+                      {evolutionReport.map((item) => {
+                        const details = evolutionDetailsByLabel.get(item.monthLabel) ?? []
+                        const expanded = expandedReportMonth === item.monthLabel
+                        return (
+                          <button
+                            type="button"
+                            key={item.monthLabel}
+                            className="rounded-none border border-border p-3 text-left text-sm transition-colors hover:bg-muted/40"
+                            onClick={() =>
+                              setExpandedReportMonth((prev) =>
+                                prev === item.monthLabel ? null : item.monthLabel,
+                              )
+                            }
+                          >
+                            <div className="flex items-center justify-between gap-3">
+                              <span className="font-medium">{item.monthLabel}</span>
+                              <span className={valueToneClass(item.result)}>
+                                {formatCurrency(item.result)}
+                              </span>
+                            </div>
+                            <div className="mt-2 grid grid-cols-3 gap-2 text-xs text-muted-foreground">
+                              <span>Entradas: {formatCurrency(item.income)}</span>
+                              <span>Saidas: {formatCurrency(item.expense)}</span>
+                              <span>{details.length} lanc.</span>
+                            </div>
+                            {expanded && (
+                              <div className="mt-3 space-y-1 border-t border-border/60 pt-2">
+                                {details.length === 0 ? (
+                                  <p className="text-xs text-muted-foreground">Sem lancamentos.</p>
+                                ) : (
+                                  details.slice(0, 8).map((transaction) => (
+                                    <div
+                                      key={transaction.id}
+                                      className="flex items-center justify-between gap-2 text-xs"
+                                    >
+                                      <span className="truncate">
+                                        {transaction.description}{" "}
+                                        <span className="text-muted-foreground">
+                                          (
+                                          {categoryMap.get(transaction.categoryId)?.name ??
+                                            "Sem categoria"}
+                                          )
+                                        </span>
+                                      </span>
+                                      <span
+                                        className={cn(
+                                          "shrink-0 tabular-nums",
+                                          transaction.kind === "income"
+                                            ? "text-emerald-600 dark:text-emerald-400"
+                                            : "text-rose-600 dark:text-rose-400",
+                                        )}
+                                      >
+                                        {transaction.kind === "income" ? "+" : "-"}{" "}
+                                        {formatCurrency(transaction.amount)}
+                                      </span>
+                                    </div>
+                                  ))
+                                )}
+                                {details.length > 8 && (
+                                  <p className="text-xs text-muted-foreground">
+                                    + {details.length - 8} lancamentos neste mes.
+                                  </p>
+                                )}
+                              </div>
+                            )}
+                          </button>
+                        )
+                      })}
                     </CardContent>
                   </Card>
                 </div>
@@ -7066,14 +7250,18 @@ export function FinancialDashboard() {
                               <div className="space-y-0 pb-2 pl-1">
                                 {day.releases.map((r) => {
                                   const time = r.releaseDate.slice(11, 16).replace(":", "h") || "—"
+                                  const fees = Math.max(0, r.grossAmount - r.amount)
                                   return (
                                     <div
                                       key={r.sourceId}
                                       className="flex items-center justify-between border-b border-border/40 py-2.5 last:border-0"
                                     >
                                       <div>
-                                        <p className="text-sm">Liberação de dinheiro</p>
-                                        <p className="text-xs text-muted-foreground">{time}</p>
+                                        <p className="text-sm">Pagamento #{r.sourceId}</p>
+                                        <p className="text-xs text-muted-foreground">
+                                          {time} · bruto {formatCurrency(r.grossAmount)}
+                                          {fees > 0 ? ` · taxas ${formatCurrency(fees)}` : ""}
+                                        </p>
                                       </div>
                                       <span className="text-sm font-semibold text-emerald-600 dark:text-emerald-400">
                                         + {formatCurrency(r.amount)}
@@ -9310,9 +9498,22 @@ function FinancialEvolutionChart({ data }: { data: SalesEvolutionPoint[] }) {
   const barStep = chartWidth / Math.max(1, data.length)
   const barWidth = Math.max(8, Math.min(20, barStep * 0.45))
 
-  const dayOnly = (label: string) => {
-    const parts = label.split("/")
-    return parts[0] ?? label
+  const maxXTicks = data.length > 90 ? 7 : data.length > 45 ? 8 : data.length > 24 ? 10 : 14
+  const xTickStep = Math.max(1, Math.ceil(data.length / maxXTicks))
+  const xTickIndexes = data
+    .map((_, index) => index)
+    .filter((index) => index === 0 || index === data.length - 1 || index % xTickStep === 0)
+
+  const formatXAxisLabel = (item: SalesEvolutionPoint) => {
+    const keyParts = item.key.split("-")
+    if (keyParts.length >= 2 && data.length > 90) {
+      return `${keyParts[1]}/${keyParts[0].slice(2)}`
+    }
+    if (data.length > 24) {
+      return item.label
+    }
+    const parts = item.label.split("/")
+    return parts.length >= 2 ? `${parts[0]}/${parts[1]}` : item.label
   }
 
   return (
@@ -9418,18 +9619,21 @@ function FinancialEvolutionChart({ data }: { data: SalesEvolutionPoint[] }) {
             </>
           )}
 
-          {data.map((item, index) => (
-            <text
-              key={`xlabel-${item.key}`}
-              x={xForIndex(index)}
-              y={height - 8}
-              textAnchor="middle"
-              fontSize="10"
-              className="fill-muted-foreground"
-            >
-              {dayOnly(item.label)}
-            </text>
-          ))}
+          {xTickIndexes.map((index) => {
+            const item = data[index]
+            return (
+              <text
+                key={`xlabel-${item.key}`}
+                x={xForIndex(index)}
+                y={height - 8}
+                textAnchor="middle"
+                fontSize="10"
+                className="fill-muted-foreground"
+              >
+                {formatXAxisLabel(item)}
+              </text>
+            )
+          })}
         </svg>
       </div>
       <div className="flex flex-wrap items-center gap-3 text-xs">

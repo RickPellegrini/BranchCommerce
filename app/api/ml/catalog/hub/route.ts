@@ -239,6 +239,13 @@ async function handleGet(url: URL) {
     return jsonOk(result)
   }
 
+  if (action === "item_detail") {
+    const itemId = normalizeMercadoLibreItemId(getParam(url, "itemId"))
+    if (!itemId) return jsonError("itemId obrigatorio.", 400)
+    const result = await fetchMlApi<unknown>(`/items/${itemId}`, accessToken)
+    return jsonOk(result)
+  }
+
   if (action === "product_items") {
     const productId = getParam(url, "productId")
     if (!productId) return jsonError("productId obrigatorio.", 400)

@@ -1,5 +1,6 @@
 "use client"
 
+import { useState } from "react"
 import { useDraggable } from "@dnd-kit/core"
 import { CSS } from "@dnd-kit/utilities"
 import { Eye, EyeOff, GripVertical, MoreVertical, Package } from "lucide-react"
@@ -36,6 +37,7 @@ export function ProductCard({
   onDelete,
   onToggleHidden,
 }: ProductCardProps) {
+  const [imageFailed, setImageFailed] = useState(false)
   const { attributes, listeners, setNodeRef, transform } = useDraggable({
     id: product.id,
   })
@@ -80,12 +82,13 @@ export function ProductCard({
           >
             {/* Thumbnail */}
             <div className="h-10 w-10 flex-shrink-0 overflow-hidden rounded-lg border bg-muted">
-              {product.imageUrl ? (
+              {product.imageUrl && !imageFailed ? (
                 <img
                   src={product.imageUrl}
                   alt={product.name}
                   className="h-full w-full object-cover"
                   loading="lazy"
+                  onError={() => setImageFailed(true)}
                 />
               ) : (
                 <div className="flex h-full w-full items-center justify-center">

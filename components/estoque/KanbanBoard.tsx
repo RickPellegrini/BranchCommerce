@@ -72,11 +72,15 @@ function isDefaultColumnId(id: string): id is KanbanColumnId {
   return DEFAULT_COL_IDS.some((defaultId) => defaultId === id)
 }
 
-function extractMlCode(product: Pick<KanbanProduct, "mlItemId">): string | null {
-  const candidate = product.mlItemId?.trim()
-  if (!candidate) return null
-  const normalized = normalizeMercadoLibreItemId(candidate)
-  return MLB_CODE_REGEX.test(normalized) ? normalized : null
+function extractMlCodes(product: Pick<KanbanProduct, "mlItemId" | "mlItemAliases">): string[] {
+  const candidates = [product.mlItemId, ...(product.mlItemAliases ?? [])]
+  return [
+    ...new Set(
+      candidates
+        .map((candidate) => normalizeMercadoLibreItemId(candidate?.trim() ?? ""))
+        .filter((candidate) => MLB_CODE_REGEX.test(candidate)),
+    ),
+  ]
 }
 
 function pickImageFromMlProductDetail(detail: unknown): string | null {
@@ -215,11 +219,11 @@ export function KanbanBoard({
     const nextCodes = new Set<string>()
     for (const product of products) {
       if (product.imageUrl) continue
-      const mlCode = extractMlCode(product)
-      if (!mlCode) continue
-      if (fallbackImageByMlCode[mlCode]) continue
-      if (imageLookupFailures[mlCode]) continue
-      nextCodes.add(mlCode)
+      for (const mlCode of extractMlCodes(product)) {
+        if (fallbackImageByMlCode[mlCode]) continue
+        if (imageLookupFailures[mlCode]) continue
+        nextCodes.add(mlCode)
+      }
     }
     return [...nextCodes]
   }, [products, fallbackImageByMlCode, imageLookupFailures])
@@ -235,10 +239,16 @@ export function KanbanBoard({
       await Promise.all(
         missingImageCodes.map(async (mlCode) => {
           try {
-            const response = await fetch(
-              `/api/ml/catalog/hub?action=product_detail&productId=${encodeURIComponent(mlCode)}`,
+            const itemResponse = await fetch(
+              `/api/ml/catalog/hub?action=item_detail&itemId=${encodeURIComponent(mlCode)}`,
               { cache: "no-store" },
             )
+            const response = itemResponse.ok
+              ? itemResponse
+              : await fetch(
+                  `/api/ml/catalog/hub?action=product_detail&productId=${encodeURIComponent(mlCode)}`,
+                  { cache: "no-store" },
+                )
             if (!response.ok) {
               failures.push(mlCode)
               return
@@ -279,9 +289,9 @@ export function KanbanBoard({
     () =>
       products.map((product) => {
         if (product.imageUrl) return product
-        const mlCode = extractMlCode(product)
-        if (!mlCode) return product
-        const fallbackImage = fallbackImageByMlCode[mlCode]
+        const fallbackImage = extractMlCodes(product)
+          .map((mlCode) => fallbackImageByMlCode[mlCode])
+          .find(Boolean)
         if (!fallbackImage) return product
         return { ...product, imageUrl: fallbackImage }
       }),
