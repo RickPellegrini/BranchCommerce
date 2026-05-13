@@ -24,10 +24,10 @@ Convex agent skills for common tasks can be installed by running `npx convex ai-
 
 ### Services overview
 
-| Service | Command | Notes |
-|---------|---------|-------|
-| Next.js dev | `npm run dev` | Runs on port 3000 (Turbopack) |
-| Convex dev | `CONVEX_AGENT_MODE=anonymous npx convex dev` | Creates isolated deployment; must run concurrently with Next.js |
+| Service     | Command                                      | Notes                                                           |
+| ----------- | -------------------------------------------- | --------------------------------------------------------------- |
+| Next.js dev | `npm run dev`                                | Runs on port 3000 (Turbopack)                                   |
+| Convex dev  | `CONVEX_AGENT_MODE=anonymous npx convex dev` | Creates isolated deployment; must run concurrently with Next.js |
 
 ### Gotchas
 
@@ -56,6 +56,7 @@ npx convex run stock:getDashboardData '{"userId": "test-user"}'
 ```
 
 Public API routes that don't require Clerk auth:
+
 - `GET /api/ml/notifications` — ML webhook receiver
 - `POST /api/branch-hunter/cost` — extension sync (needs `BRANCH_HUNTER_SYNC_KEY`)
 - `GET /api/branch-hunter/ml-reviews` — extension reviews (needs `BRANCH_HUNTER_SYNC_KEY`)
