@@ -235,6 +235,81 @@ describe("stock", () => {
       expect(data.products[0].quantity).toBe(10)
       expect(data.products[0].kanbanStatus).toBe("purchased")
     })
+
+    it("moves an extra kanban card without changing base product quantity", async () => {
+      const t = convexTest(schema, modules)
+      const productId = await setupProduct(t)
+      const cardId = await t.mutation(api.stock.addKanbanCard, {
+        userId: "user1",
+        productId,
+        kanbanStatus: "fulfillment",
+        quantity: 3,
+      })
+
+      await t.mutation(api.stock.applyKanbanMove, {
+        userId: "user1",
+        productId,
+        kanbanCardId: cardId,
+        target: "in_transit",
+      })
+
+      const data = await t.query(api.stock.getDashboardData, { userId: "user1" })
+      expect(data.products[0].quantity).toBe(10)
+      expect(data.kanbanCards).toHaveLength(1)
+      expect(data.kanbanCards[0].kanbanStatus).toBe("in_transit")
+      expect(data.kanbanCards[0].quantity).toBe(3)
+    })
+  })
+
+  // ── stockKanbanCards ──────────────────────────────────────────────
+
+  describe("stockKanbanCards", () => {
+    it("creates, updates and deletes extra cards for the same product", async () => {
+      const t = convexTest(schema, modules)
+      const productId = await setupProduct(t)
+      const cardId = await t.mutation(api.stock.addKanbanCard, {
+        userId: "user1",
+        productId,
+        kanbanStatus: "fulfillment",
+        quantity: 3,
+        note: "Full",
+      })
+
+      let data = await t.query(api.stock.getDashboardData, { userId: "user1" })
+      expect(data.products[0].quantity).toBe(10)
+      expect(data.kanbanCards).toMatchObject([
+        { productId, kanbanStatus: "fulfillment", quantity: 3 },
+      ])
+
+      await t.mutation(api.stock.updateKanbanCard, {
+        userId: "user1",
+        kanbanCardId: cardId,
+        quantity: 4,
+        kanbanStatus: "in_transit",
+      })
+      data = await t.query(api.stock.getDashboardData, { userId: "user1" })
+      expect(data.kanbanCards[0].quantity).toBe(4)
+      expect(data.kanbanCards[0].kanbanStatus).toBe("in_transit")
+
+      await t.mutation(api.stock.deleteKanbanCard, { userId: "user1", kanbanCardId: cardId })
+      data = await t.query(api.stock.getDashboardData, { userId: "user1" })
+      expect(data.kanbanCards).toHaveLength(0)
+    })
+
+    it("deletes extra cards when deleting the product", async () => {
+      const t = convexTest(schema, modules)
+      const productId = await setupProduct(t)
+      await t.mutation(api.stock.addKanbanCard, {
+        userId: "user1",
+        productId,
+        kanbanStatus: "fulfillment",
+        quantity: 3,
+      })
+      await t.mutation(api.stock.deleteProduct, { userId: "user1", productId })
+      const data = await t.query(api.stock.getDashboardData, { userId: "user1" })
+      expect(data.products).toHaveLength(0)
+      expect(data.kanbanCards).toHaveLength(0)
+    })
   })
 
   // ── deleteProduct ─────────────────────────────────────────────────
@@ -567,6 +642,39 @@ describe("stock", () => {
       const data = await t.query(api.stock.getDashboardData, { userId: "user1" })
       const adjustments = data.movements.filter((m) => m.type === "adjustment")
       expect(adjustments.length).toBeGreaterThanOrEqual(1)
+    })
+
+    it("creates a Full card for an existing physical product instead of overwriting it", async () => {
+      const t = convexTest(schema, modules)
+      await t.mutation(api.stock.addProduct, {
+        userId: "user1",
+        name: "Ferro",
+        mlItemId: "MLBFERRO1",
+        category: "Ferros",
+        quantity: 5,
+        minStock: 0,
+        unitCost: 131,
+      })
+
+      await t.mutation(api.stock.syncFromMercadoLivre, {
+        userId: "user1",
+        listings: [
+          {
+            id: "MLBFERRO1",
+            title: "Ferro",
+            price: 199,
+            availableQuantity: 3,
+            logisticType: "fulfillment",
+          },
+        ],
+      })
+
+      const data = await t.query(api.stock.getDashboardData, { userId: "user1" })
+      expect(data.products[0].quantity).toBe(5)
+      expect(data.products[0].kanbanStatus).toBe("in_stock")
+      expect(data.kanbanCards).toMatchObject([
+        { productId: data.products[0]._id, kanbanStatus: "fulfillment", quantity: 3 },
+      ])
     })
   })
 

@@ -104,6 +104,11 @@ export function ProductCard({
                     Em falta
                   </span>
                 )}
+                {product.isExtraKanbanCard && (
+                  <span className="shrink-0 rounded bg-sky-500/15 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-sky-700 dark:text-sky-300">
+                    Card extra
+                  </span>
+                )}
               </div>
               <p className="mt-0.5 truncate text-xs font-mono text-muted-foreground">
                 {product.mlItemId ?? product.sku}
@@ -207,7 +212,7 @@ export function ProductCard({
                   className="cursor-pointer rounded px-2 py-1.5 text-sm text-destructive outline-none hover:bg-destructive/10"
                   onClick={onDelete}
                 >
-                  Excluir
+                  {product.isExtraKanbanCard ? "Remover card" : "Excluir"}
                 </DropdownMenu.Item>
               </DropdownMenu.Content>
             </DropdownMenu.Portal>
