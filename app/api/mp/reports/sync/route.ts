@@ -8,6 +8,7 @@ import {
   createSettlementReport,
   createSettlementReportConfig,
   downloadSettlementReport,
+  getSettlementReportTask,
   listSettlementReports,
   parseSettlementReportCsv,
   searchSettlementReports,
@@ -42,6 +43,16 @@ function pickLatestProcessed(reports: MpSettlementReportListItem[]) {
       (report) => !report.status || ["processed", "available", "finished"].includes(report.status),
     )
     .sort((a, b) => reportDate(b).localeCompare(reportDate(a)))[0]
+}
+
+function processedReportFileName(report: MpSettlementReportListItem | { file_name?: string }) {
+  return report.file_name ?? null
+}
+
+function taskIdFromPendingRun(run: { taskId?: string; message?: string }) {
+  if (run.taskId) return run.taskId
+  const match = run.message?.match(/Task\s+(\d+)/i)
+  return match?.[1] ?? null
 }
 
 function defaultReportWindow() {
@@ -106,33 +117,17 @@ async function loadAvailableReports(accessToken: string) {
   }
 }
 
-async function syncReports(mp: SyncConnection) {
-  const client = getConvexClient()
-  const listed = await loadAvailableReports(mp.accessToken)
-  const latest = pickLatestProcessed(listed)
-  const fileName = latest ? reportFileName(latest) : null
-
-  if (!latest || !fileName) {
-    await ensureReportConfig(mp.accessToken)
-    const task = await createSettlementReport(mp.accessToken, defaultReportWindow())
-    await client.mutation(api.mercadopago.addReportSyncRun, {
-      appUserId: mp.appUserId,
-      status: "pending",
-      imported: 0,
-      skipped: 0,
-      message: `Relatorio solicitado. Task ${task.id}. Execute novamente quando estiver processed.`,
-    })
-    return {
-      status: "pending" as const,
-      task,
-      message: "Relatorio solicitado. Tente sincronizar novamente em alguns minutos.",
-    }
-  }
-
+async function importReportFile(
+  client: ConvexHttpClient,
+  mp: SyncConnection,
+  fileName: string,
+  generatedAt: string | null,
+  taskId?: string,
+) {
   const report = await downloadSettlementReport(mp.accessToken, fileName)
   const summary = parseSettlementReportCsv(report.body, {
     fileName,
-    generatedAt: latest.generation_date ?? null,
+    generatedAt,
   })
 
   const result = await client.mutation(api.mercadopago.upsertReportMovements, {
@@ -157,6 +152,18 @@ async function syncReports(mp: SyncConnection) {
     limit: 100,
   })
 
+  if (taskId) {
+    await client.mutation(api.mercadopago.updateReportSyncRunByTask, {
+      appUserId: mp.appUserId,
+      taskId,
+      status: "success",
+      fileName,
+      imported: result.imported,
+      skipped: result.skipped,
+      message: `Task ${taskId} importada com sucesso.`,
+    })
+  }
+
   return {
     status: "success" as const,
     fileName,
@@ -164,6 +171,74 @@ async function syncReports(mp: SyncConnection) {
     skipped: result.skipped,
     ledger,
   }
+}
+
+async function createPendingReport(client: ConvexHttpClient, mp: SyncConnection) {
+  await ensureReportConfig(mp.accessToken)
+  const task = await createSettlementReport(mp.accessToken, defaultReportWindow())
+  await client.mutation(api.mercadopago.addReportSyncRun, {
+    appUserId: mp.appUserId,
+    status: "pending",
+    taskId: String(task.id),
+    imported: 0,
+    skipped: 0,
+    message: `Relatorio solicitado. Task ${task.id}. Execute novamente quando estiver processed.`,
+  })
+  return {
+    status: "pending" as const,
+    task,
+    message: `Relatorio solicitado. Task ${task.id}. Execute novamente quando estiver processed.`,
+  }
+}
+
+async function syncReports(mp: SyncConnection) {
+  const client = getConvexClient()
+  const pendingRun = await client.query(api.mercadopago.getLatestPendingReportSyncRun, {
+    appUserId: mp.appUserId,
+  })
+
+  const pendingTaskId = pendingRun ? taskIdFromPendingRun(pendingRun) : null
+
+  if (pendingTaskId) {
+    const task = await getSettlementReportTask(mp.accessToken, pendingTaskId)
+    const fileName = processedReportFileName(task)
+
+    if (task.status === "processed" && fileName) {
+      return importReportFile(client, mp, fileName, task.generation_date ?? null, pendingTaskId)
+    }
+
+    if (task.status === "failed") {
+      await client.mutation(api.mercadopago.updateReportSyncRunByTask, {
+        appUserId: mp.appUserId,
+        taskId: String(task.id),
+        status: "failed",
+        imported: 0,
+        skipped: 0,
+        message: `Task ${task.id} falhou no Mercado Pago.`,
+      })
+      return {
+        status: "failed" as const,
+        task,
+        message: `Task ${task.id} falhou no Mercado Pago. Tente gerar novamente.`,
+      }
+    }
+
+    return {
+      status: "pending" as const,
+      task,
+      message: `Relatorio ainda ${task.status}. Task ${task.id}. Tente novamente em alguns minutos.`,
+    }
+  }
+
+  const listed = await loadAvailableReports(mp.accessToken)
+  const latest = pickLatestProcessed(listed)
+  const fileName = latest ? reportFileName(latest) : null
+
+  if (!latest || !fileName) {
+    return createPendingReport(client, mp)
+  }
+
+  return importReportFile(client, mp, fileName, latest.generation_date ?? null)
 }
 
 export async function POST() {

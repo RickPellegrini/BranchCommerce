@@ -260,6 +260,7 @@ export default defineSchema({
   mpReportSyncRuns: defineTable({
     appUserId: v.string(),
     status: v.union(v.literal("success"), v.literal("pending"), v.literal("failed")),
+    taskId: v.optional(v.string()),
     fileName: v.optional(v.string()),
     imported: v.number(),
     skipped: v.number(),

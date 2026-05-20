@@ -4352,16 +4352,6 @@ export function FinancialDashboard() {
     }
   }
 
-  const refreshMlSync = async () => {
-    if (!mlConnectionStatus?.connected || mlSyncingStock) return
-    await Promise.all([syncStockWithMl(), loadMlOverviewCards()])
-  }
-
-  const handleKanbanSyncWithMl = async () => {
-    if (!mlConnectionStatus?.connected) return
-    await syncStockWithMl()
-  }
-
   const openAnalysis = (itemId: string) => setAnalysisItemId(itemId)
 
   const loadMlCatalogCompetition = async () => {
@@ -4579,7 +4569,7 @@ export function FinancialDashboard() {
   }
 
   return (
-    <main className="mx-auto flex min-h-screen w-full max-w-[1500px] gap-4 p-4 md:p-6">
+    <main className="mx-auto flex min-h-screen w-full max-w-[1500px] gap-4 p-2 sm:p-4 md:p-6">
       <aside className="hidden w-72 shrink-0 flex-col gap-2 rounded-none border bg-card p-4 lg:flex">
         <div className="mb-2 flex items-center justify-between">
           <div className="flex items-center gap-2">
@@ -4793,9 +4783,132 @@ export function FinancialDashboard() {
         )}
       </aside>
 
-      <section className="flex-1 space-y-4">
-        <div className="flex justify-end lg:hidden">
-          <ThemeToggle />
+      <section className="min-w-0 flex-1 space-y-4">
+        <div className="sticky top-0 z-30 -mx-2 space-y-3 border-b bg-background/95 px-2 py-3 backdrop-blur sm:-mx-4 sm:px-4 lg:hidden">
+          <div className="flex items-center justify-between gap-3">
+            <div className="flex min-w-0 items-center gap-2">
+              <Image
+                src="/branch_logo.jpeg"
+                alt="BranchHub logo"
+                width={28}
+                height={28}
+                className="rounded-none object-cover"
+              />
+              <div className="min-w-0">
+                <p className="truncate text-sm font-semibold">BranchHub</p>
+                <p className="truncate text-xs text-muted-foreground">
+                  {activeModule === "finance"
+                    ? "Financeiro"
+                    : activeModule === "stock"
+                      ? "Estoque"
+                      : activeModule === "mercadolivre"
+                        ? "Mercado Livre"
+                        : activeModule === "branchhunter"
+                          ? "Branch Hunter"
+                          : activeModule === "connections"
+                            ? "Conexões"
+                            : "Home"}
+                </p>
+              </div>
+            </div>
+            <div className="flex shrink-0 items-center gap-1">
+              <ThemeToggle />
+              <UserButton />
+            </div>
+          </div>
+
+          <nav className="flex gap-2 overflow-x-auto pb-1">
+            {[
+              { key: "home" as const, label: "Home", icon: Home },
+              { key: "finance" as const, label: "Financeiro", icon: Wallet },
+              { key: "stock" as const, label: "Estoque", icon: Boxes },
+              { key: "mercadolivre" as const, label: "ML", icon: Store },
+              { key: "branchhunter" as const, label: "Hunter", icon: Search },
+              { key: "connections" as const, label: "Conexões", icon: Settings },
+            ].map((item) => {
+              const Icon = item.icon
+              return (
+                <Button
+                  key={item.key}
+                  type="button"
+                  size="sm"
+                  variant={activeModule === item.key ? "default" : "outline"}
+                  className="h-9 shrink-0 px-3"
+                  onClick={() => setActiveModule(item.key)}
+                >
+                  <Icon className="size-4" />
+                  {item.label}
+                </Button>
+              )
+            })}
+          </nav>
+
+          {activeModule === "finance" && (
+            <nav className="flex gap-2 overflow-x-auto pb-1">
+              {[
+                { key: "overview" as const, label: "Visão" },
+                { key: "cashflow" as const, label: "Caixa" },
+                { key: "abc" as const, label: "ABC" },
+                { key: "dre" as const, label: "DRE" },
+                { key: "expenses" as const, label: "Ajustes" },
+                { key: "reports" as const, label: "Relatórios" },
+                { key: "history" as const, label: "Histórico" },
+              ].map((item) => (
+                <Button
+                  key={item.key}
+                  type="button"
+                  size="sm"
+                  variant={activeFinanceSection === item.key ? "secondary" : "ghost"}
+                  className="h-8 shrink-0 px-3 text-xs"
+                  onClick={() => setActiveFinanceSection(item.key)}
+                >
+                  {item.label}
+                </Button>
+              ))}
+            </nav>
+          )}
+
+          {activeModule === "stock" && (
+            <nav className="flex gap-2 overflow-x-auto pb-1">
+              {[
+                { key: "overview" as const, label: "Visão" },
+                { key: "products" as const, label: "Produtos" },
+                { key: "history" as const, label: "Histórico" },
+              ].map((item) => (
+                <Button
+                  key={item.key}
+                  type="button"
+                  size="sm"
+                  variant={activeStockSection === item.key ? "secondary" : "ghost"}
+                  className="h-8 shrink-0 px-3 text-xs"
+                  onClick={() => setActiveStockSection(item.key)}
+                >
+                  {item.label}
+                </Button>
+              ))}
+            </nav>
+          )}
+
+          {activeModule === "mercadolivre" && (
+            <nav className="flex gap-2 overflow-x-auto pb-1">
+              {[
+                { key: "anuncios" as const, label: "Anúncios" },
+                { key: "pedidos" as const, label: "Pedidos" },
+                { key: "metricas" as const, label: "Métricas" },
+              ].map((item) => (
+                <Button
+                  key={item.key}
+                  type="button"
+                  size="sm"
+                  variant={activeMlSidebarGroup === item.key ? "secondary" : "ghost"}
+                  className="h-8 shrink-0 px-3 text-xs"
+                  onClick={() => setActiveMlSidebarGroup(item.key)}
+                >
+                  {item.label}
+                </Button>
+              ))}
+            </nav>
+          )}
         </div>
         {activeModule === "home" && (
           <div className="mx-auto max-w-6xl space-y-8 pb-8">
@@ -5292,7 +5405,7 @@ export function FinancialDashboard() {
               </div>
               <Button disabled={globalSyncLoading} onClick={() => void syncAllExternalData(true)}>
                 <RefreshCw className={cn("mr-2 size-4", globalSyncLoading && "animate-spin")} />
-                {globalSyncLoading ? "Sincronizando..." : "Sincronizar tudo"}
+                {globalSyncLoading ? "Sincronizando..." : "Atualizar agora"}
               </Button>
             </div>
 
@@ -5335,14 +5448,6 @@ export function FinancialDashboard() {
                     <Button asChild size="sm" variant="outline">
                       <a href="/api/ml/connect">Conectar</a>
                     </Button>
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      disabled={globalSyncLoading}
-                      onClick={() => void syncAllExternalData(true)}
-                    >
-                      Sincronizar
-                    </Button>
                   </div>
                 </CardContent>
               </Card>
@@ -5379,14 +5484,6 @@ export function FinancialDashboard() {
                   <div className="flex gap-2">
                     <Button asChild size="sm" variant="outline">
                       <a href="/api/mp/connect">Conectar</a>
-                    </Button>
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      disabled={globalSyncLoading}
-                      onClick={() => void syncAllExternalData(true)}
-                    >
-                      Sincronizar
                     </Button>
                   </div>
                 </CardContent>
@@ -7945,29 +8042,44 @@ export function FinancialDashboard() {
             )}
 
             {activeFinanceSection === "cashflow" && (
-              <section className="mx-auto max-w-md space-y-3">
-                <div className="flex items-center justify-between gap-2">
-                  <h2 className="text-lg font-semibold tracking-tight">Mercado Pago</h2>
-                  <div className="flex items-center gap-1">
+              <section className="mx-auto w-full max-w-md space-y-3">
+                <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                  <div>
+                    <h2 className="text-lg font-semibold tracking-tight">Mercado Pago</h2>
+                    <p className="text-xs text-muted-foreground">
+                      Saldo e reports oficiais da conta conectada.
+                    </p>
+                  </div>
+                  <div className="grid grid-cols-2 gap-2 sm:flex sm:items-center">
                     <Button
                       size="sm"
                       variant="ghost"
                       disabled={mpLoading}
                       onClick={fetchMpData}
-                      className="text-sky-600 dark:text-sky-400 hover:text-sky-700"
+                      className="h-auto justify-start px-2 py-2 text-sky-600 dark:text-sky-400 hover:text-sky-700 sm:justify-center"
                     >
                       <RefreshCw className={cn("mr-1 size-4", mpLoading && "animate-spin")} />
-                      {mpLoading ? "Atualizando..." : "Atualizar"}
+                      <span className="flex flex-col items-start leading-none sm:items-center">
+                        <span>{mpLoading ? "Atualizando..." : "Atualizar dados"}</span>
+                        <span className="mt-1 text-[10px] font-normal text-muted-foreground">
+                          API rápida
+                        </span>
+                      </span>
                     </Button>
                     <Button
                       size="sm"
                       variant="ghost"
                       disabled={mpSyncLoading}
                       onClick={() => void syncMpReports()}
-                      className="text-emerald-600 dark:text-emerald-400 hover:text-emerald-700"
+                      className="h-auto justify-start px-2 py-2 text-emerald-600 dark:text-emerald-400 hover:text-emerald-700 sm:justify-center"
                     >
                       <RefreshCw className={cn("mr-1 size-4", mpSyncLoading && "animate-spin")} />
-                      {mpSyncLoading ? "Sincronizando..." : "Sincronizar"}
+                      <span className="flex flex-col items-start leading-none sm:items-center">
+                        <span>{mpSyncLoading ? "Importando..." : "Importar report"}</span>
+                        <span className="mt-1 text-[10px] font-normal text-muted-foreground">
+                          CSV oficial
+                        </span>
+                      </span>
                     </Button>
                   </div>
                 </div>
@@ -8198,7 +8310,7 @@ export function FinancialDashboard() {
 
                   {mpTransactions.length === 0 && !mpLoading ? (
                     <p className="text-sm text-muted-foreground">
-                      Nenhuma movimentacao. Use Atualizar acima.
+                      Nenhuma movimentacao. Use Atualizar dados acima.
                     </p>
                   ) : (
                     <ul className="space-y-0 divide-y divide-border/60">
@@ -8430,7 +8542,6 @@ export function FinancialDashboard() {
                   onDeleteProduct={handleKanbanDelete}
                   onAddKanbanCard={handleAddKanbanCard}
                   onToggleProductHidden={handleToggleProductHidden}
-                  onSyncWithMl={handleKanbanSyncWithMl}
                   mlSyncing={mlSyncingStock}
                   mlSyncDisabled={!mlConnectionStatus?.connected}
                   kanbanTimelineEvents={kanbanTimelineEvents}
@@ -9065,27 +9176,15 @@ export function FinancialDashboard() {
                         </Badge>
                       )}
                       {!mlSyncingStock && mlLastSyncAt && (
-                        <div className="inline-flex items-center gap-1.5">
-                          <Badge
-                            variant="outline"
-                            className="border-emerald-600/50 text-emerald-700 dark:text-emerald-400"
-                          >
-                            Ultima sync ha {formatElapsedSeconds(mlLastSyncAt, mlNowTimestamp)}
-                            {mlLastSyncDurationMs !== null
-                              ? ` (durou ${(mlLastSyncDurationMs / 1000).toFixed(1)}s)`
-                              : ""}
-                          </Badge>
-                          <Button
-                            size="icon"
-                            variant="ghost"
-                            className="h-6 w-6 rounded-full"
-                            aria-label="Atualizar sincronizacao"
-                            title="Atualizar sincronizacao"
-                            onClick={() => void refreshMlSync()}
-                          >
-                            <RefreshCw className="size-3.5" />
-                          </Button>
-                        </div>
+                        <Badge
+                          variant="outline"
+                          className="border-emerald-600/50 text-emerald-700 dark:text-emerald-400"
+                        >
+                          Ultima sync ha {formatElapsedSeconds(mlLastSyncAt, mlNowTimestamp)}
+                          {mlLastSyncDurationMs !== null
+                            ? ` (durou ${(mlLastSyncDurationMs / 1000).toFixed(1)}s)`
+                            : ""}
+                        </Badge>
                       )}
                     </div>
                     <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">

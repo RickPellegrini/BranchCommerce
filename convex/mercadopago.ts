@@ -307,6 +307,7 @@ export const addReportSyncRun = mutation({
   args: {
     appUserId: v.string(),
     status: v.union(v.literal("success"), v.literal("pending"), v.literal("failed")),
+    taskId: v.optional(v.string()),
     fileName: v.optional(v.string()),
     imported: v.number(),
     skipped: v.number(),
@@ -317,6 +318,56 @@ export const addReportSyncRun = mutation({
       ...args,
       createdAt: Date.now(),
     })
+  },
+})
+
+export const getLatestPendingReportSyncRun = query({
+  args: {
+    appUserId: v.string(),
+  },
+  handler: async (ctx, args) => {
+    const runs = await ctx.db
+      .query("mpReportSyncRuns")
+      .withIndex("by_app_user", (queryBuilder) => queryBuilder.eq("appUserId", args.appUserId))
+      .collect()
+
+    return (
+      runs.filter((run) => run.status === "pending").sort((a, b) => b.createdAt - a.createdAt)[0] ??
+      null
+    )
+  },
+})
+
+export const updateReportSyncRunByTask = mutation({
+  args: {
+    appUserId: v.string(),
+    taskId: v.string(),
+    status: v.union(v.literal("success"), v.literal("pending"), v.literal("failed")),
+    fileName: v.optional(v.string()),
+    imported: v.optional(v.number()),
+    skipped: v.optional(v.number()),
+    message: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => {
+    const runs = await ctx.db
+      .query("mpReportSyncRuns")
+      .withIndex("by_app_user", (queryBuilder) => queryBuilder.eq("appUserId", args.appUserId))
+      .collect()
+    const run = runs
+      .filter((item) => item.taskId === args.taskId)
+      .sort((a, b) => b.createdAt - a.createdAt)[0]
+
+    if (!run) return null
+
+    await ctx.db.patch(run._id, {
+      status: args.status,
+      fileName: args.fileName,
+      imported: args.imported ?? run.imported,
+      skipped: args.skipped ?? run.skipped,
+      message: args.message,
+    })
+
+    return run._id
   },
 })
 
