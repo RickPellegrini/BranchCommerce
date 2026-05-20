@@ -46,7 +46,8 @@ export async function POST(request: Request) {
     }
 
     const body = (await request.json()) as TestPaymentRequest
-    const expectedSecret = process.env.MERCADO_PAGO_QUALITY_PAYMENT_SECRET ?? ""
+    const expectedSecret = (process.env.MERCADO_PAGO_QUALITY_PAYMENT_SECRET ?? "").trim()
+    const receivedSecret = (body.qualitySecret ?? "").trim()
     const requiresSecret =
       process.env.VERCEL_ENV === "production" || process.env.NODE_ENV === "production"
     if (requiresSecret && !expectedSecret) {
@@ -55,8 +56,17 @@ export async function POST(request: Request) {
         { status: 503 },
       )
     }
-    if (expectedSecret && body.qualitySecret !== expectedSecret) {
-      return NextResponse.json({ error: "Pagamento de qualidade nao autorizado." }, { status: 403 })
+    if (expectedSecret && receivedSecret !== expectedSecret) {
+      return NextResponse.json(
+        {
+          error: "Pagamento de qualidade nao autorizado.",
+          details: {
+            expectedLength: expectedSecret.length,
+            receivedLength: receivedSecret.length,
+          },
+        },
+        { status: 403 },
+      )
     }
 
     if (!body.token || !body.paymentMethodId || !body.email) {
