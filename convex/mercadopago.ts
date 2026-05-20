@@ -338,6 +338,25 @@ export const getLatestPendingReportSyncRun = query({
   },
 })
 
+export const getSuccessfulReportSyncRunByFile = query({
+  args: {
+    appUserId: v.string(),
+    fileName: v.string(),
+  },
+  handler: async (ctx, args) => {
+    const runs = await ctx.db
+      .query("mpReportSyncRuns")
+      .withIndex("by_app_user", (queryBuilder) => queryBuilder.eq("appUserId", args.appUserId))
+      .collect()
+
+    return (
+      runs
+        .filter((run) => run.status === "success" && run.fileName === args.fileName)
+        .sort((a, b) => b.createdAt - a.createdAt)[0] ?? null
+    )
+  },
+})
+
 export const updateReportSyncRunByTask = mutation({
   args: {
     appUserId: v.string(),
