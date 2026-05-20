@@ -7,6 +7,7 @@ import { jsonError, jsonOk } from "@/lib/mercadolivre/http"
 type SyncProvider = "all" | "mercado_livre" | "mercado_pago" | "stock"
 
 const FRESHNESS_MS = 10 * 60 * 1000
+const MP_REPORT_FRESHNESS_MS = 30 * 60 * 1000
 
 function getConvexClient() {
   const convexUrl = process.env.NEXT_PUBLIC_CONVEX_URL
@@ -54,6 +55,16 @@ function isFresh(statuses: Array<{ provider: string; lastSuccessAt?: number }>) 
   return Boolean(all?.lastSuccessAt && Date.now() - all.lastSuccessAt < FRESHNESS_MS)
 }
 
+function isProviderFresh(
+  statuses: Array<{ provider: string; lastStartedAt?: number; lastSuccessAt?: number }>,
+  provider: SyncProvider,
+  freshnessMs: number,
+) {
+  const status = statuses.find((item) => item.provider === provider)
+  const lastRunAt = status?.lastStartedAt ?? status?.lastSuccessAt
+  return Boolean(lastRunAt && Date.now() - lastRunAt < freshnessMs)
+}
+
 export async function POST(request: Request) {
   const startedAt = Date.now()
   let appUserId = ""
@@ -99,24 +110,28 @@ export async function POST(request: Request) {
       results.stock = { ok: false, error: error instanceof Error ? error.message : String(error) }
     }
 
-    try {
-      await markSync(client, appUserId, "mercado_pago", "running", { startedAt })
-      results.mercadoPago = await callInternal(request, "/api/mp/reports/sync")
-      await markSync(client, appUserId, "mercado_pago", "success", {
-        startedAt,
-        finishedAt: Date.now(),
-        message: "Mercado Pago sincronizado.",
-        stats: results.mercadoPago,
-      })
-    } catch (error) {
-      await markSync(client, appUserId, "mercado_pago", "failed", {
-        startedAt,
-        finishedAt: Date.now(),
-        message: error instanceof Error ? error.message : "Erro no sync Mercado Pago.",
-      })
-      results.mercadoPago = {
-        ok: false,
-        error: error instanceof Error ? error.message : String(error),
+    if (!force && isProviderFresh(statuses, "mercado_pago", MP_REPORT_FRESHNESS_MS)) {
+      results.mercadoPago = { skipped: true, reason: "fresh" }
+    } else {
+      try {
+        await markSync(client, appUserId, "mercado_pago", "running", { startedAt })
+        results.mercadoPago = await callInternal(request, "/api/mp/reports/sync")
+        await markSync(client, appUserId, "mercado_pago", "success", {
+          startedAt,
+          finishedAt: Date.now(),
+          message: "Mercado Pago sincronizado.",
+          stats: results.mercadoPago,
+        })
+      } catch (error) {
+        await markSync(client, appUserId, "mercado_pago", "failed", {
+          startedAt,
+          finishedAt: Date.now(),
+          message: error instanceof Error ? error.message : "Erro no sync Mercado Pago.",
+        })
+        results.mercadoPago = {
+          ok: false,
+          error: error instanceof Error ? error.message : String(error),
+        }
       }
     }
 

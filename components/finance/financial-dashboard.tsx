@@ -1715,41 +1715,49 @@ export function FinancialDashboard() {
     }
   }, [])
 
-  const syncMpReports = useCallback(async () => {
-    setMpSyncLoading(true)
-    setMpSyncStatus(null)
-    setMpError(null)
-    try {
-      const res = await fetch("/api/mp/reports/sync", { method: "POST" })
-      const json = await res.json()
-      if (!json.ok) {
-        const detail = typeof json.details === "string" ? json.details : null
-        setMpSyncStatus(
-          detail
-            ? `${json.error ?? "Erro ao sincronizar reports."} ${detail}`
-            : (json.error ?? "Erro ao sincronizar reports."),
-        )
-        return
+  const syncMpReports = useCallback(
+    async (options: { manual?: boolean } = {}) => {
+      setMpSyncLoading(true)
+      if (options.manual) setMpSyncStatus(null)
+      setMpError(null)
+      try {
+        const res = await fetch("/api/mp/reports/sync", { method: "POST" })
+        const json = await res.json()
+        if (!json.ok) {
+          const detail = typeof json.details === "string" ? json.details : null
+          if (options.manual) {
+            setMpSyncStatus(
+              detail
+                ? `${json.error ?? "Erro ao sincronizar reports."} ${detail}`
+                : (json.error ?? "Erro ao sincronizar reports."),
+            )
+          }
+          return
+        }
+        const data = json.data as {
+          status?: string
+          imported?: number
+          skipped?: number
+          message?: string
+        }
+        if (options.manual || data.status === "success") {
+          setMpSyncStatus(
+            data.status === "pending"
+              ? (data.message ?? "Relatorio solicitado. O app tentara importar automaticamente.")
+              : `Reports sincronizados: ${data.imported ?? 0} novo(s), ${data.skipped ?? 0} existente(s).`,
+          )
+        }
+        await fetchMpData()
+      } catch (err) {
+        console.error("[mp] sync error:", err)
+        if (options.manual)
+          setMpSyncStatus(err instanceof Error ? err.message : "Erro desconhecido")
+      } finally {
+        setMpSyncLoading(false)
       }
-      const data = json.data as {
-        status?: string
-        imported?: number
-        skipped?: number
-        message?: string
-      }
-      setMpSyncStatus(
-        data.status === "pending"
-          ? (data.message ?? "Relatorio solicitado. Tente novamente em alguns minutos.")
-          : `Reports sincronizados: ${data.imported ?? 0} novo(s), ${data.skipped ?? 0} existente(s).`,
-      )
-      await fetchMpData()
-    } catch (err) {
-      console.error("[mp] sync error:", err)
-      setMpSyncStatus(err instanceof Error ? err.message : "Erro desconhecido")
-    } finally {
-      setMpSyncLoading(false)
-    }
-  }, [fetchMpData])
+    },
+    [fetchMpData],
+  )
 
   const loadExternalSyncStatuses = useCallback(async () => {
     try {
@@ -1878,6 +1886,36 @@ export function FinancialDashboard() {
     void fetchMpData()
     void fetchFutureReleases()
   }, [activeModule, activeFinanceSection, fetchMpData, fetchFutureReleases])
+
+  useEffect(() => {
+    if (activeModule !== "finance" || activeFinanceSection !== "cashflow") return
+    if (!mpConnectionStatus?.connected) return
+    if (mpSyncLoading) return
+
+    const latestMpStatus = externalSyncStatuses.find((status) => status.provider === "mercado_pago")
+    const lastRunAt = latestMpStatus?.lastStartedAt ?? latestMpStatus?.lastSuccessAt ?? 0
+    const isRecent = lastRunAt > 0 && Date.now() - lastRunAt < 30 * 60 * 1000
+    const shouldPollPending = latestMpStatus?.status === "running" || mpSyncStatus?.includes("Task")
+
+    if (isRecent && !shouldPollPending) return
+
+    const timeoutId = window.setTimeout(
+      () => {
+        void syncMpReports()
+      },
+      shouldPollPending ? 15_000 : 1_000,
+    )
+
+    return () => window.clearTimeout(timeoutId)
+  }, [
+    activeFinanceSection,
+    activeModule,
+    externalSyncStatuses,
+    mpConnectionStatus?.connected,
+    mpSyncLoading,
+    mpSyncStatus,
+    syncMpReports,
+  ])
 
   useEffect(() => {
     if (!userId) return
@@ -8070,14 +8108,14 @@ export function FinancialDashboard() {
                       size="sm"
                       variant="ghost"
                       disabled={mpSyncLoading}
-                      onClick={() => void syncMpReports()}
+                      onClick={() => void syncMpReports({ manual: true })}
                       className="h-auto justify-start px-2 py-2 text-emerald-600 dark:text-emerald-400 hover:text-emerald-700 sm:justify-center"
                     >
                       <RefreshCw className={cn("mr-1 size-4", mpSyncLoading && "animate-spin")} />
                       <span className="flex flex-col items-start leading-none sm:items-center">
-                        <span>{mpSyncLoading ? "Importando..." : "Importar report"}</span>
+                        <span>{mpSyncLoading ? "Importando..." : "Forçar report"}</span>
                         <span className="mt-1 text-[10px] font-normal text-muted-foreground">
-                          CSV oficial
+                          Auto + CSV
                         </span>
                       </span>
                     </Button>
