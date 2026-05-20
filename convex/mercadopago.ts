@@ -139,6 +139,21 @@ function dateToTime(value: string | undefined) {
   return Number.isFinite(time) ? time : 0
 }
 
+function affectsAvailableBalance(movement: { description: string; rawJson: string }) {
+  const description = movement.description.trim().toUpperCase()
+  if (description === "PAYOUTS" || description === "PAYOUT") return false
+
+  try {
+    const raw = JSON.parse(movement.rawJson) as Record<string, unknown>
+    const type = String(raw.TRANSACTION_TYPE ?? raw.transaction_type ?? "").toUpperCase()
+    if (type === "PAYOUTS" || type === "PAYOUT") return false
+  } catch {
+    // Keep movement in the ledger if raw metadata is unavailable.
+  }
+
+  return true
+}
+
 export const getLedger = query({
   args: {
     appUserId: v.string(),
@@ -156,9 +171,10 @@ export const getLedger = query({
       .collect()
 
     const anchorTime = dateToTime(anchor?.anchoredAt)
-    const movementsAfterAnchor = movements.filter((movement) =>
-      anchorTime ? dateToTime(movement.date) > anchorTime : true,
-    )
+    const movementsAfterAnchor = movements.filter((movement) => {
+      if (!affectsAvailableBalance(movement)) return false
+      return anchorTime ? dateToTime(movement.date) > anchorTime : true
+    })
     const movementNet = movementsAfterAnchor.reduce(
       (sum, movement) => sum + (movement.type === "credit" ? movement.amount : -movement.amount),
       0,
