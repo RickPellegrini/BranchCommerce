@@ -173,6 +173,9 @@ export function MpTestPaymentForm({ publicKey }: Props) {
               return
             }
 
+            const currentQualitySecret =
+              document.querySelector<HTMLInputElement>("#qualitySecret")?.value ?? ""
+
             const response = await fetch("/api/mp/test-payment", {
               method: "POST",
               headers: { "Content-Type": "application/json" },
@@ -184,7 +187,7 @@ export function MpTestPaymentForm({ publicKey }: Props) {
                 email,
                 identificationType,
                 identificationNumber,
-                qualitySecret: qualitySecretRef.current || undefined,
+                qualitySecret: currentQualitySecret || qualitySecretRef.current || undefined,
               }),
             })
             const payload = (await response.json()) as PaymentResult
@@ -281,6 +284,7 @@ export function MpTestPaymentForm({ publicKey }: Props) {
               </label>
               <Input
                 id="qualitySecret"
+                name="qualitySecret"
                 type="password"
                 value={qualitySecret}
                 onChange={(event) => {
