@@ -8,8 +8,6 @@ const isPublicRoute = createRouteMatcher([
   "/api/mp/notifications(.*)",
   "/api/mp/connect(.*)",
   "/api/mp/callback(.*)",
-  "/api/mp/test-payment(.*)",
-  "/mp-test-payment(.*)",
   "/api/branch-hunter/(.*)",
 ])
 
