@@ -319,3 +319,72 @@ export const addReportSyncRun = mutation({
     })
   },
 })
+
+const syncProviderValidator = v.union(
+  v.literal("all"),
+  v.literal("mercado_livre"),
+  v.literal("mercado_pago"),
+  v.literal("stock"),
+)
+
+const syncStatusValidator = v.union(
+  v.literal("idle"),
+  v.literal("running"),
+  v.literal("success"),
+  v.literal("failed"),
+)
+
+export const getSyncStatuses = query({
+  args: {
+    appUserId: v.string(),
+  },
+  handler: async (ctx, args) => {
+    return ctx.db
+      .query("externalSyncStatus")
+      .withIndex("by_app_user", (queryBuilder) => queryBuilder.eq("appUserId", args.appUserId))
+      .collect()
+  },
+})
+
+export const upsertSyncStatus = mutation({
+  args: {
+    appUserId: v.string(),
+    provider: syncProviderValidator,
+    status: syncStatusValidator,
+    lastStartedAt: v.optional(v.number()),
+    lastFinishedAt: v.optional(v.number()),
+    lastSuccessAt: v.optional(v.number()),
+    message: v.optional(v.string()),
+    statsJson: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => {
+    const now = Date.now()
+    const existing = await ctx.db
+      .query("externalSyncStatus")
+      .withIndex("by_app_user_provider", (queryBuilder) =>
+        queryBuilder.eq("appUserId", args.appUserId).eq("provider", args.provider),
+      )
+      .first()
+
+    const patch = {
+      status: args.status,
+      updatedAt: now,
+      ...(args.lastStartedAt !== undefined && { lastStartedAt: args.lastStartedAt }),
+      ...(args.lastFinishedAt !== undefined && { lastFinishedAt: args.lastFinishedAt }),
+      ...(args.lastSuccessAt !== undefined && { lastSuccessAt: args.lastSuccessAt }),
+      ...(args.message !== undefined && { message: args.message }),
+      ...(args.statsJson !== undefined && { statsJson: args.statsJson }),
+    }
+
+    if (existing) {
+      await ctx.db.patch(existing._id, patch)
+      return existing._id
+    }
+
+    return ctx.db.insert("externalSyncStatus", {
+      appUserId: args.appUserId,
+      provider: args.provider,
+      ...patch,
+    })
+  },
+})

@@ -42,6 +42,7 @@ import {
   Printer,
   ReceiptText,
   Repeat,
+  Settings,
   Trophy,
   TrendingDown,
   Wallet,
@@ -113,7 +114,7 @@ import type { ProductSuggestionCandidate } from "@/lib/stock/product-name-sugges
 import { normalizeMercadoLibreItemId } from "@/lib/mercadolivre/item-id"
 import { suggestUnitCostFromInventory, type ProductCostLookup } from "@/lib/stock/suggest-unit-cost"
 
-type ModuleKey = "home" | "finance" | "stock" | "mercadolivre" | "branchhunter"
+type ModuleKey = "home" | "finance" | "stock" | "mercadolivre" | "branchhunter" | "connections"
 type FinanceSection =
   | "overview"
   | "abc"
@@ -1572,8 +1573,20 @@ export function FinancialDashboard() {
   >([])
   const [mpLoading, setMpLoading] = useState(false)
   const [mpSyncLoading, setMpSyncLoading] = useState(false)
+  const [globalSyncLoading, setGlobalSyncLoading] = useState(false)
   const [mpError, setMpError] = useState<string | null>(null)
   const [mpSyncStatus, setMpSyncStatus] = useState<string | null>(null)
+  const [globalSyncStatus, setGlobalSyncStatus] = useState<string | null>(null)
+  const [externalSyncStatuses, setExternalSyncStatuses] = useState<
+    Array<{
+      provider: "all" | "mercado_livre" | "mercado_pago" | "stock"
+      status: "idle" | "running" | "success" | "failed"
+      lastStartedAt?: number
+      lastFinishedAt?: number
+      lastSuccessAt?: number
+      message?: string
+    }>
+  >([])
   const [mpBalanceUnavailable, setMpBalanceUnavailable] = useState(false)
   const [mpSaldoOculto, setMpSaldoOculto] = useState(false)
   const [mpAnchorBalance, setMpAnchorBalance] = useState("")
@@ -1696,6 +1709,47 @@ export function FinancialDashboard() {
     }
   }, [fetchMpData])
 
+  const loadExternalSyncStatuses = useCallback(async () => {
+    try {
+      const response = await fetch("/api/sync/status", { cache: "no-store" })
+      const payload = await response.json()
+      if (response.ok && payload.ok) {
+        setExternalSyncStatuses(payload.data ?? [])
+      }
+    } catch (error) {
+      console.error("[sync] status error:", error)
+    }
+  }, [])
+
+  const syncAllExternalData = useCallback(
+    async (force = false) => {
+      if (globalSyncLoading) return
+      setGlobalSyncLoading(true)
+      setGlobalSyncStatus("Sincronizando dados externos...")
+      try {
+        const response = await fetch(`/api/sync/all${force ? "?force=1" : ""}`, {
+          method: "POST",
+          cache: "no-store",
+        })
+        const payload = await response.json()
+        if (!response.ok || !payload.ok) {
+          throw new Error(payload.error ?? "Falha ao sincronizar dados externos.")
+        }
+        setGlobalSyncStatus(
+          payload.data?.skipped
+            ? "Dados externos ainda recentes; usando cache salvo."
+            : "Sincronizacao geral concluida.",
+        )
+        await Promise.all([loadExternalSyncStatuses(), fetchMpData()])
+      } catch (error) {
+        setGlobalSyncStatus(error instanceof Error ? error.message : "Erro ao sincronizar dados.")
+      } finally {
+        setGlobalSyncLoading(false)
+      }
+    },
+    [fetchMpData, globalSyncLoading, loadExternalSyncStatuses],
+  )
+
   const saveMpAnchor = useCallback(async () => {
     const balance = Number(mpAnchorBalance.replace(/\./g, "").replace(",", "."))
     if (!Number.isFinite(balance)) {
@@ -1770,6 +1824,13 @@ export function FinancialDashboard() {
     void fetchMpData()
     void fetchFutureReleases()
   }, [activeModule, activeFinanceSection, fetchMpData, fetchFutureReleases])
+
+  useEffect(() => {
+    if (!userId) return
+    void loadExternalSyncStatuses()
+    void syncAllExternalData(false)
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- bootstrap only when account is ready
+  }, [userId])
 
   const mpFutureGross = useMemo(
     () => mpDayGroups.reduce((s, g) => s + g.grossTotal, 0),
@@ -4515,6 +4576,14 @@ export function FinancialDashboard() {
             <Search className="size-4" />
             Branch Hunter
           </Button>
+          <Button
+            size="sm"
+            variant={activeModule === "connections" ? "default" : "outline"}
+            onClick={() => setActiveModule("connections")}
+          >
+            <Settings className="size-4" />
+            Conexões
+          </Button>
         </div>
         <Separator />
         {activeModule === "finance" && (
@@ -5135,6 +5204,119 @@ export function FinancialDashboard() {
               </CardContent>
             </Card>
           </div>
+        )}
+
+        {activeModule === "connections" && (
+          <section className="mx-auto max-w-5xl space-y-4">
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+              <div>
+                <h1 className="text-2xl font-semibold tracking-tight">Conexões e sync</h1>
+                <p className="text-sm text-muted-foreground">
+                  Conecte marketplaces uma vez. O dashboard sincroniza em background ao abrir e
+                  mantém os dados no Convex.
+                </p>
+              </div>
+              <Button disabled={globalSyncLoading} onClick={() => void syncAllExternalData(true)}>
+                <RefreshCw className={cn("mr-2 size-4", globalSyncLoading && "animate-spin")} />
+                {globalSyncLoading ? "Sincronizando..." : "Sincronizar tudo"}
+              </Button>
+            </div>
+
+            {globalSyncStatus && (
+              <div className="rounded-lg border bg-muted/30 px-3 py-2 text-sm text-muted-foreground">
+                {globalSyncStatus}
+              </div>
+            )}
+
+            <div className="grid gap-3 md:grid-cols-2">
+              <Card>
+                <CardHeader>
+                  <CardTitle className="flex items-center gap-2 text-base">
+                    <Store className="size-4" />
+                    Mercado Livre
+                  </CardTitle>
+                  <CardDescription>
+                    Pedidos, anúncios, métricas e estoque sincronizado.
+                  </CardDescription>
+                </CardHeader>
+                <CardContent className="space-y-3 text-sm">
+                  <div className="flex items-center justify-between">
+                    <span>Status</span>
+                    <Badge variant={mlConnectionStatus?.connected ? "default" : "secondary"}>
+                      {mlConnectionStatus?.connected ? "Conectado" : "Não conectado"}
+                    </Badge>
+                  </div>
+                  <div className="flex items-center justify-between">
+                    <span>Último sync estoque</span>
+                    <span className="text-muted-foreground">
+                      {externalSyncStatuses.find((s) => s.provider === "stock")?.lastSuccessAt
+                        ? new Date(
+                            externalSyncStatuses.find((s) => s.provider === "stock")!
+                              .lastSuccessAt!,
+                          ).toLocaleString("pt-BR")
+                        : "Nunca"}
+                    </span>
+                  </div>
+                  <div className="flex gap-2">
+                    <Button asChild size="sm" variant="outline">
+                      <a href="/api/ml/connect">Conectar</a>
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      disabled={globalSyncLoading}
+                      onClick={() => void syncAllExternalData(true)}
+                    >
+                      Sincronizar
+                    </Button>
+                  </div>
+                </CardContent>
+              </Card>
+
+              <Card>
+                <CardHeader>
+                  <CardTitle className="flex items-center gap-2 text-base">
+                    <Wallet className="size-4" />
+                    Mercado Pago
+                  </CardTitle>
+                  <CardDescription>
+                    Reports oficiais, ledger de saldo e lançamentos futuros.
+                  </CardDescription>
+                </CardHeader>
+                <CardContent className="space-y-3 text-sm">
+                  <div className="flex items-center justify-between">
+                    <span>Status</span>
+                    <Badge variant="secondary">OAuth salvo</Badge>
+                  </div>
+                  <div className="flex items-center justify-between">
+                    <span>Último sync reports</span>
+                    <span className="text-muted-foreground">
+                      {externalSyncStatuses.find((s) => s.provider === "mercado_pago")
+                        ?.lastSuccessAt
+                        ? new Date(
+                            externalSyncStatuses.find((s) => s.provider === "mercado_pago")!
+                              .lastSuccessAt!,
+                          ).toLocaleString("pt-BR")
+                        : "Nunca"}
+                    </span>
+                  </div>
+                  <div className="flex gap-2">
+                    <Button asChild size="sm" variant="outline">
+                      <a href="/api/mp/connect">Conectar</a>
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      disabled={globalSyncLoading}
+                      onClick={() => void syncAllExternalData(true)}
+                    >
+                      Sincronizar
+                    </Button>
+                  </div>
+                </CardContent>
+              </Card>
+            </div>
+          </section>
         )}
 
         {activeModule === "finance" && (

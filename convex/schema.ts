@@ -266,4 +266,28 @@ export default defineSchema({
     message: v.optional(v.string()),
     createdAt: v.number(),
   }).index("by_app_user", ["appUserId"]),
+
+  externalSyncStatus: defineTable({
+    appUserId: v.string(),
+    provider: v.union(
+      v.literal("all"),
+      v.literal("mercado_livre"),
+      v.literal("mercado_pago"),
+      v.literal("stock"),
+    ),
+    status: v.union(
+      v.literal("idle"),
+      v.literal("running"),
+      v.literal("success"),
+      v.literal("failed"),
+    ),
+    lastStartedAt: v.optional(v.number()),
+    lastFinishedAt: v.optional(v.number()),
+    lastSuccessAt: v.optional(v.number()),
+    message: v.optional(v.string()),
+    statsJson: v.optional(v.string()),
+    updatedAt: v.number(),
+  })
+    .index("by_app_user", ["appUserId"])
+    .index("by_app_user_provider", ["appUserId", "provider"]),
 })
