@@ -52,3 +52,19 @@ export async function requireMpConnection(): Promise<MpResolvedConnection> {
     source: "ml_token_fallback",
   }
 }
+
+export async function requireMpOAuthConnection(): Promise<MpResolvedConnection> {
+  const appUserId = await requireAuthenticatedAppUserId()
+  const mpConnection = await getValidMpConnection(appUserId)
+
+  if (!mpConnection) {
+    throw new Error("mercado_pago_oauth_required")
+  }
+
+  return {
+    appUserId,
+    accessToken: mpConnection.accessToken,
+    accountUserId: mpConnection.mpUserId,
+    source: "mp_oauth",
+  }
+}

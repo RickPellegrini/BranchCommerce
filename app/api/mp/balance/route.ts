@@ -1,13 +1,13 @@
 import { jsonError, jsonOk } from "@/lib/mercadolivre/http"
 import { fetchOfficialBalance, type OfficialBalanceProbe } from "@/lib/mercadopago/simple-balance"
-import { requireMpConnection } from "@/lib/mercadopago/server"
+import { requireMpOAuthConnection } from "@/lib/mercadopago/server"
 
 type BalanceSource = "official" | "unavailable"
 
 type BalancePayload = {
   balanceSource: BalanceSource
   balanceUnavailable: boolean
-  tokenSource: "mp_oauth" | "mp_app_token" | "ml_token_fallback"
+  tokenSource: "mp_oauth" | "none"
   availableBalance: number | null
   unavailableBalance: number | null
   totalAmount: number | null
@@ -27,7 +27,7 @@ type BalancePayload = {
  */
 export async function GET() {
   try {
-    const mp = await requireMpConnection()
+    const mp = await requireMpOAuthConnection()
 
     const official = await fetchOfficialBalance(mp.accessToken, mp.accountUserId)
 
@@ -35,7 +35,7 @@ export async function GET() {
       const payload: BalancePayload = {
         balanceSource: "official",
         balanceUnavailable: false,
-        tokenSource: mp.source,
+        tokenSource: "mp_oauth",
         availableBalance: official.balance.availableBalance,
         unavailableBalance: official.balance.unavailableBalance,
         totalAmount: official.balance.totalAmount,
@@ -53,7 +53,7 @@ export async function GET() {
     const payload: BalancePayload = {
       balanceSource: "unavailable",
       balanceUnavailable: true,
-      tokenSource: mp.source,
+      tokenSource: "mp_oauth",
       availableBalance: null,
       unavailableBalance: null,
       totalAmount: null,
@@ -66,6 +66,20 @@ export async function GET() {
     console.error("[mp/balance] Error:", error)
     if (error instanceof Error && error.message.includes("nao autenticado")) {
       return jsonError("Usuario nao autenticado.", 401)
+    }
+    if (error instanceof Error && error.message === "mercado_pago_oauth_required") {
+      const payload: BalancePayload = {
+        balanceSource: "unavailable",
+        balanceUnavailable: true,
+        tokenSource: "none",
+        availableBalance: null,
+        unavailableBalance: null,
+        totalAmount: null,
+        currencyId: null,
+        officialReason: "unauthorized",
+        officialProbes: [],
+      }
+      return jsonOk(payload)
     }
     const detail = error instanceof Error ? error.message : "Erro desconhecido"
     return jsonError("Erro ao consultar saldo Mercado Pago.", 500, detail)

@@ -78,7 +78,6 @@ import {
   calculateProductChampions,
   expensesByCategory,
   filterTransactions,
-  forecastFinancialTrend,
   formatCurrency,
   formatDate,
   monthlyEvolution,
@@ -1185,56 +1184,6 @@ function finalizeAbcRows(
   })
 }
 
-function buildAbcRowsFromMovements(
-  products: StockProduct[],
-  movements: StockMovement[],
-  metric: "revenue" | "quantity" | "profit",
-): AbcProductRow[] {
-  const productMap = new Map(products.map((product) => [product.id, product]))
-  const saleMovements = movements.filter((movement) => movement.type === "sale")
-
-  const grouped = new Map<
-    string,
-    {
-      productId: string
-      productName: string
-      sku: string
-      quantitySold: number
-      revenue: number
-      totalCost: number
-      profit: number
-    }
-  >()
-
-  for (const movement of saleMovements) {
-    const product = productMap.get(movement.productId)
-    if (!product) continue
-    const quantity = Math.max(0, movement.quantity)
-    const saleUnit = movement.unitPrice ?? product.sellingPrice ?? 0
-    const unitCost = product.unitCost ?? 0
-    const revenue = saleUnit * quantity
-    const totalCost = unitCost * quantity
-    const profit = revenue - totalCost
-
-    const current = grouped.get(product.id) ?? {
-      productId: product.id,
-      productName: product.name,
-      sku: product.sku,
-      quantitySold: 0,
-      revenue: 0,
-      totalCost: 0,
-      profit: 0,
-    }
-    current.quantitySold += quantity
-    current.revenue += revenue
-    current.totalCost += totalCost
-    current.profit += profit
-    grouped.set(product.id, current)
-  }
-
-  return finalizeAbcRows(Array.from(grouped.values()), metric)
-}
-
 function buildAbcRowsFromOrders(
   orders: MlOrder[],
   productByMlItemId: Map<string, StockProduct>,
@@ -2300,14 +2249,6 @@ export function FinancialDashboard() {
     }
     return map
   }, [evolutionReport, transactions])
-  const forecastReport = useMemo(() => forecastFinancialTrend(transactions, 4, 6), [transactions])
-  const forecastMaxValue = Math.max(
-    ...forecastReport.map((item) =>
-      Math.max(item.incomeForecast, item.expenseForecast, Math.abs(item.profitForecast)),
-    ),
-    1,
-  )
-
   const salesInFilter = filteredTransactions
     .filter((item) => item.kind === "income" && item.origin === "Venda online")
     .reduce((total, item) => total + item.amount, 0)
@@ -2992,7 +2933,7 @@ export function FinancialDashboard() {
   }
 
   const abcRows = useMemo(() => {
-    const fromOrders = buildAbcRowsFromOrders(
+    return buildAbcRowsFromOrders(
       mlOrders,
       productMapByMlItemId,
       productMapBySku,
@@ -3002,30 +2943,6 @@ export function FinancialDashboard() {
         endDate: filters.endDate,
       },
     )
-    if (fromOrders.length > 0) return fromOrders
-    return buildAbcRowsFromMovements(products, filteredMovements, financeAbcMetric)
-  }, [
-    filteredMovements,
-    filters.endDate,
-    filters.startDate,
-    financeAbcMetric,
-    mlOrders,
-    productMapByMlItemId,
-    productMapBySku,
-    products,
-  ])
-  const abcUsesOrdersData = useMemo(() => {
-    const fromOrders = buildAbcRowsFromOrders(
-      mlOrders,
-      productMapByMlItemId,
-      productMapBySku,
-      financeAbcMetric,
-      {
-        startDate: filters.startDate,
-        endDate: filters.endDate,
-      },
-    )
-    return fromOrders.length > 0
   }, [
     filters.endDate,
     filters.startDate,
@@ -6125,15 +6042,9 @@ export function FinancialDashboard() {
                     <div className="flex flex-wrap gap-2">
                       <Badge
                         variant="secondary"
-                        className={
-                          abcUsesOrdersData
-                            ? "bg-emerald-100 dark:bg-emerald-900/40 text-emerald-700 dark:text-emerald-400"
-                            : "bg-amber-100 dark:bg-amber-900/40 text-amber-700 dark:text-amber-300"
-                        }
+                        className="bg-emerald-100 dark:bg-emerald-900/40 text-emerald-700 dark:text-emerald-400"
                       >
-                        {abcUsesOrdersData
-                          ? "Fonte: pedidos Mercado Livre"
-                          : "Fonte: movimentacoes internas (fallback)"}
+                        Fonte: pedidos Mercado Livre
                       </Badge>
                     </div>
 
@@ -7083,60 +6994,6 @@ export function FinancialDashboard() {
                     </CardContent>
                   </Card>
                 </div>
-                <Card>
-                  <CardHeader>
-                    <CardTitle className="inline-flex items-center gap-2">
-                      <LineChart className="size-4 text-primary" />
-                      Previsao de custos e lucros (proximos meses)
-                    </CardTitle>
-                    <CardDescription>
-                      Projecao baseada na media e tendencia dos ultimos 6 meses.
-                    </CardDescription>
-                  </CardHeader>
-                  <CardContent className="space-y-4">
-                    <div className="flex flex-wrap gap-2 text-xs">
-                      <Badge
-                        variant="secondary"
-                        className="bg-emerald-100 dark:bg-emerald-900/40 text-emerald-700 dark:text-emerald-400"
-                      >
-                        Entrada prevista
-                      </Badge>
-                      <Badge variant="secondary" className="bg-destructive/10 text-destructive">
-                        Custo previsto
-                      </Badge>
-                      <Badge
-                        variant="secondary"
-                        className="bg-blue-100 dark:bg-blue-900/40 text-blue-700 dark:text-blue-300"
-                      >
-                        Lucro previsto
-                      </Badge>
-                    </div>
-                    <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
-                      {forecastReport.map((item) => (
-                        <Card key={item.monthLabel} className="rounded-none border-dashed">
-                          <CardHeader className="pb-2">
-                            <CardDescription>{item.monthLabel}</CardDescription>
-                          </CardHeader>
-                          <CardContent className="space-y-2">
-                            <ProgressBlock
-                              label="Entrada"
-                              value={item.incomeForecast}
-                              maxValue={forecastMaxValue}
-                              barClassName="bg-emerald-500"
-                            />
-                            <ProgressBlock
-                              label="Custos"
-                              value={item.expenseForecast}
-                              maxValue={forecastMaxValue}
-                              barClassName="bg-destructive"
-                            />
-                            <LineItem label="Lucro previsto" value={item.profitForecast} strong />
-                          </CardContent>
-                        </Card>
-                      ))}
-                    </div>
-                  </CardContent>
-                </Card>
               </section>
             )}
 
@@ -7799,8 +7656,8 @@ export function FinancialDashboard() {
                               </p>
                               <p className="mt-1 text-sm text-muted-foreground">
                                 Conecte sua conta do Mercado Pago via OAuth para liberar leitura
-                                direta do saldo. Enquanto isso, exibimos somente a previsao de
-                                releases.
+                                direta do saldo e dos lancamentos futuros. Sem API real conectada,
+                                os valores permanecem zerados.
                               </p>
                               <a
                                 href="/api/mp/connect"
@@ -10026,7 +9883,7 @@ export function FinancialDashboard() {
                 Fonte dos custos:{" "}
                 {mlOrderCostAnalysis.source === "ml_api"
                   ? "API Mercado Livre"
-                  : "API Mercado Livre + fallback interno"}
+                  : "API Mercado Livre + custos cadastrados no estoque"}
               </div>
               <Card>
                 <CardHeader>
@@ -10567,31 +10424,6 @@ function SidebarButton({
       <Icon className="size-4" />
       {label}
     </Button>
-  )
-}
-
-function ProgressBlock({
-  label,
-  value,
-  maxValue,
-  barClassName,
-}: {
-  label: string
-  value: number
-  maxValue: number
-  barClassName: string
-}) {
-  return (
-    <div className="space-y-2">
-      <p className="text-sm text-muted-foreground">{label}</p>
-      <div className="h-3 rounded-none bg-muted">
-        <div
-          className={cn("h-3 rounded-none", barClassName)}
-          style={{ width: `${(value / maxValue) * 100}%` }}
-        />
-      </div>
-      <p className="text-sm font-medium">{formatCurrency(value)}</p>
-    </div>
   )
 }
 
