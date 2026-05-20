@@ -1601,6 +1601,7 @@ export function FinancialDashboard() {
     totalDebits: number
     windowSinceIso: string
   } | null>(null)
+  const [mpExtractSource, setMpExtractSource] = useState<"ledger" | "recent_fallback">("ledger")
   const [mpExtratoVerTudo, setMpExtratoVerTudo] = useState(false)
 
   type DayGroupUI = DayGroup
@@ -1665,12 +1666,42 @@ export function FinancialDashboard() {
             status: movement.status,
           })),
         )
+        setMpExtractSource((d.movements ?? []).length > 0 ? "ledger" : "recent_fallback")
         setMpTxSummary({
           totalCredits: Math.max(0, d.movementNet ?? 0),
           totalDebits: Math.max(0, -(d.movementNet ?? 0)),
           windowSinceIso: new Date(d.lastSync?.createdAt ?? Date.now()).toISOString(),
         })
         if (d.lastSync?.message) setMpSyncStatus(d.lastSync.message)
+        if ((d.movements ?? []).length === 0) {
+          const txResponse = await fetch("/api/mp/transactions?windowDays=180&limit=1000", {
+            cache: "no-store",
+          })
+          const txPayload = await txResponse.json()
+          if (txResponse.ok && txPayload.ok && txPayload.data) {
+            const txData = txPayload.data as
+              | Array<{
+                  id: string
+                  date: string
+                  description: string
+                  amount: number
+                  type: "credit" | "debit"
+                  status: string
+                }>
+              | {
+                  transactions?: Array<{
+                    id: string
+                    date: string
+                    description: string
+                    amount: number
+                    type: "credit" | "debit"
+                    status: string
+                  }>
+                }
+            setMpTransactions(Array.isArray(txData) ? txData : (txData.transactions ?? []))
+            setMpExtractSource("recent_fallback")
+          }
+        }
       } else {
         setMpBalance(null)
         setMpBalanceUnavailable(true)
@@ -8146,6 +8177,9 @@ export function FinancialDashboard() {
                 <div className="rounded-xl border border-border/80 bg-card px-4 py-4 shadow-sm">
                   <div className="mb-4 flex items-start justify-between gap-2">
                     <h3 className="text-base font-semibold">Extrato</h3>
+                    <Badge variant="secondary">
+                      {mpExtractSource === "ledger" ? "Oficial" : "Recente"}
+                    </Badge>
                     {mpTransactions.length > 3 && (
                       <button
                         type="button"
