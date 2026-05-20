@@ -187,12 +187,12 @@ async function createPendingReport(client: ConvexHttpClient, mp: SyncConnection)
     taskId: String(task.id),
     imported: 0,
     skipped: 0,
-    message: `Report em processamento. Task ${task.id}. O saldo sera atualizado automaticamente quando o arquivo oficial ficar disponivel.`,
+    message: `Saldo em atualizacao. O arquivo oficial esta sendo preparado pelo Mercado Pago.`,
   })
   return {
     status: "pending" as const,
     task,
-    message: `Report em processamento. Task ${task.id}. O saldo sera atualizado automaticamente quando o arquivo oficial ficar disponivel.`,
+    message: `Saldo em atualizacao. O arquivo oficial esta sendo preparado pelo Mercado Pago.`,
   }
 }
 
@@ -229,10 +229,17 @@ async function syncReports(mp: SyncConnection) {
         }
       }
 
+      const listed = await loadAvailableReports(mp.accessToken)
+      const latest = pickLatestProcessed(listed)
+      const latestFileName = latest ? reportFileName(latest) : null
+      if (latest && latestFileName) {
+        return importReportFile(client, mp, latestFileName, latest.generation_date ?? null)
+      }
+
       return {
         status: "pending" as const,
         task,
-        message: `Report ainda em processamento (${task.status}). Task ${task.id}. O saldo sera atualizado automaticamente quando o arquivo oficial ficar disponivel.`,
+        message: `Saldo em atualizacao. O arquivo oficial ainda esta sendo preparado pelo Mercado Pago.`,
       }
     } catch (error) {
       if (!isMissingReportTask(error)) throw error

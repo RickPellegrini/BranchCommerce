@@ -274,6 +274,43 @@ function pick(row: Record<string, string>, keys: string[]) {
   return ""
 }
 
+function normalizeTransactionType(value: string) {
+  return value.trim().toUpperCase()
+}
+
+function humanizeReportDescription(row: Record<string, string>) {
+  const explicitDescription = pick(row, ["DESCRIPTION", "description", "Descricao", "Descrição"])
+  if (explicitDescription) return explicitDescription
+
+  const transactionType = normalizeTransactionType(
+    pick(row, ["TRANSACTION_TYPE", "transaction_type", "Tipo de transacao", "Tipo de transação"]),
+  )
+  const amount = parseAmount(
+    pick(row, [
+      "REAL_AMOUNT",
+      "real_amount",
+      "SETTLEMENT_NET_AMOUNT",
+      "settlement_net_amount",
+      "TRANSACTION_AMOUNT",
+      "transaction_amount",
+    ]),
+  )
+
+  if (transactionType === "SETTLEMENT") {
+    return amount >= 0 ? "Liberação de dinheiro" : "Débito por dívida"
+  }
+  if (transactionType === "PAYOUTS" || transactionType === "PAYOUT") return "Pix enviado"
+  if (transactionType === "CASHBACK") return "Bônus por envio"
+  if (transactionType === "REFUND" || transactionType === "REFUNDS") return "Reembolso"
+  if (transactionType === "CHARGEBACK") return "Contestação"
+  if (transactionType === "WITHDRAWAL") return "Saque"
+  if (transactionType === "TRANSFER")
+    return amount >= 0 ? "Transferência recebida" : "Transferência enviada"
+  if (transactionType === "PAYMENT") return "Pagamento recebido"
+
+  return transactionType || "Movimento Mercado Pago"
+}
+
 export function parseSettlementReportCsv(
   csv: string,
   metadata: { fileName: string; generatedAt?: string | null },
@@ -319,14 +356,7 @@ export function parseSettlementReportCsv(
       "Data da transacao",
       "Data da transação",
     ])
-    const description = pick(row, [
-      "DESCRIPTION",
-      "description",
-      "Descricao",
-      "Descrição",
-      "TRANSACTION_TYPE",
-      "transaction_type",
-    ])
+    const description = humanizeReportDescription(row)
     const amount = parseAmount(
       pick(row, [
         "REAL_AMOUNT",
@@ -341,7 +371,7 @@ export function parseSettlementReportCsv(
     return {
       id: sourceId || `${metadata.fileName}:${index}`,
       date: transactionDate || metadata.generatedAt || new Date().toISOString(),
-      description: description || "Movimento Mercado Pago",
+      description,
       amount: Math.abs(amount),
       type: amount >= 0 ? "credit" : "debit",
       status: pick(row, ["IS_RELEASED", "is_released"]) || "processed",

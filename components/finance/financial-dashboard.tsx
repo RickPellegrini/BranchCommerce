@@ -1675,10 +1675,10 @@ export function FinancialDashboard() {
         })
         if (d.lastSync?.status === "pending") {
           setMpSyncState("pending")
-          setMpSyncStatus(d.lastSync.message ?? "Report em processamento.")
+          setMpSyncStatus(d.lastSync.message ?? "Saldo em atualização.")
         } else if (d.lastSync?.status === "failed") {
           setMpSyncState("failed")
-          setMpSyncStatus(d.lastSync.message ?? "Falha ao processar report Mercado Pago.")
+          setMpSyncStatus(d.lastSync.message ?? "Falha ao atualizar saldo Mercado Pago.")
         } else if (d.lastSync?.status === "success") {
           setMpSyncState("success")
           setMpSyncStatus(null)
@@ -1742,8 +1742,8 @@ export function FinancialDashboard() {
             setMpSyncState("failed")
             setMpSyncStatus(
               detail
-                ? `${json.error ?? "Erro ao sincronizar reports."} ${detail}`
-                : (json.error ?? "Erro ao sincronizar reports."),
+                ? `${json.error ?? "Erro ao atualizar saldo."} ${detail}`
+                : (json.error ?? "Erro ao atualizar saldo."),
             )
           }
           return
@@ -1758,11 +1758,11 @@ export function FinancialDashboard() {
           if (data.status === "pending") {
             setMpSyncState("pending")
             setMpSyncStatus(
-              data.message ?? "Report em processamento. O app tentara importar automaticamente.",
+              data.message ?? "Saldo em atualização. O app tentara importar automaticamente.",
             )
           } else if (data.status === "failed") {
             setMpSyncState("failed")
-            setMpSyncStatus(data.message ?? "Falha ao processar report Mercado Pago.")
+            setMpSyncStatus(data.message ?? "Falha ao atualizar saldo Mercado Pago.")
           } else {
             setMpSyncState("success")
             setMpSyncStatus(null)
@@ -1861,7 +1861,7 @@ export function FinancialDashboard() {
         return
       }
       setMpAnchorBalance("")
-      setMpSyncStatus("Saldo inicial salvo. O saldo passa a ser calculado pelos reports oficiais.")
+      setMpSyncStatus("Saldo inicial salvo. O saldo passa a ser calculado pelo extrato oficial.")
       await fetchMpData()
     } catch (err) {
       console.error("[mp] anchor error:", err)
@@ -8108,7 +8108,7 @@ export function FinancialDashboard() {
                   <div>
                     <h2 className="text-lg font-semibold tracking-tight">Mercado Pago</h2>
                     <p className="text-xs text-muted-foreground">
-                      Saldo e reports oficiais da conta conectada.
+                      Saldo e extrato oficiais da conta conectada.
                     </p>
                   </div>
                   <div className="grid grid-cols-2 gap-2 sm:flex sm:items-center">
@@ -8121,7 +8121,7 @@ export function FinancialDashboard() {
                     >
                       <RefreshCw className={cn("mr-1 size-4", mpLoading && "animate-spin")} />
                       <span className="flex flex-col items-start leading-none sm:items-center">
-                        <span>{mpLoading ? "Atualizando..." : "Atualizar dados"}</span>
+                        <span>{mpLoading ? "Atualizando..." : "Atualizar extrato"}</span>
                         <span className="mt-1 text-[10px] font-normal text-muted-foreground">
                           API rápida
                         </span>
@@ -8136,9 +8136,9 @@ export function FinancialDashboard() {
                     >
                       <RefreshCw className={cn("mr-1 size-4", mpSyncLoading && "animate-spin")} />
                       <span className="flex flex-col items-start leading-none sm:items-center">
-                        <span>{mpSyncLoading ? "Importando..." : "Forçar report"}</span>
+                        <span>{mpSyncLoading ? "Atualizando..." : "Atualizar saldo"}</span>
                         <span className="mt-1 text-[10px] font-normal text-muted-foreground">
-                          Auto + CSV
+                          Arquivo oficial
                         </span>
                       </span>
                     </Button>
@@ -8158,9 +8158,8 @@ export function FinancialDashboard() {
                     <p className="font-medium">{mpSyncStatus}</p>
                     {mpSyncState === "pending" && (
                       <p className="mt-1 text-xs text-sky-800/80 dark:text-sky-200/80">
-                        Voce nao precisa baixar o e-mail do Mercado Pago nem clicar de novo. O app
-                        consulta a task em background e atualiza o saldo quando o arquivo oficial
-                        ficar pronto.
+                        Voce nao precisa baixar o e-mail do Mercado Pago. Quando receber o aviso de
+                        arquivo pronto, use Atualizar saldo para importar automaticamente.
                       </p>
                     )}
                   </div>
@@ -8181,8 +8180,8 @@ export function FinancialDashboard() {
                               </p>
                               <p className="mt-1 text-sm text-muted-foreground">
                                 Informe uma vez o saldo disponível visto no Mercado Pago. Depois
-                                disso, o saldo será calculado pela âncora + movimentos dos reports
-                                oficiais.
+                                disso, o saldo será calculado pela âncora + movimentos do extrato
+                                oficial.
                               </p>
                               <div className="mt-3 flex max-w-xs items-center gap-2">
                                 <Input
@@ -8227,27 +8226,6 @@ export function FinancialDashboard() {
                         </Button>
                       )}
                     </div>
-
-                    {!mpBalanceUnavailable && (
-                      <div className="grid grid-cols-2 gap-3">
-                        <Button
-                          variant="outline"
-                          disabled
-                          className="h-auto flex-col gap-1 border-sky-200/80 bg-sky-50 py-3 text-sky-900 hover:bg-sky-100 dark:border-sky-900 dark:bg-sky-950/40 dark:text-sky-100"
-                        >
-                          <ArrowDownLeft className="size-5" />
-                          <span className="text-sm font-medium">Depositar</span>
-                        </Button>
-                        <Button
-                          variant="outline"
-                          disabled
-                          className="h-auto flex-col gap-1 border-sky-200/80 bg-sky-50 py-3 text-sky-900 hover:bg-sky-100 dark:border-sky-900 dark:bg-sky-950/40 dark:text-sky-100"
-                        >
-                          <ArrowUpRight className="size-5" />
-                          <span className="text-sm font-medium">Transferir</span>
-                        </Button>
-                      </div>
-                    )}
                   </CardContent>
                 </Card>
 
@@ -8389,7 +8367,7 @@ export function FinancialDashboard() {
 
                   {mpTransactions.length === 0 && !mpLoading ? (
                     <p className="text-sm text-muted-foreground">
-                      Nenhuma movimentacao. Use Atualizar dados acima.
+                      Nenhuma movimentacao. Use Atualizar extrato acima.
                     </p>
                   ) : (
                     <ul className="space-y-0 divide-y divide-border/60">
