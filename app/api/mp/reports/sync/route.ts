@@ -49,8 +49,8 @@ function defaultReportWindow() {
   const begin = new Date(end)
   begin.setDate(begin.getDate() - 90)
   return {
-    beginDate: begin.toISOString().slice(0, 19),
-    endDate: end.toISOString().slice(0, 19),
+    beginDate: begin.toISOString().replace(/\.\d{3}Z$/, "Z"),
+    endDate: end.toISOString().replace(/\.\d{3}Z$/, "Z"),
   }
 }
 
