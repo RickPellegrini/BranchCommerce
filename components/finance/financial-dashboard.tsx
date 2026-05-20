@@ -8108,7 +8108,7 @@ export function FinancialDashboard() {
                       Saldo e extrato oficiais da conta conectada.
                     </p>
                   </div>
-                  <div className="grid grid-cols-2 gap-2 sm:flex sm:items-center">
+                  <div className="flex items-center">
                     <Button
                       size="sm"
                       variant="ghost"
@@ -8121,21 +8121,6 @@ export function FinancialDashboard() {
                         <span>{mpLoading ? "Atualizando..." : "Atualizar extrato"}</span>
                         <span className="mt-1 text-[10px] font-normal text-muted-foreground">
                           API rápida
-                        </span>
-                      </span>
-                    </Button>
-                    <Button
-                      size="sm"
-                      variant="ghost"
-                      disabled={mpSyncLoading}
-                      onClick={() => void syncMpReports({ manual: true })}
-                      className="h-auto justify-start px-2 py-2 text-emerald-600 dark:text-emerald-400 hover:text-emerald-700 sm:justify-center"
-                    >
-                      <RefreshCw className={cn("mr-1 size-4", mpSyncLoading && "animate-spin")} />
-                      <span className="flex flex-col items-start leading-none sm:items-center">
-                        <span>{mpSyncLoading ? "Atualizando..." : "Atualizar saldo"}</span>
-                        <span className="mt-1 text-[10px] font-normal text-muted-foreground">
-                          Arquivo oficial
                         </span>
                       </span>
                     </Button>
@@ -8155,8 +8140,8 @@ export function FinancialDashboard() {
                     <p className="font-medium">{mpSyncStatus}</p>
                     {mpSyncState === "pending" && (
                       <p className="mt-1 text-xs text-sky-800/80 dark:text-sky-200/80">
-                        Voce nao precisa baixar o e-mail do Mercado Pago. Quando receber o aviso de
-                        arquivo pronto, use Atualizar saldo para importar automaticamente.
+                        Voce nao precisa baixar o e-mail do Mercado Pago. O saldo oficial e
+                        atualizado automaticamente algumas vezes ao dia.
                       </p>
                     )}
                   </div>

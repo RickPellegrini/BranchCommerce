@@ -22,6 +22,10 @@ type SyncConnection = {
   accountUserId: string
 }
 
+type SyncOptions = {
+  allowCreateReport?: boolean
+}
+
 function getConvexClient() {
   const convexUrl = process.env.NEXT_PUBLIC_CONVEX_URL
   if (!convexUrl) throw new Error("NEXT_PUBLIC_CONVEX_URL nao definido.")
@@ -196,7 +200,7 @@ async function createPendingReport(client: ConvexHttpClient, mp: SyncConnection)
   }
 }
 
-async function syncReports(mp: SyncConnection) {
+async function syncReports(mp: SyncConnection, options: SyncOptions = {}) {
   const client = getConvexClient()
   const pendingRun = await client.query(api.mercadopago.getLatestPendingReportSyncRun, {
     appUserId: mp.appUserId,
@@ -260,6 +264,14 @@ async function syncReports(mp: SyncConnection) {
   const fileName = latest ? reportFileName(latest) : null
 
   if (!latest || !fileName) {
+    if (!options.allowCreateReport) {
+      return {
+        status: "idle" as const,
+        imported: 0,
+        skipped: 0,
+        message: "Nenhum arquivo oficial pronto para importar.",
+      }
+    }
     return createPendingReport(client, mp)
   }
 
@@ -269,7 +281,7 @@ async function syncReports(mp: SyncConnection) {
 export async function POST() {
   try {
     const mp = await requireMpOAuthConnection()
-    const result = await syncReports(mp)
+    const result = await syncReports(mp, { allowCreateReport: false })
     return jsonOk(result)
   } catch (error) {
     console.error("[mp/reports/sync] POST error:", error)
@@ -305,11 +317,14 @@ export async function GET(request: Request) {
       return jsonError("Mercado Pago OAuth nao conectado.", 409)
     }
 
-    const result = await syncReports({
-      appUserId,
-      accessToken: connection.accessToken,
-      accountUserId: connection.mpUserId,
-    })
+    const result = await syncReports(
+      {
+        appUserId,
+        accessToken: connection.accessToken,
+        accountUserId: connection.mpUserId,
+      },
+      { allowCreateReport: true },
+    )
     return jsonOk(result)
   } catch (error) {
     console.error("[mp/reports/sync] CRON error:", error)
