@@ -187,12 +187,12 @@ async function createPendingReport(client: ConvexHttpClient, mp: SyncConnection)
     taskId: String(task.id),
     imported: 0,
     skipped: 0,
-    message: `Relatorio solicitado. Task ${task.id}. Execute novamente quando estiver processed.`,
+    message: `Report em processamento. Task ${task.id}. O saldo sera atualizado automaticamente quando o arquivo oficial ficar disponivel.`,
   })
   return {
     status: "pending" as const,
     task,
-    message: `Relatorio solicitado. Task ${task.id}. Execute novamente quando estiver processed.`,
+    message: `Report em processamento. Task ${task.id}. O saldo sera atualizado automaticamente quando o arquivo oficial ficar disponivel.`,
   }
 }
 
@@ -232,7 +232,7 @@ async function syncReports(mp: SyncConnection) {
       return {
         status: "pending" as const,
         task,
-        message: `Relatorio ainda ${task.status}. Task ${task.id}. Tente novamente em alguns minutos.`,
+        message: `Report ainda em processamento (${task.status}). Task ${task.id}. O saldo sera atualizado automaticamente quando o arquivo oficial ficar disponivel.`,
       }
     } catch (error) {
       if (!isMissingReportTask(error)) throw error

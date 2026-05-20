@@ -8123,7 +8123,18 @@ export function FinancialDashboard() {
                 </div>
 
                 {mpError && <p className="text-sm text-destructive">{mpError}</p>}
-                {mpSyncStatus && <p className="text-sm text-muted-foreground">{mpSyncStatus}</p>}
+                {mpSyncStatus && (
+                  <div className="rounded-lg border border-sky-200 bg-sky-50 px-3 py-2 text-sm text-sky-900 dark:border-sky-900/60 dark:bg-sky-950/30 dark:text-sky-100">
+                    <p className="font-medium">{mpSyncStatus}</p>
+                    {mpSyncStatus.toLowerCase().includes("process") && (
+                      <p className="mt-1 text-xs text-sky-800/80 dark:text-sky-200/80">
+                        Voce nao precisa baixar o e-mail do Mercado Pago nem clicar de novo. O app
+                        consulta a task em background e atualiza o saldo quando o arquivo oficial
+                        ficar pronto.
+                      </p>
+                    )}
+                  </div>
+                )}
 
                 <Card className="overflow-hidden border-border/80 shadow-sm">
                   <CardContent className="space-y-5 pt-6 pb-5">
