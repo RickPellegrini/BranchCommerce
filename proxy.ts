@@ -1,4 +1,5 @@
 import { clerkMiddleware, createRouteMatcher } from "@clerk/nextjs/server"
+import { NextFetchEvent, NextResponse, type NextRequest } from "next/server"
 
 const isPublicRoute = createRouteMatcher([
   "/sign-in(.*)",
@@ -10,11 +11,19 @@ const isPublicRoute = createRouteMatcher([
   "/api/branch-hunter/(.*)",
 ])
 
-export default clerkMiddleware(async (auth, req) => {
+const protectedRoutesMiddleware = clerkMiddleware(async (auth, req) => {
   if (!isPublicRoute(req)) {
     await auth.protect()
   }
 })
+
+export default function proxy(req: NextRequest, event: NextFetchEvent) {
+  if (isPublicRoute(req)) {
+    return NextResponse.next()
+  }
+
+  return protectedRoutesMiddleware(req, event)
+}
 
 export const config = {
   matcher: [
