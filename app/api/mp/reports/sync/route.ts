@@ -79,6 +79,11 @@ function isMissingReportConfig(error: unknown) {
   )
 }
 
+function isMissingReportTask(error: unknown) {
+  const message = errorMessage(error).toLowerCase()
+  return message.includes("task_not_found") || message.includes("task not found")
+}
+
 function movementKey(fileName: string, movement: MpReportMovement) {
   return [
     fileName,
@@ -200,33 +205,46 @@ async function syncReports(mp: SyncConnection) {
   const pendingTaskId = pendingRun ? taskIdFromPendingRun(pendingRun) : null
 
   if (pendingTaskId) {
-    const task = await getSettlementReportTask(mp.accessToken, pendingTaskId)
-    const fileName = processedReportFileName(task)
+    try {
+      const task = await getSettlementReportTask(mp.accessToken, pendingTaskId)
+      const fileName = processedReportFileName(task)
 
-    if (task.status === "processed" && fileName) {
-      return importReportFile(client, mp, fileName, task.generation_date ?? null, pendingTaskId)
-    }
+      if (task.status === "processed" && fileName) {
+        return importReportFile(client, mp, fileName, task.generation_date ?? null, pendingTaskId)
+      }
 
-    if (task.status === "failed") {
+      if (task.status === "failed") {
+        await client.mutation(api.mercadopago.updateReportSyncRunByTask, {
+          appUserId: mp.appUserId,
+          taskId: String(task.id),
+          status: "failed",
+          imported: 0,
+          skipped: 0,
+          message: `Task ${task.id} falhou no Mercado Pago.`,
+        })
+        return {
+          status: "failed" as const,
+          task,
+          message: `Task ${task.id} falhou no Mercado Pago. Tente gerar novamente.`,
+        }
+      }
+
+      return {
+        status: "pending" as const,
+        task,
+        message: `Relatorio ainda ${task.status}. Task ${task.id}. Tente novamente em alguns minutos.`,
+      }
+    } catch (error) {
+      if (!isMissingReportTask(error)) throw error
+
       await client.mutation(api.mercadopago.updateReportSyncRunByTask, {
         appUserId: mp.appUserId,
-        taskId: String(task.id),
+        taskId: pendingTaskId,
         status: "failed",
         imported: 0,
         skipped: 0,
-        message: `Task ${task.id} falhou no Mercado Pago.`,
+        message: `Task ${pendingTaskId} nao encontrada. Buscando ultimo report processado.`,
       })
-      return {
-        status: "failed" as const,
-        task,
-        message: `Task ${task.id} falhou no Mercado Pago. Tente gerar novamente.`,
-      }
-    }
-
-    return {
-      status: "pending" as const,
-      task,
-      message: `Relatorio ainda ${task.status}. Task ${task.id}. Tente novamente em alguns minutos.`,
     }
   }
 
