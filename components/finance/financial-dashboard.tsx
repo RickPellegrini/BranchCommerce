@@ -1576,6 +1576,7 @@ export function FinancialDashboard() {
   const [globalSyncLoading, setGlobalSyncLoading] = useState(false)
   const [mpError, setMpError] = useState<string | null>(null)
   const [mpSyncStatus, setMpSyncStatus] = useState<string | null>(null)
+  const [mpSyncState, setMpSyncState] = useState<"idle" | "pending" | "success" | "failed">("idle")
   const [globalSyncStatus, setGlobalSyncStatus] = useState<string | null>(null)
   const [mpConnectionStatus, setMpConnectionStatus] = useState<{
     connected: boolean
@@ -1672,7 +1673,16 @@ export function FinancialDashboard() {
           totalDebits: Math.max(0, -(d.movementNet ?? 0)),
           windowSinceIso: new Date(d.lastSync?.createdAt ?? Date.now()).toISOString(),
         })
-        if (d.lastSync?.message) setMpSyncStatus(d.lastSync.message)
+        if (d.lastSync?.status === "pending") {
+          setMpSyncState("pending")
+          setMpSyncStatus(d.lastSync.message ?? "Report em processamento.")
+        } else if (d.lastSync?.status === "failed") {
+          setMpSyncState("failed")
+          setMpSyncStatus(d.lastSync.message ?? "Falha ao processar report Mercado Pago.")
+        } else if (d.lastSync?.status === "success") {
+          setMpSyncState("success")
+          setMpSyncStatus(null)
+        }
         if ((d.movements ?? []).length === 0) {
           const txResponse = await fetch("/api/mp/transactions?windowDays=180&limit=1000", {
             cache: "no-store",
@@ -1718,7 +1728,10 @@ export function FinancialDashboard() {
   const syncMpReports = useCallback(
     async (options: { manual?: boolean } = {}) => {
       setMpSyncLoading(true)
-      if (options.manual) setMpSyncStatus(null)
+      if (options.manual) {
+        setMpSyncState("idle")
+        setMpSyncStatus(null)
+      }
       setMpError(null)
       try {
         const res = await fetch("/api/mp/reports/sync", { method: "POST" })
@@ -1726,6 +1739,7 @@ export function FinancialDashboard() {
         if (!json.ok) {
           const detail = typeof json.details === "string" ? json.details : null
           if (options.manual) {
+            setMpSyncState("failed")
             setMpSyncStatus(
               detail
                 ? `${json.error ?? "Erro ao sincronizar reports."} ${detail}`
@@ -1741,17 +1755,26 @@ export function FinancialDashboard() {
           message?: string
         }
         if (options.manual || data.status === "success") {
-          setMpSyncStatus(
-            data.status === "pending"
-              ? (data.message ?? "Relatorio solicitado. O app tentara importar automaticamente.")
-              : `Reports sincronizados: ${data.imported ?? 0} novo(s), ${data.skipped ?? 0} existente(s).`,
-          )
+          if (data.status === "pending") {
+            setMpSyncState("pending")
+            setMpSyncStatus(
+              data.message ?? "Report em processamento. O app tentara importar automaticamente.",
+            )
+          } else if (data.status === "failed") {
+            setMpSyncState("failed")
+            setMpSyncStatus(data.message ?? "Falha ao processar report Mercado Pago.")
+          } else {
+            setMpSyncState("success")
+            setMpSyncStatus(null)
+          }
         }
         await fetchMpData()
       } catch (err) {
         console.error("[mp] sync error:", err)
-        if (options.manual)
+        if (options.manual) {
+          setMpSyncState("failed")
           setMpSyncStatus(err instanceof Error ? err.message : "Erro desconhecido")
+        }
       } finally {
         setMpSyncLoading(false)
       }
@@ -8123,10 +8146,17 @@ export function FinancialDashboard() {
                 </div>
 
                 {mpError && <p className="text-sm text-destructive">{mpError}</p>}
-                {mpSyncStatus && (
-                  <div className="rounded-lg border border-sky-200 bg-sky-50 px-3 py-2 text-sm text-sky-900 dark:border-sky-900/60 dark:bg-sky-950/30 dark:text-sky-100">
+                {mpSyncStatus && mpSyncState !== "success" && (
+                  <div
+                    className={cn(
+                      "rounded-lg border px-3 py-2 text-sm",
+                      mpSyncState === "failed"
+                        ? "border-destructive/30 bg-destructive/10 text-destructive"
+                        : "border-sky-200 bg-sky-50 text-sky-900 dark:border-sky-900/60 dark:bg-sky-950/30 dark:text-sky-100",
+                    )}
+                  >
                     <p className="font-medium">{mpSyncStatus}</p>
-                    {mpSyncStatus.toLowerCase().includes("process") && (
+                    {mpSyncState === "pending" && (
                       <p className="mt-1 text-xs text-sky-800/80 dark:text-sky-200/80">
                         Voce nao precisa baixar o e-mail do Mercado Pago nem clicar de novo. O app
                         consulta a task em background e atualiza o saldo quando o arquivo oficial
