@@ -83,7 +83,8 @@ export async function GET(request: Request) {
     }
     if (
       message.includes("Variavel de ambiente obrigatoria ausente") ||
-      message.includes("MERCADO_PAGO_CLIENT_ID invalido")
+      message.includes("MERCADO_PAGO_CLIENT_ID invalido") ||
+      message.includes("MERCADO_PAGO_CLIENT_ID parece")
     ) {
       return NextResponse.redirect(new URL("/dashboard?mp_error=configuracao_oauth", request.url))
     }

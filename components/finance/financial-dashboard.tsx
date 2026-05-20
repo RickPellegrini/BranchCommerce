@@ -1577,6 +1577,12 @@ export function FinancialDashboard() {
   const [mpError, setMpError] = useState<string | null>(null)
   const [mpSyncStatus, setMpSyncStatus] = useState<string | null>(null)
   const [globalSyncStatus, setGlobalSyncStatus] = useState<string | null>(null)
+  const [mpConnectionStatus, setMpConnectionStatus] = useState<{
+    connected: boolean
+    source?: "mp_oauth" | "mp_app_token"
+    mpUserId?: string | null
+    updatedAt?: number | null
+  } | null>(null)
   const [externalSyncStatuses, setExternalSyncStatuses] = useState<
     Array<{
       provider: "all" | "mercado_livre" | "mercado_pago" | "stock"
@@ -1721,6 +1727,18 @@ export function FinancialDashboard() {
     }
   }, [])
 
+  const loadMpConnectionStatus = useCallback(async () => {
+    try {
+      const response = await fetch("/api/mp/account", { cache: "no-store" })
+      const payload = await response.json()
+      if (response.ok && payload.ok) {
+        setMpConnectionStatus(payload.data)
+      }
+    } catch (error) {
+      console.error("[mp] account status error:", error)
+    }
+  }, [])
+
   const syncAllExternalData = useCallback(
     async (force = false) => {
       if (globalSyncLoading) return
@@ -1828,6 +1846,7 @@ export function FinancialDashboard() {
   useEffect(() => {
     if (!userId) return
     void loadExternalSyncStatuses()
+    void loadMpConnectionStatus()
     void syncAllExternalData(false)
     // eslint-disable-next-line react-hooks/exhaustive-deps -- bootstrap only when account is ready
   }, [userId])
@@ -1888,10 +1907,12 @@ export function FinancialDashboard() {
     const params = new URLSearchParams(window.location.search)
     const mlErrorCode = params.get("ml_error")
     const mlConnected = params.get("ml_connected")
+    const mpErrorCode = params.get("mp_error")
+    const mpConnected = params.get("mp_connected")
 
-    if (!mlErrorCode && !mlConnected) return
+    if (!mlErrorCode && !mlConnected && !mpErrorCode && !mpConnected) return
 
-    setActiveModule("mercadolivre")
+    setActiveModule(mpErrorCode || mpConnected ? "connections" : "mercadolivre")
 
     if (mlConnected === "1") {
       setMlInfo("Conta do Mercado Livre conectada com sucesso.")
@@ -1910,6 +1931,23 @@ export function FinancialDashboard() {
 
       setMlInfo(null)
       setMlError(errorMap[mlErrorCode] ?? `Erro no Mercado Livre: ${mlErrorCode}`)
+    }
+
+    if (mpConnected === "1") {
+      setGlobalSyncStatus("Conta do Mercado Pago conectada com sucesso.")
+    }
+
+    if (mpErrorCode) {
+      const errorMap: Record<string, string> = {
+        configuracao_oauth:
+          "Configuração OAuth do Mercado Pago incorreta. Confira MERCADO_PAGO_CLIENT_ID numérico, CLIENT_SECRET e REDIRECT_URI.",
+        falha_conexao: "Não foi possível iniciar a conexão com o Mercado Pago.",
+        callback_sem_code: "Retorno do Mercado Pago sem código de autorização.",
+        state_invalido: "Falha de segurança no OAuth do Mercado Pago. Tente conectar novamente.",
+        falha_callback:
+          "Não foi possível concluir a autenticação Mercado Pago. Confira redirect URI e credenciais.",
+      }
+      setGlobalSyncStatus(errorMap[mpErrorCode] ?? `Erro no Mercado Pago: ${mpErrorCode}`)
     }
 
     const cleanUrl = `${window.location.pathname}`
@@ -5286,7 +5324,9 @@ export function FinancialDashboard() {
                 <CardContent className="space-y-3 text-sm">
                   <div className="flex items-center justify-between">
                     <span>Status</span>
-                    <Badge variant="secondary">OAuth salvo</Badge>
+                    <Badge variant={mpConnectionStatus?.connected ? "default" : "secondary"}>
+                      {mpConnectionStatus?.connected ? "Conectado" : "Não conectado"}
+                    </Badge>
                   </div>
                   <div className="flex items-center justify-between">
                     <span>Último sync reports</span>
