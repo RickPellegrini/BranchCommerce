@@ -1571,15 +1571,17 @@ export function FinancialDashboard() {
     }>
   >([])
   const [mpLoading, setMpLoading] = useState(false)
+  const [mpSyncLoading, setMpSyncLoading] = useState(false)
   const [mpError, setMpError] = useState<string | null>(null)
+  const [mpSyncStatus, setMpSyncStatus] = useState<string | null>(null)
   const [mpBalanceUnavailable, setMpBalanceUnavailable] = useState(false)
   const [mpSaldoOculto, setMpSaldoOculto] = useState(false)
+  const [mpAnchorBalance, setMpAnchorBalance] = useState("")
   const [, setMpTxSummary] = useState<{
     totalCredits: number
     totalDebits: number
     windowSinceIso: string
   } | null>(null)
-  const MP_WINDOW_DAYS = 180
   const [mpExtratoVerTudo, setMpExtratoVerTudo] = useState(false)
 
   type DayGroupUI = DayGroup
@@ -1593,91 +1595,67 @@ export function FinancialDashboard() {
     setMpLoading(true)
     setMpError(null)
     try {
-      const [txRes, reportRes] = await Promise.all([
-        fetch(`/api/mp/transactions?windowDays=${MP_WINDOW_DAYS}&limit=1000`, {
-          cache: "no-store",
-        }),
-        fetch("/api/mp/reports/latest-summary", { cache: "no-store" }),
-      ])
+      const ledgerRes = await fetch("/api/mp/ledger", { cache: "no-store" })
+      const ledgerJson = await ledgerRes.json()
 
-      const txJson = await txRes.json()
-      const reportJson = await reportRes.json()
-      let usedReportSummary = false
-
-      if (reportJson.ok && reportJson.data?.hasReport) {
-        const d = reportJson.data as {
+      if (ledgerJson.ok && ledgerJson.data) {
+        const d = ledgerJson.data as {
+          anchor?: unknown
           balance?: {
             availableBalance?: number | null
             unavailableBalance?: number | null
             totalAmount?: number | null
             currencyId?: string | null
           }
-          summary?: {
-            totalCredits?: number
-            totalDebits?: number
-            generatedAt?: string | null
-            transactions?: Array<{
-              id: string
-              date: string
-              description: string
-              amount: number
-              type: "credit" | "debit"
-              status: string
-            }>
-          }
+          movementNet?: number
+          movements?: Array<{
+            _id?: string
+            movementKey?: string
+            date: string
+            description: string
+            amount: number
+            type: "credit" | "debit"
+            status: string
+          }>
+          lastSync?: {
+            status?: string
+            fileName?: string
+            createdAt?: number
+            message?: string
+          } | null
         }
-        setMpBalanceUnavailable(false)
-        setMpBalance({
-          availableBalance: d.balance?.availableBalance ?? 0,
-          unavailableBalance: d.balance?.unavailableBalance ?? 0,
-          totalAmount: d.balance?.totalAmount ?? d.balance?.availableBalance ?? 0,
-          currencyId: d.balance?.currencyId ?? "BRL",
-        })
-        setMpTransactions(d.summary?.transactions ?? [])
+        const hasAnchor = Boolean(d.anchor)
+        setMpBalanceUnavailable(!hasAnchor)
+        setMpBalance(
+          hasAnchor
+            ? {
+                availableBalance: d.balance?.availableBalance ?? 0,
+                unavailableBalance: d.balance?.unavailableBalance ?? 0,
+                totalAmount: d.balance?.totalAmount ?? d.balance?.availableBalance ?? 0,
+                currencyId: d.balance?.currencyId ?? "BRL",
+              }
+            : null,
+        )
+        setMpTransactions(
+          (d.movements ?? []).map((movement) => ({
+            id: movement._id ?? movement.movementKey ?? `${movement.date}:${movement.description}`,
+            date: movement.date,
+            description: movement.description,
+            amount: movement.amount,
+            type: movement.type,
+            status: movement.status,
+          })),
+        )
         setMpTxSummary({
-          totalCredits: d.summary?.totalCredits ?? 0,
-          totalDebits: d.summary?.totalDebits ?? 0,
-          windowSinceIso: d.summary?.generatedAt ?? new Date().toISOString(),
+          totalCredits: Math.max(0, d.movementNet ?? 0),
+          totalDebits: Math.max(0, -(d.movementNet ?? 0)),
+          windowSinceIso: new Date(d.lastSync?.createdAt ?? Date.now()).toISOString(),
         })
-        usedReportSummary = true
-      } else if (!reportJson.ok) {
-        console.error("[mp] report summary error:", reportJson.error)
-      }
-
-      if (!usedReportSummary) {
+        if (d.lastSync?.message) setMpSyncStatus(d.lastSync.message)
+      } else {
         setMpBalance(null)
         setMpBalanceUnavailable(true)
-      }
-
-      if (!usedReportSummary && txJson.ok && txJson.data) {
-        // Quando passamos windowDays, o endpoint devolve { transactions, totalCredits, totalDebits, windowSinceIso }.
-        // Compat: se vier array (chamada legada), tratamos como transactions e nao montamos summary.
-        if (Array.isArray(txJson.data)) {
-          setMpTransactions(txJson.data)
-          setMpTxSummary(null)
-        } else {
-          const d = txJson.data as {
-            transactions: Array<{
-              id: string
-              date: string
-              description: string
-              amount: number
-              type: "credit" | "debit"
-              status: string
-            }>
-            totalCredits: number
-            totalDebits: number
-            windowSinceIso: string
-          }
-          setMpTransactions(d.transactions ?? [])
-          setMpTxSummary({
-            totalCredits: d.totalCredits ?? 0,
-            totalDebits: d.totalDebits ?? 0,
-            windowSinceIso: d.windowSinceIso,
-          })
-        }
-      } else if (!usedReportSummary && !txJson.ok) {
-        console.error("[mp] transactions error:", txJson.error)
+        setMpError(ledgerJson.error ?? "Erro ao buscar ledger Mercado Pago")
       }
     } catch (err) {
       console.error("[mp] fetch error:", err)
@@ -1686,6 +1664,73 @@ export function FinancialDashboard() {
       setMpLoading(false)
     }
   }, [])
+
+  const syncMpReports = useCallback(async () => {
+    setMpSyncLoading(true)
+    setMpSyncStatus(null)
+    setMpError(null)
+    try {
+      const res = await fetch("/api/mp/reports/sync", { method: "POST" })
+      const json = await res.json()
+      if (!json.ok) {
+        setMpSyncStatus(json.error ?? "Erro ao sincronizar reports.")
+        return
+      }
+      const data = json.data as {
+        status?: string
+        imported?: number
+        skipped?: number
+        message?: string
+      }
+      setMpSyncStatus(
+        data.status === "pending"
+          ? (data.message ?? "Relatorio solicitado. Tente novamente em alguns minutos.")
+          : `Reports sincronizados: ${data.imported ?? 0} novo(s), ${data.skipped ?? 0} existente(s).`,
+      )
+      await fetchMpData()
+    } catch (err) {
+      console.error("[mp] sync error:", err)
+      setMpSyncStatus(err instanceof Error ? err.message : "Erro desconhecido")
+    } finally {
+      setMpSyncLoading(false)
+    }
+  }, [fetchMpData])
+
+  const saveMpAnchor = useCallback(async () => {
+    const balance = Number(mpAnchorBalance.replace(/\./g, "").replace(",", "."))
+    if (!Number.isFinite(balance)) {
+      setMpSyncStatus("Informe um saldo numerico.")
+      return
+    }
+
+    setMpLoading(true)
+    setMpSyncStatus(null)
+    try {
+      const res = await fetch("/api/mp/ledger", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          balance,
+          currencyId: "BRL",
+          anchoredAt: new Date().toISOString(),
+          note: "Saldo disponivel informado pelo painel Mercado Pago.",
+        }),
+      })
+      const json = await res.json()
+      if (!json.ok) {
+        setMpSyncStatus(json.error ?? "Erro ao salvar saldo inicial.")
+        return
+      }
+      setMpAnchorBalance("")
+      setMpSyncStatus("Saldo inicial salvo. O saldo passa a ser calculado pelos reports oficiais.")
+      await fetchMpData()
+    } catch (err) {
+      console.error("[mp] anchor error:", err)
+      setMpSyncStatus(err instanceof Error ? err.message : "Erro desconhecido")
+    } finally {
+      setMpLoading(false)
+    }
+  }, [fetchMpData, mpAnchorBalance])
 
   const fetchFutureReleases = useCallback(async () => {
     setMpFutureLoading(true)
@@ -7645,19 +7690,32 @@ export function FinancialDashboard() {
               <section className="mx-auto max-w-md space-y-3">
                 <div className="flex items-center justify-between gap-2">
                   <h2 className="text-lg font-semibold tracking-tight">Mercado Pago</h2>
-                  <Button
-                    size="sm"
-                    variant="ghost"
-                    disabled={mpLoading}
-                    onClick={fetchMpData}
-                    className="text-sky-600 dark:text-sky-400 hover:text-sky-700"
-                  >
-                    <RefreshCw className={cn("mr-1 size-4", mpLoading && "animate-spin")} />
-                    {mpLoading ? "Atualizando..." : "Atualizar"}
-                  </Button>
+                  <div className="flex items-center gap-1">
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      disabled={mpLoading}
+                      onClick={fetchMpData}
+                      className="text-sky-600 dark:text-sky-400 hover:text-sky-700"
+                    >
+                      <RefreshCw className={cn("mr-1 size-4", mpLoading && "animate-spin")} />
+                      {mpLoading ? "Atualizando..." : "Atualizar"}
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      disabled={mpSyncLoading}
+                      onClick={() => void syncMpReports()}
+                      className="text-emerald-600 dark:text-emerald-400 hover:text-emerald-700"
+                    >
+                      <RefreshCw className={cn("mr-1 size-4", mpSyncLoading && "animate-spin")} />
+                      {mpSyncLoading ? "Sincronizando..." : "Sincronizar"}
+                    </Button>
+                  </div>
                 </div>
 
                 {mpError && <p className="text-sm text-destructive">{mpError}</p>}
+                {mpSyncStatus && <p className="text-sm text-muted-foreground">{mpSyncStatus}</p>}
 
                 <Card className="overflow-hidden border-border/80 shadow-sm">
                   <CardContent className="space-y-5 pt-6 pb-5">
@@ -7673,16 +7731,26 @@ export function FinancialDashboard() {
                                 —
                               </p>
                               <p className="mt-1 text-sm text-muted-foreground">
-                                O Mercado Pago não liberou saldo disponível pela API oficial para
-                                esta conta. Os lançamentos futuros e movimentos abaixo continuam
-                                vindo das APIs/relatórios oficiais.
+                                Informe uma vez o saldo disponível visto no Mercado Pago. Depois
+                                disso, o saldo será calculado pela âncora + movimentos dos reports
+                                oficiais.
                               </p>
-                              <a
-                                href="/api/mp/connect"
-                                className="mt-2 inline-flex items-center gap-1 rounded-md bg-sky-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-sky-700 dark:bg-sky-700 dark:hover:bg-sky-600"
-                              >
-                                Conectar Mercado Pago
-                              </a>
+                              <div className="mt-3 flex max-w-xs items-center gap-2">
+                                <Input
+                                  inputMode="decimal"
+                                  placeholder="Ex: 668,32"
+                                  value={mpAnchorBalance}
+                                  onChange={(event) => setMpAnchorBalance(event.target.value)}
+                                />
+                                <Button
+                                  type="button"
+                                  size="sm"
+                                  disabled={mpLoading}
+                                  onClick={() => void saveMpAnchor()}
+                                >
+                                  Salvar
+                                </Button>
+                              </div>
                             </div>
                           </div>
                         ) : mpSaldoOculto && mpBalance ? (

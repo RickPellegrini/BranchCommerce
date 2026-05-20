@@ -226,4 +226,44 @@ export default defineSchema({
   })
     .index("by_app_user", ["appUserId"])
     .index("by_mp_user", ["mpUserId"]),
+
+  mpBalanceAnchors: defineTable({
+    appUserId: v.string(),
+    balance: v.number(),
+    currencyId: v.string(),
+    anchoredAt: v.string(),
+    note: v.optional(v.string()),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  }).index("by_app_user", ["appUserId"]),
+
+  mpAccountMovements: defineTable({
+    appUserId: v.string(),
+    mpUserId: v.string(),
+    movementKey: v.string(),
+    sourceId: v.optional(v.string()),
+    externalReference: v.optional(v.string()),
+    fileName: v.string(),
+    date: v.string(),
+    description: v.string(),
+    amount: v.number(),
+    type: v.union(v.literal("credit"), v.literal("debit")),
+    status: v.string(),
+    rawJson: v.string(),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index("by_app_user", ["appUserId"])
+    .index("by_app_user_key", ["appUserId", "movementKey"])
+    .index("by_app_user_date", ["appUserId", "date"]),
+
+  mpReportSyncRuns: defineTable({
+    appUserId: v.string(),
+    status: v.union(v.literal("success"), v.literal("pending"), v.literal("failed")),
+    fileName: v.optional(v.string()),
+    imported: v.number(),
+    skipped: v.number(),
+    message: v.optional(v.string()),
+    createdAt: v.number(),
+  }).index("by_app_user", ["appUserId"]),
 })
