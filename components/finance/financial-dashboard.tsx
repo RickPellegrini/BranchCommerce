@@ -1673,10 +1673,7 @@ export function FinancialDashboard() {
           totalDebits: Math.max(0, -(d.movementNet ?? 0)),
           windowSinceIso: new Date(d.lastSync?.createdAt ?? Date.now()).toISOString(),
         })
-        if (d.lastSync?.status === "pending") {
-          setMpSyncState("pending")
-          setMpSyncStatus(d.lastSync.message ?? "Saldo em atualização.")
-        } else if (d.lastSync?.status === "failed") {
+        if (d.lastSync?.status === "failed") {
           setMpSyncState("failed")
           setMpSyncStatus(d.lastSync.message ?? "Falha ao atualizar saldo Mercado Pago.")
         } else if (d.lastSync?.status === "success") {
