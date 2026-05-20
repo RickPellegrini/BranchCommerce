@@ -1723,7 +1723,12 @@ export function FinancialDashboard() {
       const res = await fetch("/api/mp/reports/sync", { method: "POST" })
       const json = await res.json()
       if (!json.ok) {
-        setMpSyncStatus(json.error ?? "Erro ao sincronizar reports.")
+        const detail = typeof json.details === "string" ? json.details : null
+        setMpSyncStatus(
+          detail
+            ? `${json.error ?? "Erro ao sincronizar reports."} ${detail}`
+            : (json.error ?? "Erro ao sincronizar reports."),
+        )
         return
       }
       const data = json.data as {

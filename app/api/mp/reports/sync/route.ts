@@ -54,6 +54,20 @@ function defaultReportWindow() {
   }
 }
 
+function errorMessage(error: unknown) {
+  return error instanceof Error ? error.message : String(error)
+}
+
+function isMissingReportConfig(error: unknown) {
+  const message = errorMessage(error).toLowerCase()
+  return (
+    message.includes("config_not_found") ||
+    message.includes("config not found") ||
+    message.includes("not found") ||
+    message.includes("404")
+  )
+}
+
 function movementKey(fileName: string, movement: MpReportMovement) {
   return [
     fileName,
@@ -69,21 +83,32 @@ async function ensureReportConfig(accessToken: string) {
   try {
     await createSettlementReportConfig(accessToken)
   } catch (error) {
-    const message = error instanceof Error ? error.message : String(error)
+    const message = errorMessage(error)
     if (!message.includes("already") && !message.includes("409")) {
       console.warn("[mp/reports/sync] config create skipped:", message)
     }
   }
 }
 
+async function loadAvailableReports(accessToken: string) {
+  try {
+    const searched = await searchSettlementReports(accessToken, { limit: 20, offset: 0 })
+    if (searched.results?.length) return searched.results
+  } catch (error) {
+    if (!isMissingReportConfig(error)) throw error
+  }
+
+  try {
+    return await listSettlementReports(accessToken)
+  } catch (error) {
+    if (isMissingReportConfig(error)) return []
+    throw error
+  }
+}
+
 async function syncReports(mp: SyncConnection) {
   const client = getConvexClient()
-  const searched = await searchSettlementReports(mp.accessToken, { limit: 20, offset: 0 }).catch(
-    () => null,
-  )
-  const listed = searched?.results?.length
-    ? searched.results
-    : await listSettlementReports(mp.accessToken)
+  const listed = await loadAvailableReports(mp.accessToken)
   const latest = pickLatestProcessed(listed)
   const fileName = latest ? reportFileName(latest) : null
 
