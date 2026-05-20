@@ -1,7 +1,7 @@
 "use client"
 
 import Script from "next/script"
-import { useMemo, useState } from "react"
+import { useMemo, useRef, useState } from "react"
 import { CreditCard } from "lucide-react"
 
 import { Button } from "@/components/ui/button"
@@ -90,6 +90,7 @@ export function MpTestPaymentForm({ publicKey }: Props) {
   const [result, setResult] = useState<PaymentResult | null>(null)
   const [fetching, setFetching] = useState<string | null>(null)
   const [qualitySecret, setQualitySecret] = useState("")
+  const qualitySecretRef = useRef("")
   const canSubmit = useMemo(
     () => Boolean(mounted && publicKey && !loading),
     [mounted, publicKey, loading],
@@ -183,7 +184,7 @@ export function MpTestPaymentForm({ publicKey }: Props) {
                 email,
                 identificationType,
                 identificationNumber,
-                qualitySecret: qualitySecret || undefined,
+                qualitySecret: qualitySecretRef.current || undefined,
               }),
             })
             const payload = (await response.json()) as PaymentResult
@@ -282,7 +283,10 @@ export function MpTestPaymentForm({ publicKey }: Props) {
                 id="qualitySecret"
                 type="password"
                 value={qualitySecret}
-                onChange={(event) => setQualitySecret(event.target.value)}
+                onChange={(event) => {
+                  qualitySecretRef.current = event.target.value
+                  setQualitySecret(event.target.value)
+                }}
                 placeholder="Required only when enabled in production"
               />
             </div>
