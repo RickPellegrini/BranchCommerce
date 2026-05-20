@@ -1593,17 +1593,16 @@ export function FinancialDashboard() {
     setMpLoading(true)
     setMpError(null)
     try {
-      const [balRes, txRes, reportRes] = await Promise.all([
-        fetch("/api/mp/balance", { cache: "no-store" }),
+      const [txRes, reportRes] = await Promise.all([
         fetch(`/api/mp/transactions?windowDays=${MP_WINDOW_DAYS}&limit=1000`, {
           cache: "no-store",
         }),
         fetch("/api/mp/reports/latest-summary", { cache: "no-store" }),
       ])
 
-      const balJson = await balRes.json()
       const txJson = await txRes.json()
       const reportJson = await reportRes.json()
+      let usedReportSummary = false
 
       if (reportJson.ok && reportJson.data?.hasReport) {
         const d = reportJson.data as {
@@ -1640,43 +1639,17 @@ export function FinancialDashboard() {
           totalDebits: d.summary?.totalDebits ?? 0,
           windowSinceIso: d.summary?.generatedAt ?? new Date().toISOString(),
         })
-        return
+        usedReportSummary = true
       } else if (!reportJson.ok) {
         console.error("[mp] report summary error:", reportJson.error)
       }
 
-      if (balJson.ok && balJson.data) {
-        const d = balJson.data as {
-          balanceUnavailable?: boolean
-          balanceSource?: "official" | "reports" | "unavailable"
-          availableBalance?: number | null
-          unavailableBalance?: number | null
-          totalAmount?: number | null
-          currencyId?: string | null
-        }
-        const isUnavailable =
-          d.balanceUnavailable === true ||
-          d.balanceSource === "unavailable" ||
-          d.availableBalance == null
-        if (isUnavailable) {
-          setMpBalance(null)
-          setMpBalanceUnavailable(true)
-        } else {
-          setMpBalanceUnavailable(false)
-          setMpBalance({
-            availableBalance: d.availableBalance ?? 0,
-            unavailableBalance: d.unavailableBalance ?? 0,
-            totalAmount: d.totalAmount ?? 0,
-            currencyId: d.currencyId ?? "BRL",
-          })
-        }
-      } else if (!balJson.ok) {
-        console.error("[mp] balance error:", balJson.error)
-        setMpBalanceUnavailable(false)
-        setMpError(balJson.error ?? "Erro ao buscar saldo")
+      if (!usedReportSummary) {
+        setMpBalance(null)
+        setMpBalanceUnavailable(true)
       }
 
-      if (txJson.ok && txJson.data) {
+      if (!usedReportSummary && txJson.ok && txJson.data) {
         // Quando passamos windowDays, o endpoint devolve { transactions, totalCredits, totalDebits, windowSinceIso }.
         // Compat: se vier array (chamada legada), tratamos como transactions e nao montamos summary.
         if (Array.isArray(txJson.data)) {
@@ -1703,7 +1676,7 @@ export function FinancialDashboard() {
             windowSinceIso: d.windowSinceIso,
           })
         }
-      } else if (!txJson.ok) {
+      } else if (!usedReportSummary && !txJson.ok) {
         console.error("[mp] transactions error:", txJson.error)
       }
     } catch (err) {
@@ -7696,10 +7669,13 @@ export function FinancialDashboard() {
                               <p className="text-xs font-medium text-muted-foreground">
                                 Saldo disponivel
                               </p>
+                              <p className="mt-1 text-4xl font-bold tracking-tight tabular-nums">
+                                —
+                              </p>
                               <p className="mt-1 text-sm text-muted-foreground">
-                                Gere um Account Money Report no Mercado Pago para visualizar o caixa
-                                oficial e os movimentos reais aqui. Sem relatório processado, os
-                                valores permanecem zerados.
+                                O Mercado Pago não liberou saldo disponível pela API oficial para
+                                esta conta. Os lançamentos futuros e movimentos abaixo continuam
+                                vindo das APIs/relatórios oficiais.
                               </p>
                               <a
                                 href="/api/mp/connect"
@@ -7707,29 +7683,6 @@ export function FinancialDashboard() {
                               >
                                 Conectar Mercado Pago
                               </a>
-                            </div>
-
-                            <div className="grid grid-cols-3 gap-2">
-                              <div className="rounded-lg border border-border/60 bg-muted/30 px-3 py-2">
-                                <p className="text-[11px] text-muted-foreground">A receber bruto</p>
-                                <p className="mt-0.5 text-lg font-semibold tabular-nums">
-                                  {formatCurrency(mpFutureGross)}
-                                </p>
-                              </div>
-                              <div className="rounded-lg border border-border/60 bg-muted/30 px-3 py-2">
-                                <p className="text-[11px] text-muted-foreground">Custos/taxas</p>
-                                <p className="mt-0.5 text-lg font-semibold tabular-nums text-rose-700 dark:text-rose-400">
-                                  - {formatCurrency(mpFutureFees)}
-                                </p>
-                              </div>
-                              <div className="rounded-lg border border-border/60 bg-muted/30 px-3 py-2">
-                                <p className="text-[11px] text-muted-foreground">
-                                  A receber liquido
-                                </p>
-                                <p className="mt-0.5 text-lg font-semibold tabular-nums text-emerald-700 dark:text-emerald-400">
-                                  {formatCurrency(mpFutureNet)}
-                                </p>
-                              </div>
                             </div>
                           </div>
                         ) : mpSaldoOculto && mpBalance ? (
