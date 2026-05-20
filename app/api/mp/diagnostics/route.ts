@@ -11,15 +11,8 @@ function maskToken(token: string): string {
 }
 
 /**
- * Endpoint somente-leitura usado para investigar por que o saldo do Mercado Pago
- * retorna 403 mesmo com OAuth conectado. Tres frentes:
- *
- *  1. Snapshot da conexao armazenada (source, scope, mpUserId, expiresAt,
- *     liveMode), sem expor tokens em claro.
- *  2. Probes raw contra /users/me, ambas variacoes de
- *     /users/{id}/mercadopago_account/balance e um /v1/payments/search?limit=1.
- *  3. Resumo (`summary`) traduzindo cada probe em "ok"/"forbidden"/"unauthorized"
- *     para facilitar leitura.
+ * Endpoint somente-leitura para validar o acesso Mercado Pago sem expor tokens.
+ * Prova identidade, pagamentos e os endpoints oficiais de Account Money Reports.
  */
 export async function GET() {
   try {
@@ -27,10 +20,7 @@ export async function GET() {
     const oauthConnection = await getValidMpConnection(appUserId)
     const resolved = await requireMpConnection()
 
-    const probes = await probeMpEndpoints(
-      resolved.accessToken,
-      resolved.accountUserId || oauthConnection?.mpUserId || null,
-    )
+    const probes = await probeMpEndpoints(resolved.accessToken)
 
     const summary = probes.map((p) => {
       if (p.error) return { label: p.label, kind: "network_error" as const, detail: p.error }

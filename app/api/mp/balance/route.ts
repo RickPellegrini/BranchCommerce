@@ -1,8 +1,7 @@
 import { jsonError, jsonOk } from "@/lib/mercadolivre/http"
-import { fetchOfficialBalance, type OfficialBalanceProbe } from "@/lib/mercadopago/simple-balance"
 import { requireMpOAuthConnection } from "@/lib/mercadopago/server"
 
-type BalanceSource = "official" | "unavailable"
+type BalanceSource = "reports" | "unavailable"
 
 type BalancePayload = {
   balanceSource: BalanceSource
@@ -12,54 +11,35 @@ type BalancePayload = {
   unavailableBalance: number | null
   totalAmount: number | null
   currencyId: string | null
-  /** Razao retornada pelo endpoint oficial (ok, forbidden, unauthorized, ...). */
+  /** Razao da indisponibilidade do saldo direto. */
   officialReason: string
-  /** Probes raw das chamadas ao MP — uteis na UI/console. */
-  officialProbes: OfficialBalanceProbe[]
+  officialProbes: []
+  reportsAvailable: boolean
+  reportsConfigUrl: string
 }
 
 /**
- * Saldo MP: regra rigida — fonte oficial ou indisponivel.
- * Nenhum fallback calculado por extrato/pagamentos. Quando o endpoint oficial
- * retorna 401/403/erro, devolvemos `balanceUnavailable: true` para a UI
- * mostrar o empty-state com CTA, em vez de simular um numero. O extrato
- * continua disponivel em /api/mp/transactions, mas para fins informativos.
+ * O endpoint historico de balance do Mercado Pago retorna 403/404 para esta
+ * conta. O caminho oficial para extrato financeiro e via Account Money Reports.
+ * Mantemos este endpoint como contrato de UI, mas ele nao tenta mais chamar o
+ * balance legado; ele orienta o frontend a usar /api/mp/reports.
  */
 export async function GET() {
   try {
-    const mp = await requireMpOAuthConnection()
-
-    const official = await fetchOfficialBalance(mp.accessToken, mp.accountUserId)
-
-    if (official.balance) {
-      const payload: BalancePayload = {
-        balanceSource: "official",
-        balanceUnavailable: false,
-        tokenSource: "mp_oauth",
-        availableBalance: official.balance.availableBalance,
-        unavailableBalance: official.balance.unavailableBalance,
-        totalAmount: official.balance.totalAmount,
-        currencyId: official.balance.currencyId,
-        officialReason: official.reason,
-        officialProbes: official.probes,
-      }
-      return jsonOk(payload)
-    }
-
-    console.warn(
-      `[mp/balance] indisponivel (reason=${official.reason}, userId=${official.resolvedUserId || "?"}, tokenSource=${mp.source}).`,
-    )
+    await requireMpOAuthConnection()
 
     const payload: BalancePayload = {
-      balanceSource: "unavailable",
+      balanceSource: "reports",
       balanceUnavailable: true,
       tokenSource: "mp_oauth",
       availableBalance: null,
       unavailableBalance: null,
       totalAmount: null,
       currencyId: null,
-      officialReason: official.reason,
-      officialProbes: official.probes,
+      officialReason: "use_account_money_reports",
+      officialProbes: [],
+      reportsAvailable: true,
+      reportsConfigUrl: "/api/mp/reports/config",
     }
     return jsonOk(payload)
   } catch (error) {
@@ -78,6 +58,8 @@ export async function GET() {
         currencyId: null,
         officialReason: "unauthorized",
         officialProbes: [],
+        reportsAvailable: false,
+        reportsConfigUrl: "/api/mp/reports/config",
       }
       return jsonOk(payload)
     }

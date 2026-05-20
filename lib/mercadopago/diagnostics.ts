@@ -68,63 +68,29 @@ async function probe(label: string, url: string, accessToken: string): Promise<M
 }
 
 /**
- * Probes the three balance/identity endpoints surfaced in the user's tickets,
- * plus a 1-row /v1/payments/search to confirm extract-read permission.
- *
- * - `userId` should be the OAuth mpUserId when available (sometimes /users/me
- *   itself is forbidden, so we still want to be able to test balance with the
- *   stored id).
- * - The full body of each response is returned so we can inspect whether MP
- *   answers with ForbiddenApiError, Unauthorized, ResourceNotFound, etc.
+ * Probes the identity, payments, and official Account Money Reports endpoints.
+ * We intentionally avoid the legacy balance endpoints because this account gets
+ * 403/404 there even when the token is valid.
  */
-export async function probeMpEndpoints(
-  accessToken: string,
-  userId: string | null,
-): Promise<MpProbeResult[]> {
+export async function probeMpEndpoints(accessToken: string): Promise<MpProbeResult[]> {
   const probes: Array<Promise<MpProbeResult>> = []
 
   probes.push(probe("users_me", `${MP_API}/users/me`, accessToken))
-
-  if (userId) {
-    probes.push(
-      probe("balance_legacy", `${MP_API}/users/${userId}/mercadopago_account/balance`, accessToken),
-    )
-    probes.push(
-      probe("balance_v1", `${MP_API}/v1/users/${userId}/mercadopago_account/balance`, accessToken),
-    )
-  } else {
-    probes.push(
-      Promise.resolve({
-        label: "balance_legacy",
-        url: `${MP_API}/users/{id}/mercadopago_account/balance`,
-        method: "GET" as const,
-        status: null,
-        ok: false,
-        body: "",
-        bodyTruncated: false,
-        contentType: null,
-        error: "userId nao resolvido — pulando probe.",
-        ms: 0,
-      }),
-    )
-    probes.push(
-      Promise.resolve({
-        label: "balance_v1",
-        url: `${MP_API}/v1/users/{id}/mercadopago_account/balance`,
-        method: "GET" as const,
-        status: null,
-        ok: false,
-        body: "",
-        bodyTruncated: false,
-        contentType: null,
-        error: "userId nao resolvido — pulando probe.",
-        ms: 0,
-      }),
-    )
-  }
-
   probes.push(
     probe("payments_search", `${MP_API}/v1/payments/search?limit=1&offset=0`, accessToken),
+  )
+  probes.push(
+    probe("settlement_report_config", `${MP_API}/v1/account/settlement_report/config`, accessToken),
+  )
+  probes.push(
+    probe("settlement_report_list", `${MP_API}/v1/account/settlement_report/list`, accessToken),
+  )
+  probes.push(
+    probe(
+      "settlement_report_search",
+      `${MP_API}/v1/account/settlement_report/search?limit=1&offset=0`,
+      accessToken,
+    ),
   )
 
   return Promise.all(probes)

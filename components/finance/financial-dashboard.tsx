@@ -1593,20 +1593,62 @@ export function FinancialDashboard() {
     setMpLoading(true)
     setMpError(null)
     try {
-      const [balRes, txRes] = await Promise.all([
+      const [balRes, txRes, reportRes] = await Promise.all([
         fetch("/api/mp/balance", { cache: "no-store" }),
         fetch(`/api/mp/transactions?windowDays=${MP_WINDOW_DAYS}&limit=1000`, {
           cache: "no-store",
         }),
+        fetch("/api/mp/reports/latest-summary", { cache: "no-store" }),
       ])
 
       const balJson = await balRes.json()
       const txJson = await txRes.json()
+      const reportJson = await reportRes.json()
+
+      if (reportJson.ok && reportJson.data?.hasReport) {
+        const d = reportJson.data as {
+          balance?: {
+            availableBalance?: number | null
+            unavailableBalance?: number | null
+            totalAmount?: number | null
+            currencyId?: string | null
+          }
+          summary?: {
+            totalCredits?: number
+            totalDebits?: number
+            generatedAt?: string | null
+            transactions?: Array<{
+              id: string
+              date: string
+              description: string
+              amount: number
+              type: "credit" | "debit"
+              status: string
+            }>
+          }
+        }
+        setMpBalanceUnavailable(false)
+        setMpBalance({
+          availableBalance: d.balance?.availableBalance ?? 0,
+          unavailableBalance: d.balance?.unavailableBalance ?? 0,
+          totalAmount: d.balance?.totalAmount ?? d.balance?.availableBalance ?? 0,
+          currencyId: d.balance?.currencyId ?? "BRL",
+        })
+        setMpTransactions(d.summary?.transactions ?? [])
+        setMpTxSummary({
+          totalCredits: d.summary?.totalCredits ?? 0,
+          totalDebits: d.summary?.totalDebits ?? 0,
+          windowSinceIso: d.summary?.generatedAt ?? new Date().toISOString(),
+        })
+        return
+      } else if (!reportJson.ok) {
+        console.error("[mp] report summary error:", reportJson.error)
+      }
 
       if (balJson.ok && balJson.data) {
         const d = balJson.data as {
           balanceUnavailable?: boolean
-          balanceSource?: "official" | "unavailable"
+          balanceSource?: "official" | "reports" | "unavailable"
           availableBalance?: number | null
           unavailableBalance?: number | null
           totalAmount?: number | null
@@ -5331,8 +5373,8 @@ export function FinancialDashboard() {
                           ) : (
                             <div className="space-y-2">
                               <p>
-                                A API do Mercado Pago não retornou saldo. Conecte sua conta para
-                                liberar leitura direta do saldo.
+                                Ainda não há relatório financeiro processado do Mercado Pago para
+                                exibir o caixa oficial aqui.
                               </p>
                               <a
                                 href="/api/mp/connect"
@@ -5506,9 +5548,9 @@ export function FinancialDashboard() {
                         </div>
                         <div className="rounded-lg border border-amber-200/70 bg-amber-50/70 px-3 py-2 text-xs text-amber-900 dark:border-amber-900/60 dark:bg-amber-950/30 dark:text-amber-200">
                           Regra de consistência: receita é pedido ML confirmado; recebível é valor
-                          futuro do Mercado Pago; caixa disponível é apenas saldo real retornado
-                          pela API do Mercado Pago; lucro é receita menos CMV, taxas, frete e
-                          custos. Ajustes manuais não aumentam o saldo disponível.
+                          futuro do Mercado Pago; caixa disponível vem do relatório oficial Account
+                          Money do Mercado Pago; lucro é receita menos CMV, taxas, frete e custos.
+                          Ajustes manuais não aumentam o saldo disponível.
                         </div>
                       </CardContent>
                     </Card>
@@ -7655,9 +7697,9 @@ export function FinancialDashboard() {
                                 Saldo disponivel
                               </p>
                               <p className="mt-1 text-sm text-muted-foreground">
-                                Conecte sua conta do Mercado Pago via OAuth para liberar leitura
-                                direta do saldo e dos lancamentos futuros. Sem API real conectada,
-                                os valores permanecem zerados.
+                                Gere um Account Money Report no Mercado Pago para visualizar o caixa
+                                oficial e os movimentos reais aqui. Sem relatório processado, os
+                                valores permanecem zerados.
                               </p>
                               <a
                                 href="/api/mp/connect"
