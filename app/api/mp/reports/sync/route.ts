@@ -256,15 +256,6 @@ async function syncReports(mp: SyncConnection) {
     return createPendingReport(client, mp)
   }
 
-  const importedRun = await client.query(api.mercadopago.getSuccessfulReportSyncRunByFile, {
-    appUserId: mp.appUserId,
-    fileName,
-  })
-
-  if (importedRun) {
-    return createPendingReport(client, mp)
-  }
-
   return importReportFile(client, mp, fileName, latest.generation_date ?? null)
 }
 

@@ -306,12 +306,18 @@ export function parseSettlementReportCsv(
   const transactions: MpReportMovement[] = rows.map((row, index) => {
     const sourceId = pick(row, ["SOURCE_ID", "source_id", "Id da fonte", "ID da fonte"])
     const transactionDate = pick(row, [
+      "SETTLEMENT_DATE",
+      "settlement_date",
+      "MONEY_RELEASE_DATE",
+      "money_release_date",
+      "Data de liquidacao",
+      "Data de liquidação",
+      "Data de liberacao",
+      "Data de liberação",
       "TRANSACTION_DATE",
       "transaction_date",
       "Data da transacao",
       "Data da transação",
-      "SETTLEMENT_DATE",
-      "settlement_date",
     ])
     const description = pick(row, [
       "DESCRIPTION",

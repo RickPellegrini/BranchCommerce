@@ -132,6 +132,13 @@ export const disconnectConnection = mutation({
 
 const mpMovementTypeValidator = v.union(v.literal("credit"), v.literal("debit"))
 
+function dateToTime(value: string | undefined) {
+  if (!value) return 0
+  const normalized = value.includes("T") ? value : `${value.slice(0, 10)}T00:00:00.000Z`
+  const time = Date.parse(normalized)
+  return Number.isFinite(time) ? time : 0
+}
+
 export const getLedger = query({
   args: {
     appUserId: v.string(),
@@ -148,9 +155,9 @@ export const getLedger = query({
       .withIndex("by_app_user", (queryBuilder) => queryBuilder.eq("appUserId", args.appUserId))
       .collect()
 
-    const anchorDate = anchor?.anchoredAt ?? ""
+    const anchorTime = dateToTime(anchor?.anchoredAt)
     const movementsAfterAnchor = movements.filter((movement) =>
-      anchorDate ? movement.date > anchorDate : true,
+      anchorTime ? dateToTime(movement.date) > anchorTime : true,
     )
     const movementNet = movementsAfterAnchor.reduce(
       (sum, movement) => sum + (movement.type === "credit" ? movement.amount : -movement.amount),
