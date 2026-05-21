@@ -20,8 +20,6 @@ import {
   Copy,
   Home,
   ArrowRight,
-  ArrowDownLeft,
-  ArrowUpRight,
   Banknote,
   LineChart,
   MapPin,
@@ -775,6 +773,7 @@ type SalesEvolutionPoint = {
   key: string
   label: string
   revenue: number
+  costs: number
   profit: number
   orders: number
 }
@@ -818,25 +817,6 @@ type OrdersFinancialSummary = {
   netProfit: number
   ordersCount: number
   soldItems: number
-}
-
-type RealCashOverview = {
-  /** Saldo real do Mercado Pago. null = API nao retornou saldo (sem fallback). */
-  cashAvailable: number | null
-  receivables7d: number
-  payables7d: number
-  entriesPeriod: number
-  exitsPeriod: number
-  netCashPeriod: number
-  accountingProfit: number
-  cashProfitDifference: number
-  marketplaceRevenue: number
-  marketplaceCosts: number
-  marketplaceProfit: number
-  manualIncome: number
-  manualExpenses: number
-  mpCredits: number
-  mpDebits: number
 }
 
 type AbcProductRow = {
@@ -893,7 +873,7 @@ function buildSalesEvolutionData(
   const buckets = new Map<string, SalesEvolutionPoint>(
     bucketKeys.map((key) => [
       key,
-      { key, label: bucketLabel(key, options.period), revenue: 0, profit: 0, orders: 0 },
+      { key, label: bucketLabel(key, options.period), revenue: 0, costs: 0, profit: 0, orders: 0 },
     ]),
   )
 
@@ -903,6 +883,9 @@ function buildSalesEvolutionData(
     if (!bucket) continue
     if (transaction.kind === "income" && transaction.origin === "Venda online") {
       bucket.revenue += transaction.amount
+    }
+    if (transaction.kind === "expense") {
+      bucket.costs += transaction.amount
     }
     bucket.profit += transaction.kind === "income" ? transaction.amount : -transaction.amount
   }
@@ -943,7 +926,7 @@ function buildOrdersSalesEvolutionData(
   const buckets = new Map<string, SalesEvolutionPoint>(
     bucketKeys.map((key) => [
       key,
-      { key, label: bucketLabel(key, options.period), revenue: 0, profit: 0, orders: 0 },
+      { key, label: bucketLabel(key, options.period), revenue: 0, costs: 0, profit: 0, orders: 0 },
     ]),
   )
 
@@ -968,6 +951,7 @@ function buildOrdersSalesEvolutionData(
     const revenue = Math.max(0, order.totalAmount)
 
     bucket.revenue += revenue
+    bucket.costs += totalCosts
     bucket.profit += revenue - totalCosts
     bucket.orders += 1
   }
@@ -1040,14 +1024,6 @@ function daysBetweenInclusive(startDate?: string, endDate?: string) {
   return Math.max(1, diff)
 }
 
-function sourceAllows(source: FinanceSourceFilter, target: Exclude<FinanceSourceFilter, "all">) {
-  return source === "all" || source === target
-}
-
-function typeAllows(type: FinanceTypeFilter, target: "income" | "expense") {
-  return type === "all" || type === target
-}
-
 function transactionIsManualAdjustment(transaction: FinancialTransaction) {
   return transaction.origin !== "Venda online"
 }
@@ -1087,6 +1063,35 @@ function buildTopProductRows({
       }
     })
     .sort((a, b) => b.profit - a.profit)
+}
+
+function dedupeTopProductRows(rows: TopProductRow[]) {
+  const deduped = new Map<string, TopProductRow>()
+  for (const row of rows) {
+    const key = normalizeMercadoLibreItemId(row.mlbId) || row.sku.toLowerCase() || row.productId
+    const current = deduped.get(key)
+    if (!current) {
+      deduped.set(key, row)
+      continue
+    }
+    deduped.set(key, {
+      ...current,
+      quantitySold: current.quantitySold + row.quantitySold,
+      revenue: current.revenue + row.revenue,
+      totalCost: current.totalCost + row.totalCost,
+      profit: current.profit + row.profit,
+      cogs: current.cogs + row.cogs,
+      feesAndShipping: current.feesAndShipping + row.feesAndShipping,
+      velocity: current.velocity + row.velocity,
+      stockCritical: current.stockCritical || row.stockCritical,
+      stockQuantity: Math.max(current.stockQuantity, row.stockQuantity),
+      marginPercent:
+        current.revenue + row.revenue > 0
+          ? ((current.profit + row.profit) / (current.revenue + row.revenue)) * 100
+          : 0,
+    })
+  }
+  return Array.from(deduped.values()).sort((a, b) => b.profit - a.profit)
 }
 
 function buildOrdersCostComposition(
@@ -1510,7 +1515,6 @@ export function FinancialDashboard() {
   const [financeOrdersTitleFilter, setFinanceOrdersTitleFilter] = useState("")
   const [financeOrdersSkuFilter, setFinanceOrdersSkuFilter] = useState("")
   const [financeOrdersStatusFilter, setFinanceOrdersStatusFilter] = useState("all")
-  const [financeOverviewTab, setFinanceOverviewTab] = useState<"sales" | "ranking">("sales")
   const [financeOverviewCompare, setFinanceOverviewCompare] = useState<
     "none" | "prev_month" | "prev_year"
   >("none")
@@ -2592,24 +2596,6 @@ export function FinancialDashboard() {
     () => daysBetweenInclusive(filters.startDate, filters.endDate),
     [filters.endDate, filters.startDate],
   )
-  const manualTransactionsInFilter = useMemo(
-    () => filteredTransactions.filter(transactionIsManualAdjustment),
-    [filteredTransactions],
-  )
-  const manualIncomeInFilter = useMemo(
-    () =>
-      manualTransactionsInFilter
-        .filter((transaction) => transaction.kind === "income")
-        .reduce((total, transaction) => total + transaction.amount, 0),
-    [manualTransactionsInFilter],
-  )
-  const manualExpensesInFilter = useMemo(
-    () =>
-      manualTransactionsInFilter
-        .filter((transaction) => transaction.kind === "expense")
-        .reduce((total, transaction) => total + transaction.amount, 0),
-    [manualTransactionsInFilter],
-  )
   const mpTransactionsInFilter = useMemo(
     () =>
       mpTransactions.filter((transaction) => {
@@ -2620,100 +2606,6 @@ export function FinancialDashboard() {
       }),
     [filters.endDate, filters.startDate, mpTransactions],
   )
-  const mpCreditsInFilter = useMemo(
-    () =>
-      mpTransactionsInFilter
-        .filter((transaction) => transaction.type === "credit")
-        .reduce((total, transaction) => total + transaction.amount, 0),
-    [mpTransactionsInFilter],
-  )
-  const mpDebitsInFilter = useMemo(
-    () =>
-      mpTransactionsInFilter
-        .filter((transaction) => transaction.type === "debit")
-        .reduce((total, transaction) => total + transaction.amount, 0),
-    [mpTransactionsInFilter],
-  )
-  const receivablesNext7d = useMemo(() => {
-    const now = new Date()
-    const todayIso = now.toISOString().slice(0, 10)
-    const end = new Date(now)
-    end.setDate(now.getDate() + 7)
-    const endIso = end.toISOString().slice(0, 10)
-    return mpDayGroups
-      .filter((day) => day.date >= todayIso && day.date <= endIso)
-      .reduce((total, day) => total + day.total, 0)
-  }, [mpDayGroups])
-  const payablesNext7d = useMemo(() => {
-    const now = new Date()
-    const todayIso = now.toISOString().slice(0, 10)
-    const end = new Date(now)
-    end.setDate(now.getDate() + 7)
-    const endIso = end.toISOString().slice(0, 10)
-    return transactions
-      .filter((transaction) => {
-        if (transaction.kind !== "expense") return false
-        if (transaction.payStatus === "paid") return false
-        return transaction.date >= todayIso && transaction.date <= endIso
-      })
-      .reduce((total, transaction) => total + transaction.amount, 0)
-  }, [transactions])
-  const realCashOverview = useMemo<RealCashOverview>(() => {
-    const includeMl = sourceAllows(financeSourceFilter, "mercado_livre")
-    const includeMp = sourceAllows(financeSourceFilter, "mercado_pago")
-    const includeManual = sourceAllows(financeSourceFilter, "manual")
-    const includeIncome = typeAllows(financeTypeFilter, "income")
-    const includeExpense = typeAllows(financeTypeFilter, "expense")
-
-    const marketplaceRevenue = includeMl && includeIncome ? ordersFinancialSummary.grossRevenue : 0
-    const marketplaceCosts = includeMl && includeExpense ? ordersFinancialSummary.totalCosts : 0
-    const manualIncome = includeManual && includeIncome ? manualIncomeInFilter : 0
-    const manualExpenses = includeManual && includeExpense ? manualExpensesInFilter : 0
-    const mpCredits = includeMp && includeIncome ? mpCreditsInFilter : 0
-    const mpDebits = includeMp && includeExpense ? mpDebitsInFilter : 0
-
-    const marketplaceProfit = marketplaceRevenue - marketplaceCosts
-    const entriesPeriod = mpCredits
-    const exitsPeriod = mpDebits
-    const accountingProfit = marketplaceProfit + manualIncome - manualExpenses
-    const netCashPeriod = entriesPeriod - exitsPeriod
-    // Caixa real = saldo real do Mercado Pago. Sem API => null (UI mostra empty state).
-    const cashAvailable =
-      !mpBalanceUnavailable && mpBalance?.availableBalance != null
-        ? mpBalance.availableBalance
-        : null
-
-    return {
-      cashAvailable,
-      receivables7d: includeMp ? receivablesNext7d : 0,
-      payables7d: includeManual ? payablesNext7d : 0,
-      entriesPeriod,
-      exitsPeriod,
-      netCashPeriod,
-      accountingProfit,
-      cashProfitDifference: netCashPeriod - accountingProfit,
-      marketplaceRevenue,
-      marketplaceCosts,
-      marketplaceProfit,
-      manualIncome,
-      manualExpenses,
-      mpCredits,
-      mpDebits,
-    }
-  }, [
-    financeSourceFilter,
-    financeTypeFilter,
-    manualExpensesInFilter,
-    manualIncomeInFilter,
-    mpBalance?.availableBalance,
-    mpBalanceUnavailable,
-    mpCreditsInFilter,
-    mpDebitsInFilter,
-    ordersFinancialSummary.grossRevenue,
-    ordersFinancialSummary.totalCosts,
-    payablesNext7d,
-    receivablesNext7d,
-  ])
   const commerceFlowData = useMemo(() => {
     const buckets = new Map<string, CommerceCashFlowRow>()
     const getBucket = (dateValue: string) => {
@@ -3215,11 +3107,13 @@ export function FinancialDashboard() {
   }, [abcRows, financeOrdersSkuFilter, financeOrdersTitleFilter])
   const topProductRows = useMemo(
     () =>
-      buildTopProductRows({
-        abcRows: abcRowsFiltered,
-        products,
-        rangeDays,
-      }),
+      dedupeTopProductRows(
+        buildTopProductRows({
+          abcRows: abcRowsFiltered,
+          products,
+          rangeDays,
+        }),
+      ),
     [abcRowsFiltered, products, rangeDays],
   )
   const highVelocityThreshold = useMemo(() => {
@@ -5785,115 +5679,75 @@ export function FinancialDashboard() {
                       </div>
                     </div>
 
-                    <div className="grid gap-3 lg:grid-cols-4">
-                      <Card className="border-sky-200/80 bg-sky-50/60 shadow-sm dark:border-sky-800/50 dark:bg-sky-950/30 lg:col-span-2 lg:row-span-2">
-                        <CardHeader className="pb-2">
-                          <CardDescription className="inline-flex items-center gap-1 text-sky-700 dark:text-sky-300">
-                            <Wallet className="size-3.5" />
-                            Caixa disponível hoje
-                          </CardDescription>
-                          <CardTitle className="text-3xl text-sky-800 dark:text-sky-200">
-                            {realCashOverview.cashAvailable !== null
-                              ? formatCurrency(realCashOverview.cashAvailable)
-                              : "—"}
-                          </CardTitle>
-                        </CardHeader>
-                        <CardContent className="space-y-3 text-xs text-muted-foreground">
-                          {realCashOverview.cashAvailable !== null ? (
-                            <p>Saldo operacional disponível na conta Mercado Pago conectada.</p>
-                          ) : (
-                            <div className="space-y-2">
-                              <p>
-                                Ainda não há relatório financeiro processado do Mercado Pago para
-                                exibir o caixa oficial aqui.
-                              </p>
-                              <a
-                                href="/api/mp/connect"
-                                className="inline-flex items-center gap-1 rounded-md bg-sky-600 px-2 py-1 text-[11px] font-medium text-white hover:bg-sky-700 dark:bg-sky-700 dark:hover:bg-sky-600"
-                              >
-                                Conectar Mercado Pago
-                              </a>
-                            </div>
-                          )}
-                          <span
-                            className={cn(
-                              "inline-flex items-center gap-1 rounded-full px-2 py-1 font-medium",
-                              realCashOverview.netCashPeriod >= 0
-                                ? "bg-emerald-500/10 text-emerald-700 dark:text-emerald-300"
-                                : "bg-rose-500/10 text-rose-700 dark:text-rose-300",
-                            )}
-                          >
-                            Caixa líquido no período:{" "}
-                            {formatCurrency(realCashOverview.netCashPeriod)}
-                          </span>
-                        </CardContent>
-                      </Card>
-                      <Card className="border-emerald-200/70 bg-emerald-50/40 dark:border-emerald-800/50 dark:bg-emerald-950/30">
-                        <CardHeader className="pb-2">
-                          <CardDescription className="inline-flex items-center gap-1 text-emerald-700 dark:text-emerald-400">
-                            <ArrowDownLeft className="size-3.5" />A receber 7 dias
-                          </CardDescription>
-                          <CardTitle className="text-emerald-700 dark:text-emerald-400">
-                            {formatCurrency(realCashOverview.receivables7d)}
-                          </CardTitle>
-                        </CardHeader>
-                        <CardContent className="text-xs text-muted-foreground">
-                          Releases Mercado Pago conhecidos
-                        </CardContent>
-                      </Card>
-                      <Card className="border-orange-200/70 bg-orange-50/40 dark:border-orange-800/50 dark:bg-orange-950/30">
-                        <CardHeader className="pb-2">
-                          <CardDescription className="inline-flex items-center gap-1 text-orange-700 dark:text-orange-400">
-                            <ArrowUpRight className="size-3.5" />A pagar 7 dias
-                          </CardDescription>
-                          <CardTitle className="text-orange-700 dark:text-orange-400">
-                            {formatCurrency(realCashOverview.payables7d)}
-                          </CardTitle>
-                        </CardHeader>
-                        <CardContent className="text-xs text-muted-foreground">
-                          Custos manuais pendentes
-                        </CardContent>
-                      </Card>
-                      <Card className="border-emerald-200/70 bg-emerald-50/40 dark:border-emerald-800/50 dark:bg-emerald-950/30">
-                        <CardHeader className="pb-2">
-                          <CardDescription className="inline-flex items-center gap-1 text-emerald-700 dark:text-emerald-400">
-                            <CircleDollarSign className="size-3.5" />
-                            Lucro líquido do mês
-                          </CardDescription>
-                          <CardTitle className={valueToneClass(realCashOverview.accountingProfit)}>
-                            {formatCurrency(realCashOverview.accountingProfit)}
-                          </CardTitle>
-                        </CardHeader>
-                        <CardContent className="text-xs text-muted-foreground">
-                          Resultado por competência, não caixa disponível
-                        </CardContent>
-                      </Card>
+                    <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-6">
                       <Card className="border-violet-200/70 bg-violet-50/40 dark:border-violet-800/50 dark:bg-violet-950/30">
                         <CardHeader className="pb-2">
                           <CardDescription className="inline-flex items-center gap-1 text-violet-700 dark:text-violet-300">
-                            <Percent className="size-3.5" />
-                            Margem líquida
+                            <CircleDollarSign className="size-3.5" />
+                            Lucro
                           </CardDescription>
-                          <CardTitle className={valueToneClass(operatingMarginFinal)}>
-                            {operatingMarginFinal.toFixed(1)}%
+                          <CardTitle className={valueToneClass(operatingResultFinal)}>
+                            {formatCurrency(operatingResultFinal)}
                           </CardTitle>
                         </CardHeader>
                         <CardContent className="text-xs text-muted-foreground">
-                          Sobre vendas confirmadas
+                          Receita menos custos do período
                         </CardContent>
                       </Card>
                       <Card className="border-blue-200/70 bg-blue-50/40 dark:border-blue-800/50 dark:bg-blue-950/30">
                         <CardHeader className="pb-2">
                           <CardDescription className="inline-flex items-center gap-1 text-blue-700 dark:text-blue-300">
                             <ShoppingBag className="size-3.5" />
-                            Vendas confirmadas
+                            Faturamento
                           </CardDescription>
                           <CardTitle className="text-blue-700 dark:text-blue-300">
                             {formatCurrency(salesInFilterFinal)}
                           </CardTitle>
                         </CardHeader>
                         <CardContent className="text-xs text-muted-foreground">
-                          {salesCountFinal} pedidos · {soldItemsFinal} itens
+                          Vendas confirmadas
+                        </CardContent>
+                      </Card>
+                      <Card className="border-orange-200/70 bg-orange-50/40 dark:border-orange-800/50 dark:bg-orange-950/30">
+                        <CardHeader className="pb-2">
+                          <CardDescription className="inline-flex items-center gap-1 text-orange-700 dark:text-orange-400">
+                            <ReceiptText className="size-3.5" />
+                            Custos
+                          </CardDescription>
+                          <CardTitle className="text-orange-700 dark:text-orange-400">
+                            {formatCurrency(expensesInFilterFinal)}
+                          </CardTitle>
+                        </CardHeader>
+                        <CardContent className="text-xs text-muted-foreground">
+                          CMV, taxas, frete e operação
+                        </CardContent>
+                      </Card>
+                      <Card className="border-slate-200/70 bg-slate-50/60 dark:border-slate-800/50 dark:bg-slate-950/30">
+                        <CardHeader className="pb-2">
+                          <CardDescription className="inline-flex items-center gap-1 text-slate-700 dark:text-slate-300">
+                            <ReceiptText className="size-3.5" />
+                            Vendas
+                          </CardDescription>
+                          <CardTitle className="text-slate-800 dark:text-slate-200">
+                            {salesCountFinal}
+                          </CardTitle>
+                        </CardHeader>
+                        <CardContent className="text-xs text-muted-foreground">
+                          {soldItemsFinal} itens vendidos
+                        </CardContent>
+                      </Card>
+                      <Card className="border-emerald-200/70 bg-emerald-50/40 dark:border-emerald-800/50 dark:bg-emerald-950/30">
+                        <CardHeader className="pb-2">
+                          <CardDescription className="inline-flex items-center gap-1 text-emerald-700 dark:text-emerald-400">
+                            <Percent className="size-3.5" />
+                            Margem
+                          </CardDescription>
+                          <CardTitle className={valueToneClass(operatingMarginFinal)}>
+                            {operatingMarginFinal.toFixed(1)}%
+                          </CardTitle>
+                        </CardHeader>
+                        <CardContent className="text-xs text-muted-foreground">
+                          Lucro sobre faturamento
                         </CardContent>
                       </Card>
                       <Card className="border-violet-200/70 bg-violet-50/40 dark:border-violet-800/50 dark:bg-violet-950/30">
@@ -5911,80 +5765,6 @@ export function FinancialDashboard() {
                         </CardContent>
                       </Card>
                     </div>
-
-                    <Card className="border-border/70 bg-muted/10">
-                      <CardHeader className="pb-3">
-                        <CardDescription className="uppercase tracking-wide">
-                          Caixa Real
-                        </CardDescription>
-                        <CardTitle>Caixa não é a mesma coisa que lucro</CardTitle>
-                        <CardDescription>
-                          Vendas confirmadas formam lucro contábil. Releases do Mercado Pago e
-                          ajustes manuais explicam o caixa disponível.
-                        </CardDescription>
-                      </CardHeader>
-                      <CardContent className="space-y-4">
-                        <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-                          <div className="rounded-lg border bg-background p-3">
-                            <p className="text-xs text-muted-foreground">
-                              Entradas de caixa no período
-                            </p>
-                            <p className="mt-1 text-lg font-semibold text-emerald-700 dark:text-emerald-400">
-                              {formatCurrency(realCashOverview.entriesPeriod)}
-                            </p>
-                            <p className="mt-1 text-[11px] text-muted-foreground">
-                              Somente releases Mercado Pago já liberados. Vendas ML ficam em receita
-                              ou recebíveis.
-                            </p>
-                          </div>
-                          <div className="rounded-lg border bg-background p-3">
-                            <p className="text-xs text-muted-foreground">
-                              Saídas de caixa no período
-                            </p>
-                            <p className="mt-1 text-lg font-semibold text-rose-700 dark:text-rose-400">
-                              {formatCurrency(realCashOverview.exitsPeriod)}
-                            </p>
-                            <p className="mt-1 text-[11px] text-muted-foreground">
-                              Débitos/saídas registrados no extrato Mercado Pago.
-                            </p>
-                          </div>
-                          <div className="rounded-lg border bg-background p-3">
-                            <p className="text-xs text-muted-foreground">Saldo líquido de caixa</p>
-                            <p
-                              className={cn(
-                                "mt-1 text-lg font-semibold",
-                                valueToneClass(realCashOverview.netCashPeriod),
-                              )}
-                            >
-                              {formatCurrency(realCashOverview.netCashPeriod)}
-                            </p>
-                            <p className="mt-1 text-[11px] text-muted-foreground">
-                              Não soma receita de vendas; venda entra em recebíveis até liberar.
-                            </p>
-                          </div>
-                          <div className="rounded-lg border bg-background p-3">
-                            <p className="text-xs text-muted-foreground">Diferença caixa x lucro</p>
-                            <p
-                              className={cn(
-                                "mt-1 text-lg font-semibold",
-                                valueToneClass(realCashOverview.cashProfitDifference),
-                              )}
-                            >
-                              {formatCurrency(realCashOverview.cashProfitDifference)}
-                            </p>
-                            <p className="mt-1 text-[11px] text-muted-foreground">
-                              Recebíveis ainda não liberados explicam parte da diferença.
-                            </p>
-                          </div>
-                        </div>
-                        <div className="rounded-lg border border-amber-200/70 bg-amber-50/70 px-3 py-2 text-xs text-amber-900 dark:border-amber-900/60 dark:bg-amber-950/30 dark:text-amber-200">
-                          Regra de consistência: receita é pedido ML confirmado; recebível é valor
-                          futuro do Mercado Pago; caixa disponível vem do relatório oficial Account
-                          Money do Mercado Pago; lucro é receita menos CMV, taxas, frete e custos.
-                          Ajustes manuais não aumentam o saldo disponível.
-                        </div>
-                      </CardContent>
-                    </Card>
 
                     {(financeOverviewCompare !== "none" ||
                       financeOverviewProjection === "month") && (
@@ -6115,7 +5895,7 @@ export function FinancialDashboard() {
                             <CardDescription className="uppercase tracking-wide">
                               Gráfico principal
                             </CardDescription>
-                            <CardTitle>Receita, lucro e pedidos por dia</CardTitle>
+                            <CardTitle>Receita, lucro, pedidos e custos por dia</CardTitle>
                             <CardDescription>
                               Uma única leitura para entender entrada, resultado e volume.
                             </CardDescription>
@@ -6238,197 +6018,114 @@ export function FinancialDashboard() {
                       </CardContent>
                     </Card>
 
-                    <div className="grid grid-cols-2 gap-2">
-                      <Button
-                        type="button"
-                        variant={financeOverviewTab === "sales" ? "secondary" : "outline"}
-                        onClick={() => setFinanceOverviewTab("sales")}
-                      >
-                        Vendas
-                      </Button>
-                      <Button
-                        type="button"
-                        variant={financeOverviewTab === "ranking" ? "secondary" : "outline"}
-                        onClick={() => setFinanceOverviewTab("ranking")}
-                      >
-                        Ranking
-                      </Button>
-                    </div>
-
-                    {financeOverviewTab === "sales" ? (
-                      <Card>
-                        <CardHeader className="flex flex-row items-start justify-between">
-                          <div>
-                            <CardDescription>Detalhamento</CardDescription>
-                            <CardTitle>Vendas Detalhadas</CardTitle>
-                          </div>
-                          <Button size="sm" variant="outline">
-                            Exportar
-                          </Button>
-                        </CardHeader>
-                        <CardContent className="space-y-3">
-                          <Table>
-                            <TableHeader>
+                    <Card>
+                      <CardHeader className="flex flex-row items-start justify-between">
+                        <div>
+                          <CardDescription>Detalhamento</CardDescription>
+                          <CardTitle>Vendas Detalhadas</CardTitle>
+                        </div>
+                        <Button size="sm" variant="outline">
+                          Exportar
+                        </Button>
+                      </CardHeader>
+                      <CardContent className="space-y-3">
+                        <Table>
+                          <TableHeader>
+                            <TableRow>
+                              <TableHead>Pedido</TableHead>
+                              <TableHead>Conta</TableHead>
+                              <TableHead>Data</TableHead>
+                              <TableHead>Status</TableHead>
+                              <TableHead className="text-right">Valor Total</TableHead>
+                              <TableHead className="text-right">Lucro</TableHead>
+                              <TableHead className="text-right">Margem</TableHead>
+                            </TableRow>
+                          </TableHeader>
+                          <TableBody>
+                            {financeDetailedOrders.length === 0 ? (
                               <TableRow>
-                                <TableHead>Pedido</TableHead>
-                                <TableHead>Conta</TableHead>
-                                <TableHead>Data</TableHead>
-                                <TableHead>Status</TableHead>
-                                <TableHead className="text-right">Valor Total</TableHead>
-                                <TableHead className="text-right">Lucro</TableHead>
-                                <TableHead className="text-right">Margem</TableHead>
+                                <TableCell
+                                  colSpan={7}
+                                  className="text-center text-muted-foreground"
+                                >
+                                  Sem vendas no filtro selecionado.
+                                </TableCell>
                               </TableRow>
-                            </TableHeader>
-                            <TableBody>
-                              {financeDetailedOrders.length === 0 ? (
-                                <TableRow>
-                                  <TableCell
-                                    colSpan={7}
-                                    className="text-center text-muted-foreground"
-                                  >
-                                    Sem vendas no filtro selecionado.
-                                  </TableCell>
-                                </TableRow>
-                              ) : (
-                                financeDetailedOrders.slice(0, 10).map((order) => {
-                                  const handleRowClick = () => {
-                                    const fullOrder = mlOrders.find((o) => o.id === order.id)
-                                    if (!fullOrder) return
-                                    const firstItem = fullOrder.items[0]
-                                    const stockProduct = firstItem
-                                      ? findProductByOrderItem({
-                                          id: firstItem.id,
-                                          title: firstItem.title,
-                                          sku: firstItem.sku,
-                                        })
-                                      : undefined
-                                    openOrderCostAnalysis(
-                                      fullOrder,
-                                      stockProduct?.unitCost ?? 0,
-                                      firstItem?.quantity ?? 0,
-                                    )
-                                  }
-                                  return (
-                                    <TableRow
-                                      key={order.id}
-                                      className="cursor-pointer transition-colors hover:bg-muted/50"
-                                      onClick={handleRowClick}
-                                    >
-                                      <TableCell className="font-medium">{order.title}</TableCell>
-                                      <TableCell className="uppercase">
-                                        {financeAccountLabel}
-                                      </TableCell>
-                                      <TableCell>
-                                        {new Date(order.orderDate).toLocaleString("pt-BR")}
-                                      </TableCell>
-                                      <TableCell>
-                                        <Badge className={mlStatusBadgeClass(order.status)}>
-                                          {order.status === "paid" ? "Confirmado" : order.status}
-                                        </Badge>
-                                      </TableCell>
-                                      <TableCell className="text-right font-medium">
-                                        {formatCurrency(order.totalAmount)}
-                                      </TableCell>
-                                      <TableCell
-                                        className={cn(
-                                          "text-right font-semibold",
-                                          valueToneClass(order.profit),
-                                        )}
-                                      >
-                                        <span className="inline-flex items-center gap-1">
-                                          {order.profit >= 0 ? (
-                                            <TrendingUp className="size-3.5" />
-                                          ) : (
-                                            <TrendingDown className="size-3.5" />
-                                          )}
-                                          {formatCurrency(order.profit)}
-                                        </span>
-                                      </TableCell>
-                                      <TableCell
-                                        className={cn(
-                                          "text-right font-semibold",
-                                          valueToneClass(order.margin),
-                                        )}
-                                      >
-                                        {order.margin.toFixed(1)}%
-                                      </TableCell>
-                                    </TableRow>
+                            ) : (
+                              financeDetailedOrders.slice(0, 10).map((order) => {
+                                const handleRowClick = () => {
+                                  const fullOrder = mlOrders.find((o) => o.id === order.id)
+                                  if (!fullOrder) return
+                                  const firstItem = fullOrder.items[0]
+                                  const stockProduct = firstItem
+                                    ? findProductByOrderItem({
+                                        id: firstItem.id,
+                                        title: firstItem.title,
+                                        sku: firstItem.sku,
+                                      })
+                                    : undefined
+                                  openOrderCostAnalysis(
+                                    fullOrder,
+                                    stockProduct?.unitCost ?? 0,
+                                    firstItem?.quantity ?? 0,
                                   )
-                                })
-                              )}
-                            </TableBody>
-                          </Table>
-                          <p className="text-xs text-muted-foreground">
-                            Mostrando 1 a {Math.min(financeDetailedOrders.length, 10)} de{" "}
-                            {financeDetailedOrders.length}
-                          </p>
-                        </CardContent>
-                      </Card>
-                    ) : (
-                      <Card>
-                        <CardHeader>
-                          <CardDescription>Top produtos</CardDescription>
-                          <CardTitle>Ranking por lucro</CardTitle>
-                        </CardHeader>
-                        <CardContent>
-                          {productChampions.length === 0 ? (
-                            <p className="text-sm text-muted-foreground">
-                              Sem vendas registradas no periodo filtrado.
-                            </p>
-                          ) : (
-                            <Table>
-                              <TableHeader>
-                                <TableRow>
-                                  <TableHead>Produto</TableHead>
-                                  <TableHead className="text-right">Unidades</TableHead>
-                                  <TableHead className="text-right">Receita</TableHead>
-                                  <TableHead className="text-right">Lucro</TableHead>
-                                  <TableHead className="text-right">Margem</TableHead>
-                                </TableRow>
-                              </TableHeader>
-                              <TableBody>
-                                {productChampions.map((item) => (
-                                  <TableRow key={item.productId}>
-                                    <TableCell className="max-w-[260px] truncate font-medium">
-                                      {item.productName}
+                                }
+                                return (
+                                  <TableRow
+                                    key={order.id}
+                                    className="cursor-pointer transition-colors hover:bg-muted/50"
+                                    onClick={handleRowClick}
+                                  >
+                                    <TableCell className="font-medium">{order.title}</TableCell>
+                                    <TableCell className="uppercase">
+                                      {financeAccountLabel}
+                                    </TableCell>
+                                    <TableCell>
+                                      {new Date(order.orderDate).toLocaleString("pt-BR")}
+                                    </TableCell>
+                                    <TableCell>
+                                      <Badge className={mlStatusBadgeClass(order.status)}>
+                                        {order.status === "paid" ? "Confirmado" : order.status}
+                                      </Badge>
                                     </TableCell>
                                     <TableCell className="text-right font-medium">
-                                      {item.unitsSold}
-                                    </TableCell>
-                                    <TableCell className="text-right font-medium text-blue-700 dark:text-blue-300">
-                                      {formatCurrency(item.revenue)}
+                                      {formatCurrency(order.totalAmount)}
                                     </TableCell>
                                     <TableCell
                                       className={cn(
                                         "text-right font-semibold",
-                                        valueToneClass(item.profit),
+                                        valueToneClass(order.profit),
                                       )}
                                     >
                                       <span className="inline-flex items-center gap-1">
-                                        {item.profit >= 0 ? (
+                                        {order.profit >= 0 ? (
                                           <TrendingUp className="size-3.5" />
                                         ) : (
                                           <TrendingDown className="size-3.5" />
                                         )}
-                                        {formatCurrency(item.profit)}
+                                        {formatCurrency(order.profit)}
                                       </span>
                                     </TableCell>
                                     <TableCell
                                       className={cn(
                                         "text-right font-semibold",
-                                        valueToneClass(item.marginPercent),
+                                        valueToneClass(order.margin),
                                       )}
                                     >
-                                      {item.marginPercent.toFixed(1)}%
+                                      {order.margin.toFixed(1)}%
                                     </TableCell>
                                   </TableRow>
-                                ))}
-                              </TableBody>
-                            </Table>
-                          )}
-                        </CardContent>
-                      </Card>
-                    )}
+                                )
+                              })
+                            )}
+                          </TableBody>
+                        </Table>
+                        <p className="text-xs text-muted-foreground">
+                          Mostrando 1 a {Math.min(financeDetailedOrders.length, 10)} de{" "}
+                          {financeDetailedOrders.length}
+                        </p>
+                      </CardContent>
+                    </Card>
                   </CardContent>
                 </Card>
               </section>
@@ -10501,6 +10198,8 @@ function FinancialEvolutionChart({ data }: { data: SalesEvolutionPoint[] }) {
   const [showRevenue, setShowRevenue] = useState(true)
   const [showProfit, setShowProfit] = useState(true)
   const [showOrders, setShowOrders] = useState(true)
+  const [showCosts, setShowCosts] = useState(true)
+  const [selectedKey, setSelectedKey] = useState<string | null>(null)
 
   if (data.length === 0) {
     return (
@@ -10517,9 +10216,16 @@ function FinancialEvolutionChart({ data }: { data: SalesEvolutionPoint[] }) {
   const chartWidth = width - paddingLeft - paddingRight
   const chartHeight = height - paddingTop - paddingBottom
 
+  const selectedPoint = data.find((item) => item.key === selectedKey) ?? data[data.length - 1]
   const revenueMax = showRevenue ? Math.max(...data.map((item) => item.revenue), 1) : 1
+  const costsMax = showCosts ? Math.max(...data.map((item) => item.costs), 1) : 1
   const profitMax = showProfit ? Math.max(...data.map((item) => Math.max(0, item.profit)), 1) : 1
-  const moneyMax = Math.max(showRevenue ? revenueMax : 0, showProfit ? profitMax : 0, 1)
+  const moneyMax = Math.max(
+    showRevenue ? revenueMax : 0,
+    showCosts ? costsMax : 0,
+    showProfit ? profitMax : 0,
+    1,
+  )
   const ordersMax = showOrders ? Math.max(...data.map((item) => item.orders), 1) : 1
 
   const xForIndex = (index: number) =>
@@ -10533,10 +10239,12 @@ function FinancialEvolutionChart({ data }: { data: SalesEvolutionPoint[] }) {
     values.map((value, index) => `${xForIndex(index)},${yFn(value)}`).join(" ")
 
   const revenueValues = data.map((item) => item.revenue)
+  const costsValues = data.map((item) => item.costs)
   const profitValues = data.map((item) => item.profit)
   const ordersValues = data.map((item) => item.orders)
 
   const revenuePoints = toPolyline(revenueValues, yForMoney)
+  const costsPoints = toPolyline(costsValues, yForMoney)
   const profitPoints = toPolyline(profitValues, yForMoney)
   const revenueArea = `${paddingLeft},${paddingTop + chartHeight} ${revenuePoints} ${paddingLeft + chartWidth},${paddingTop + chartHeight}`
   const yTicks = [0, 0.25, 0.5, 0.75, 1]
@@ -10579,7 +10287,7 @@ function FinancialEvolutionChart({ data }: { data: SalesEvolutionPoint[] }) {
                   stroke="rgba(148,163,184,0.28)"
                   strokeDasharray="3 3"
                 />
-                {(showRevenue || showProfit) && (
+                {(showRevenue || showCosts || showProfit) && (
                   <text
                     x={paddingLeft - 10}
                     y={y + 4}
@@ -10664,6 +10372,27 @@ function FinancialEvolutionChart({ data }: { data: SalesEvolutionPoint[] }) {
             </>
           )}
 
+          {showCosts && (
+            <>
+              <polyline
+                points={costsPoints}
+                fill="none"
+                stroke="#ea580c"
+                strokeWidth="2.5"
+                strokeDasharray="5 4"
+              />
+              {costsValues.map((value, index) => (
+                <circle
+                  key={`cost-dot-${data[index]?.key ?? index}`}
+                  cx={xForIndex(index)}
+                  cy={yForMoney(value)}
+                  r="2.8"
+                  fill="#ea580c"
+                />
+              ))}
+            </>
+          )}
+
           {xTickIndexes.map((index) => {
             const item = data[index]
             return (
@@ -10679,8 +10408,47 @@ function FinancialEvolutionChart({ data }: { data: SalesEvolutionPoint[] }) {
               </text>
             )
           })}
+
+          {data.map((item, index) => (
+            <rect
+              key={`hit-${item.key}`}
+              x={xForIndex(index) - Math.max(10, barStep / 2)}
+              y={paddingTop}
+              width={Math.max(20, barStep)}
+              height={chartHeight}
+              fill="transparent"
+              className="cursor-pointer"
+              onClick={() => setSelectedKey(item.key)}
+            />
+          ))}
         </svg>
       </div>
+      {selectedPoint && (
+        <div className="grid gap-2 rounded-none border bg-background p-3 text-xs sm:grid-cols-4">
+          <div>
+            <p className="text-muted-foreground">Período</p>
+            <p className="font-medium">{selectedPoint.label}</p>
+          </div>
+          <div>
+            <p className="text-muted-foreground">Receita</p>
+            <p className="font-medium text-blue-700 dark:text-blue-300">
+              {formatCurrency(selectedPoint.revenue)}
+            </p>
+          </div>
+          <div>
+            <p className="text-muted-foreground">Custos</p>
+            <p className="font-medium text-orange-700 dark:text-orange-300">
+              {formatCurrency(selectedPoint.costs)}
+            </p>
+          </div>
+          <div>
+            <p className="text-muted-foreground">Pedidos / lucro</p>
+            <p className={cn("font-medium", valueToneClass(selectedPoint.profit))}>
+              {selectedPoint.orders} · {formatCurrency(selectedPoint.profit)}
+            </p>
+          </div>
+        </div>
+      )}
       <div className="flex flex-wrap items-center gap-3 text-xs">
         <button
           type="button"
@@ -10692,6 +10460,17 @@ function FinancialEvolutionChart({ data }: { data: SalesEvolutionPoint[] }) {
         >
           <span className="h-2 w-2 rounded-full bg-blue-600" />
           Receita
+        </button>
+        <button
+          type="button"
+          onClick={() => setShowCosts((v) => !v)}
+          className={cn(
+            "inline-flex cursor-pointer items-center gap-1 rounded-full border px-2 py-0.5 transition-opacity",
+            !showCosts && "opacity-40",
+          )}
+        >
+          <span className="h-2 w-2 rounded-full bg-orange-600" />
+          Custos
         </button>
         <button
           type="button"
