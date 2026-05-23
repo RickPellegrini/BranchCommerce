@@ -124,6 +124,8 @@ type FinanceSection =
   | "cashflow"
 type FinanceSourceFilter = "all" | "mercado_livre" | "mercado_pago" | "manual"
 type FinanceTypeFilter = "all" | "income" | "expense"
+type HomeInsightKey = "revenue" | "profit" | "margin" | "stock"
+type FinanceInsightKey = "profit" | "revenue" | "costs" | "sales" | "margin" | "ticket"
 type StockSection = "overview" | "products" | "history"
 type MlSection = "catalogo" | "anuncios" | "orders" | "metrics"
 type MlSidebarGroup = "anuncios" | "pedidos" | "metricas"
@@ -823,6 +825,7 @@ type AbcProductRow = {
   productId: string
   productName: string
   sku: string
+  imageUrl?: string
   quantitySold: number
   revenue: number
   totalCost: number
@@ -1146,6 +1149,7 @@ function finalizeAbcRows(
     productId: string
     productName: string
     sku: string
+    imageUrl?: string
     quantitySold: number
     revenue: number
     totalCost: number
@@ -1177,6 +1181,7 @@ function finalizeAbcRows(
       productId: row.productId,
       productName: row.productName,
       sku: row.sku,
+      imageUrl: row.imageUrl,
       quantitySold: row.quantitySold,
       revenue: row.revenue,
       totalCost: row.totalCost,
@@ -1203,6 +1208,7 @@ function buildAbcRowsFromOrders(
       productId: string
       productName: string
       sku: string
+      imageUrl?: string
       quantitySold: number
       revenue: number
       totalCost: number
@@ -1245,6 +1251,7 @@ function buildAbcRowsFromOrders(
         productId: key,
         productName: item.title || mappedProduct?.name || "Produto",
         sku: item.sku || mappedProduct?.sku || "",
+        imageUrl: mappedProduct?.imageUrl,
         quantitySold: 0,
         revenue: 0,
         totalCost: 0,
@@ -1254,6 +1261,9 @@ function buildAbcRowsFromOrders(
       current.revenue += revenue
       current.totalCost += totalCost
       current.profit += profit
+      if (!current.imageUrl && mappedProduct?.imageUrl) {
+        current.imageUrl = mappedProduct.imageUrl
+      }
       grouped.set(key, current)
     }
   }
@@ -1345,6 +1355,10 @@ export function FinancialDashboard() {
   const userId = user?.id
 
   const [activeModule, setActiveModule] = useState<ModuleKey>("home")
+  const [activeHomeInsight, setActiveHomeInsight] = useState<HomeInsightKey>("revenue")
+  const [homeInsightModalOpen, setHomeInsightModalOpen] = useState(false)
+  const [activeFinanceInsight, setActiveFinanceInsight] = useState<FinanceInsightKey>("costs")
+  const [financeInsightModalOpen, setFinanceInsightModalOpen] = useState(false)
   const [activeFinanceSection, setActiveFinanceSection] = useState<FinanceSection>("overview")
   const [activeStockSection, setActiveStockSection] = useState<StockSection>("overview")
   const [activeMlSection, setActiveMlSection] = useState<MlSection>("catalogo")
@@ -2785,7 +2799,214 @@ export function FinancialDashboard() {
     }
     return "Periodo atual"
   }, [filters.endDate, filters.startDate])
+  const homeInsightRows = useMemo(() => {
+    const stockValueInProducts = products.reduce(
+      (total, item) => total + item.quantity * item.unitCost,
+      0,
+    )
+    const stockValueInKanban = stockKanbanCards.reduce((total, card) => {
+      const product = productMap.get(card.productId)
+      return total + card.quantity * (product?.unitCost ?? 0)
+    }, 0)
 
+    const rowsByInsight: Record<
+      HomeInsightKey,
+      {
+        title: string
+        description: string
+        rows: { label: string; value: number; tone?: "income" | "expense" | "neutral" }[]
+      }
+    > = {
+      revenue: {
+        title: "Origem da receita",
+        description: `${salesCountFinal} pedido(s) no periodo · ticket medio ${formatCurrency(ticketMedioFinal)}`,
+        rows: hasOrdersFinancialData
+          ? [
+              {
+                label: "Pedidos Mercado Livre",
+                value: ordersFinancialSummary.grossRevenue,
+                tone: "income",
+              },
+              { label: "Entradas manuais", value: summary.income, tone: "income" },
+            ]
+          : [
+              { label: "Vendas online", value: salesInFilter, tone: "income" },
+              {
+                label: "Outras entradas manuais",
+                value: Math.max(0, summary.income - salesInFilter),
+                tone: "income",
+              },
+            ],
+      },
+      profit: {
+        title: "Formacao do lucro liquido",
+        description: `Receita menos custos no periodo ${homePeriodLabel}`,
+        rows: [
+          { label: "Receita", value: salesInFilterFinal, tone: "income" },
+          { label: "Custos totais", value: homeExpenses, tone: "expense" },
+          { label: "Lucro liquido", value: homeNetProfit, tone: "neutral" },
+        ],
+      },
+      margin: {
+        title: "Pressao na margem",
+        description: `Margem atual ${homeMarginFinal.toFixed(1)}% sobre a receita`,
+        rows: [
+          { label: "Lucro liquido", value: homeNetProfit, tone: "income" },
+          ...costComposition.slice(0, 5).map((row) => ({
+            label: row.categoryName,
+            value: row.total,
+            tone: "expense" as const,
+          })),
+        ],
+      },
+      stock: {
+        title: "Composicao do estoque",
+        description: `${stockSummary.totalProducts} produto(s) · ${stockSummary.totalUnits} unidade(s)`,
+        rows: [
+          { label: "Produtos em estoque", value: stockValueInProducts, tone: "neutral" },
+          { label: "Cards em transito/kanban", value: stockValueInKanban, tone: "neutral" },
+          {
+            label: "Produtos abaixo do minimo",
+            value: stockSummary.lowStockCount,
+            tone: "expense",
+          },
+        ],
+      },
+    }
+
+    return rowsByInsight[activeHomeInsight]
+  }, [
+    activeHomeInsight,
+    costComposition,
+    hasOrdersFinancialData,
+    homeExpenses,
+    homeMarginFinal,
+    homeNetProfit,
+    homePeriodLabel,
+    ordersFinancialSummary.grossRevenue,
+    productMap,
+    products,
+    salesCountFinal,
+    salesInFilter,
+    salesInFilterFinal,
+    stockKanbanCards,
+    stockSummary.lowStockCount,
+    stockSummary.totalProducts,
+    stockSummary.totalUnits,
+    summary.income,
+    ticketMedioFinal,
+  ])
+  const openHomeInsight = useCallback((insight: HomeInsightKey) => {
+    setActiveHomeInsight(insight)
+    setHomeInsightModalOpen(true)
+  }, [])
+  const financeInsightRows = useMemo(() => {
+    const rowsByInsight: Record<
+      FinanceInsightKey,
+      {
+        title: string
+        description: string
+        rows: { label: string; value: number; tone?: "income" | "expense" | "neutral" }[]
+      }
+    > = {
+      profit: {
+        title: "Formacao do lucro",
+        description: `Resultado no periodo ${homePeriodLabel}`,
+        rows: [
+          { label: "Faturamento", value: salesInFilterFinal, tone: "income" },
+          { label: "Custos", value: expensesInFilterFinal, tone: "expense" },
+          { label: "Lucro", value: operatingResultFinal, tone: "neutral" },
+        ],
+      },
+      revenue: {
+        title: "Origem do faturamento",
+        description: `${salesCountFinal} venda(s) confirmada(s) no filtro`,
+        rows: hasOrdersFinancialData
+          ? [
+              {
+                label: "Pedidos Mercado Livre",
+                value: ordersFinancialSummary.grossRevenue,
+                tone: "income",
+              },
+              { label: "Entradas manuais", value: summary.income, tone: "income" },
+            ]
+          : [
+              { label: "Vendas online", value: salesInFilter, tone: "income" },
+              {
+                label: "Outras entradas",
+                value: Math.max(0, summary.income - salesInFilter),
+                tone: "income",
+              },
+            ],
+      },
+      costs: {
+        title: "Composicao dos custos",
+        description: `Total no periodo: ${formatCurrency(expensesInFilterFinal)}`,
+        rows:
+          costComposition.length > 0
+            ? costComposition.map((row) => ({
+                label: row.categoryName,
+                value: row.total,
+                tone: "expense" as const,
+              }))
+            : [
+                { label: "Operacional", value: costBreakdown.operationalCost, tone: "expense" },
+                { label: "Fixos", value: costBreakdown.fixedCost, tone: "expense" },
+                { label: "Ferramentas", value: costBreakdown.toolsFixedCost, tone: "expense" },
+              ],
+      },
+      sales: {
+        title: "Volume de vendas",
+        description: `${soldItemsFinal} item(ns) vendido(s)`,
+        rows: [
+          { label: "Vendas", value: salesCountFinal, tone: "neutral" },
+          { label: "Itens vendidos", value: soldItemsFinal, tone: "neutral" },
+        ],
+      },
+      margin: {
+        title: "Margem do periodo",
+        description: `${operatingMarginFinal.toFixed(1)}% de lucro sobre faturamento`,
+        rows: [
+          { label: "Lucro", value: operatingResultFinal, tone: "income" },
+          { label: "Custos", value: expensesInFilterFinal, tone: "expense" },
+          { label: "Faturamento", value: salesInFilterFinal, tone: "neutral" },
+        ],
+      },
+      ticket: {
+        title: "Ticket medio",
+        description: `${salesCountFinal} venda(s) consideradas no calculo`,
+        rows: [
+          { label: "Faturamento", value: salesInFilterFinal, tone: "income" },
+          { label: "Vendas", value: salesCountFinal, tone: "neutral" },
+          { label: "Ticket medio", value: ticketMedioFinal, tone: "neutral" },
+        ],
+      },
+    }
+
+    return rowsByInsight[activeFinanceInsight]
+  }, [
+    activeFinanceInsight,
+    costBreakdown.fixedCost,
+    costBreakdown.operationalCost,
+    costBreakdown.toolsFixedCost,
+    costComposition,
+    expensesInFilterFinal,
+    hasOrdersFinancialData,
+    homePeriodLabel,
+    operatingMarginFinal,
+    operatingResultFinal,
+    ordersFinancialSummary.grossRevenue,
+    salesCountFinal,
+    salesInFilter,
+    salesInFilterFinal,
+    soldItemsFinal,
+    summary.income,
+    ticketMedioFinal,
+  ])
+  const openFinanceInsight = useCallback((insight: FinanceInsightKey) => {
+    setActiveFinanceInsight(insight)
+    setFinanceInsightModalOpen(true)
+  }, [])
   const homeCurrentMonthOrders = useMemo(() => {
     const d = new Date()
     const { start, end } = monthDateRange(d.getFullYear(), d.getMonth() + 1)
@@ -2842,6 +3063,7 @@ export function FinancialDashboard() {
         .map((r) => ({
           productId: r.productId,
           productName: r.productName,
+          imageUrl: r.imageUrl,
           unitsSold: r.quantitySold,
           revenue: r.revenue,
           profit: r.profit,
@@ -4934,7 +5156,19 @@ export function FinancialDashboard() {
             </div>
 
             <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-              <Card className="border-border/70 shadow-sm transition-shadow hover:shadow-md">
+              <Card
+                role="button"
+                tabIndex={0}
+                onClick={() => openHomeInsight("revenue")}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter" || event.key === " ") openHomeInsight("revenue")
+                }}
+                className={cn(
+                  "cursor-pointer border-border/70 shadow-sm transition hover:border-emerald-500/50 hover:shadow-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+                  activeHomeInsight === "revenue" &&
+                    "border-emerald-500/60 ring-1 ring-emerald-500/25",
+                )}
+              >
                 <CardContent className="pt-6">
                   <div className="flex items-start justify-between gap-2">
                     <div className="rounded-lg bg-emerald-500/10 p-2 text-emerald-700 dark:text-emerald-400">
@@ -4952,7 +5186,18 @@ export function FinancialDashboard() {
                   </p>
                 </CardContent>
               </Card>
-              <Card className="border-border/70 shadow-sm transition-shadow hover:shadow-md">
+              <Card
+                role="button"
+                tabIndex={0}
+                onClick={() => openHomeInsight("profit")}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter" || event.key === " ") openHomeInsight("profit")
+                }}
+                className={cn(
+                  "cursor-pointer border-border/70 shadow-sm transition hover:border-primary/50 hover:shadow-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+                  activeHomeInsight === "profit" && "border-primary/60 ring-1 ring-primary/25",
+                )}
+              >
                 <CardContent className="pt-6">
                   <div className="flex items-start justify-between gap-2">
                     <div
@@ -4984,7 +5229,19 @@ export function FinancialDashboard() {
                   </p>
                 </CardContent>
               </Card>
-              <Card className="border-border/70 shadow-sm transition-shadow hover:shadow-md">
+              <Card
+                role="button"
+                tabIndex={0}
+                onClick={() => openHomeInsight("margin")}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter" || event.key === " ") openHomeInsight("margin")
+                }}
+                className={cn(
+                  "cursor-pointer border-border/70 shadow-sm transition hover:border-orange-500/50 hover:shadow-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+                  activeHomeInsight === "margin" &&
+                    "border-orange-500/60 ring-1 ring-orange-500/25",
+                )}
+              >
                 <CardContent className="pt-6">
                   <div className="flex items-start justify-between gap-2">
                     <div className="rounded-lg bg-orange-500/10 p-2 text-orange-700 dark:text-orange-400">
@@ -5007,7 +5264,18 @@ export function FinancialDashboard() {
                   </p>
                 </CardContent>
               </Card>
-              <Card className="border-border/70 shadow-sm transition-shadow hover:shadow-md">
+              <Card
+                role="button"
+                tabIndex={0}
+                onClick={() => openHomeInsight("stock")}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter" || event.key === " ") openHomeInsight("stock")
+                }}
+                className={cn(
+                  "cursor-pointer border-border/70 shadow-sm transition hover:border-violet-500/50 hover:shadow-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+                  activeHomeInsight === "stock" && "border-violet-500/60 ring-1 ring-violet-500/25",
+                )}
+              >
                 <CardContent className="pt-6">
                   <div className="flex items-start justify-between gap-2">
                     <div className="rounded-lg bg-violet-500/10 p-2 text-violet-700 dark:text-violet-300">
@@ -5026,6 +5294,71 @@ export function FinancialDashboard() {
                 </CardContent>
               </Card>
             </div>
+
+            <Dialog.Root open={homeInsightModalOpen} onOpenChange={setHomeInsightModalOpen}>
+              <Dialog.Portal>
+                <Dialog.Overlay className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm" />
+                <Dialog.Content className="fixed left-1/2 top-1/2 z-50 max-h-[min(90vh,34rem)] w-[calc(100vw-2rem)] max-w-xl -translate-x-1/2 -translate-y-1/2 overflow-y-auto rounded-2xl border border-border bg-card p-6 shadow-xl">
+                  <div className="flex items-start justify-between gap-4">
+                    <div>
+                      <Dialog.Title className="text-base font-semibold">
+                        {homeInsightRows.title}
+                      </Dialog.Title>
+                      <Dialog.Description className="mt-1 text-sm text-muted-foreground">
+                        {homeInsightRows.description}
+                      </Dialog.Description>
+                    </div>
+                    <Dialog.Close asChild>
+                      <Button variant="ghost" size="icon-sm" aria-label="Fechar detalhes">
+                        <X className="size-4" />
+                      </Button>
+                    </Dialog.Close>
+                  </div>
+                  <div className="mt-5 space-y-4">
+                    {homeInsightRows.rows.map((row) => {
+                      const maxValue = Math.max(
+                        ...homeInsightRows.rows.map((item) => Math.abs(item.value)),
+                        1,
+                      )
+                      const width = Math.min(100, (Math.abs(row.value) / maxValue) * 100)
+                      return (
+                        <div key={row.label} className="space-y-1.5">
+                          <div className="flex items-center justify-between gap-3 text-sm">
+                            <span className="min-w-0 truncate text-muted-foreground">
+                              {row.label}
+                            </span>
+                            <span
+                              className={cn(
+                                "shrink-0 font-medium tabular-nums",
+                                row.tone === "income" && "text-emerald-700 dark:text-emerald-400",
+                                row.tone === "expense" && "text-orange-700 dark:text-orange-400",
+                              )}
+                            >
+                              {activeHomeInsight === "stock" && row.label.includes("abaixo")
+                                ? Math.trunc(row.value)
+                                : formatCurrency(row.value)}
+                            </span>
+                          </div>
+                          <div className="h-2 overflow-hidden rounded-full bg-muted">
+                            <div
+                              className={cn(
+                                "h-full rounded-full",
+                                row.tone === "income"
+                                  ? "bg-emerald-500"
+                                  : row.tone === "expense"
+                                    ? "bg-orange-500"
+                                    : "bg-sky-500",
+                              )}
+                              style={{ width: `${width}%` }}
+                            />
+                          </div>
+                        </div>
+                      )
+                    })}
+                  </div>
+                </Dialog.Content>
+              </Dialog.Portal>
+            </Dialog.Root>
 
             <div className="grid gap-4 lg:grid-cols-3">
               <Card className="border-border/70 shadow-sm lg:col-span-2">
@@ -5312,32 +5645,49 @@ export function FinancialDashboard() {
                   </p>
                 ) : (
                   <ul className="divide-y divide-border/60">
-                    {homeProductChampions.map((item, index) => (
-                      <li
-                        key={item.productId}
-                        className="flex flex-wrap items-center justify-between gap-3 py-3 first:pt-0"
-                      >
-                        <div className="flex min-w-0 flex-1 items-center gap-3">
-                          <span className="flex size-8 shrink-0 items-center justify-center rounded-full bg-amber-500/15 text-xs font-bold text-amber-800 dark:text-amber-200">
-                            {index + 1}
-                          </span>
-                          <div className="min-w-0">
-                            <p className="truncate font-medium">{item.productName}</p>
+                    {homeProductChampions.map((item, index) => {
+                      const itemImageUrl = "imageUrl" in item ? item.imageUrl : undefined
+                      return (
+                        <li
+                          key={item.productId}
+                          className="flex flex-wrap items-center justify-between gap-3 py-3 first:pt-0"
+                        >
+                          <div className="flex min-w-0 flex-1 items-center gap-3">
+                            <span className="flex size-8 shrink-0 items-center justify-center rounded-full bg-amber-500/15 text-xs font-bold text-amber-800 dark:text-amber-200">
+                              {index + 1}
+                            </span>
+                            <div className="size-9 shrink-0 overflow-hidden rounded-full border bg-muted">
+                              {itemImageUrl ? (
+                                <img
+                                  src={itemImageUrl}
+                                  alt={item.productName}
+                                  className="h-full w-full object-cover"
+                                  loading="lazy"
+                                />
+                              ) : (
+                                <div className="flex h-full w-full items-center justify-center text-[10px] text-muted-foreground">
+                                  —
+                                </div>
+                              )}
+                            </div>
+                            <div className="min-w-0">
+                              <p className="truncate font-medium">{item.productName}</p>
+                              <p className="text-xs text-muted-foreground">
+                                {item.unitsSold} un. · margem {item.marginPercent.toFixed(1)}%
+                              </p>
+                            </div>
+                          </div>
+                          <div className="text-right tabular-nums">
+                            <p className={cn("font-semibold", valueToneClass(item.profit))}>
+                              {formatCurrency(item.profit)}
+                            </p>
                             <p className="text-xs text-muted-foreground">
-                              {item.unitsSold} un. · margem {item.marginPercent.toFixed(1)}%
+                              rec. {formatCurrency(item.revenue)}
                             </p>
                           </div>
-                        </div>
-                        <div className="text-right tabular-nums">
-                          <p className={cn("font-semibold", valueToneClass(item.profit))}>
-                            {formatCurrency(item.profit)}
-                          </p>
-                          <p className="text-xs text-muted-foreground">
-                            rec. {formatCurrency(item.revenue)}
-                          </p>
-                        </div>
-                      </li>
-                    ))}
+                        </li>
+                      )
+                    })}
                   </ul>
                 )}
               </CardContent>
@@ -5680,7 +6030,19 @@ export function FinancialDashboard() {
                     </div>
 
                     <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-6">
-                      <Card className="border-violet-200/70 bg-violet-50/40 dark:border-violet-800/50 dark:bg-violet-950/30">
+                      <Card
+                        role="button"
+                        tabIndex={0}
+                        onClick={() => openFinanceInsight("profit")}
+                        onKeyDown={(event) => {
+                          if (event.key === "Enter" || event.key === " ")
+                            openFinanceInsight("profit")
+                        }}
+                        className={cn(
+                          "cursor-pointer border-violet-200/70 bg-violet-50/40 transition hover:shadow-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring dark:border-violet-800/50 dark:bg-violet-950/30",
+                          activeFinanceInsight === "profit" && "ring-2 ring-violet-500/30",
+                        )}
+                      >
                         <CardHeader className="pb-2">
                           <CardDescription className="inline-flex items-center gap-1 text-violet-700 dark:text-violet-300">
                             <CircleDollarSign className="size-3.5" />
@@ -5694,7 +6056,19 @@ export function FinancialDashboard() {
                           Receita menos custos do período
                         </CardContent>
                       </Card>
-                      <Card className="border-blue-200/70 bg-blue-50/40 dark:border-blue-800/50 dark:bg-blue-950/30">
+                      <Card
+                        role="button"
+                        tabIndex={0}
+                        onClick={() => openFinanceInsight("revenue")}
+                        onKeyDown={(event) => {
+                          if (event.key === "Enter" || event.key === " ")
+                            openFinanceInsight("revenue")
+                        }}
+                        className={cn(
+                          "cursor-pointer border-blue-200/70 bg-blue-50/40 transition hover:shadow-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring dark:border-blue-800/50 dark:bg-blue-950/30",
+                          activeFinanceInsight === "revenue" && "ring-2 ring-blue-500/30",
+                        )}
+                      >
                         <CardHeader className="pb-2">
                           <CardDescription className="inline-flex items-center gap-1 text-blue-700 dark:text-blue-300">
                             <ShoppingBag className="size-3.5" />
@@ -5708,7 +6082,19 @@ export function FinancialDashboard() {
                           Vendas confirmadas
                         </CardContent>
                       </Card>
-                      <Card className="border-orange-200/70 bg-orange-50/40 dark:border-orange-800/50 dark:bg-orange-950/30">
+                      <Card
+                        role="button"
+                        tabIndex={0}
+                        onClick={() => openFinanceInsight("costs")}
+                        onKeyDown={(event) => {
+                          if (event.key === "Enter" || event.key === " ")
+                            openFinanceInsight("costs")
+                        }}
+                        className={cn(
+                          "cursor-pointer border-orange-200/70 bg-orange-50/40 transition hover:shadow-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring dark:border-orange-800/50 dark:bg-orange-950/30",
+                          activeFinanceInsight === "costs" && "ring-2 ring-orange-500/30",
+                        )}
+                      >
                         <CardHeader className="pb-2">
                           <CardDescription className="inline-flex items-center gap-1 text-orange-700 dark:text-orange-400">
                             <ReceiptText className="size-3.5" />
@@ -5722,7 +6108,19 @@ export function FinancialDashboard() {
                           CMV, taxas, frete e operação
                         </CardContent>
                       </Card>
-                      <Card className="border-slate-200/70 bg-slate-50/60 dark:border-slate-800/50 dark:bg-slate-950/30">
+                      <Card
+                        role="button"
+                        tabIndex={0}
+                        onClick={() => openFinanceInsight("sales")}
+                        onKeyDown={(event) => {
+                          if (event.key === "Enter" || event.key === " ")
+                            openFinanceInsight("sales")
+                        }}
+                        className={cn(
+                          "cursor-pointer border-slate-200/70 bg-slate-50/60 transition hover:shadow-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring dark:border-slate-800/50 dark:bg-slate-950/30",
+                          activeFinanceInsight === "sales" && "ring-2 ring-slate-500/30",
+                        )}
+                      >
                         <CardHeader className="pb-2">
                           <CardDescription className="inline-flex items-center gap-1 text-slate-700 dark:text-slate-300">
                             <ReceiptText className="size-3.5" />
@@ -5736,7 +6134,19 @@ export function FinancialDashboard() {
                           {soldItemsFinal} itens vendidos
                         </CardContent>
                       </Card>
-                      <Card className="border-emerald-200/70 bg-emerald-50/40 dark:border-emerald-800/50 dark:bg-emerald-950/30">
+                      <Card
+                        role="button"
+                        tabIndex={0}
+                        onClick={() => openFinanceInsight("margin")}
+                        onKeyDown={(event) => {
+                          if (event.key === "Enter" || event.key === " ")
+                            openFinanceInsight("margin")
+                        }}
+                        className={cn(
+                          "cursor-pointer border-emerald-200/70 bg-emerald-50/40 transition hover:shadow-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring dark:border-emerald-800/50 dark:bg-emerald-950/30",
+                          activeFinanceInsight === "margin" && "ring-2 ring-emerald-500/30",
+                        )}
+                      >
                         <CardHeader className="pb-2">
                           <CardDescription className="inline-flex items-center gap-1 text-emerald-700 dark:text-emerald-400">
                             <Percent className="size-3.5" />
@@ -5750,7 +6160,19 @@ export function FinancialDashboard() {
                           Lucro sobre faturamento
                         </CardContent>
                       </Card>
-                      <Card className="border-violet-200/70 bg-violet-50/40 dark:border-violet-800/50 dark:bg-violet-950/30">
+                      <Card
+                        role="button"
+                        tabIndex={0}
+                        onClick={() => openFinanceInsight("ticket")}
+                        onKeyDown={(event) => {
+                          if (event.key === "Enter" || event.key === " ")
+                            openFinanceInsight("ticket")
+                        }}
+                        className={cn(
+                          "cursor-pointer border-violet-200/70 bg-violet-50/40 transition hover:shadow-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring dark:border-violet-800/50 dark:bg-violet-950/30",
+                          activeFinanceInsight === "ticket" && "ring-2 ring-violet-500/30",
+                        )}
+                      >
                         <CardHeader className="pb-2">
                           <CardDescription className="inline-flex items-center gap-1 text-violet-700 dark:text-violet-300">
                             <CreditCard className="size-3.5" />
@@ -5765,6 +6187,40 @@ export function FinancialDashboard() {
                         </CardContent>
                       </Card>
                     </div>
+
+                    <Dialog.Root
+                      open={financeInsightModalOpen}
+                      onOpenChange={setFinanceInsightModalOpen}
+                    >
+                      <Dialog.Portal>
+                        <Dialog.Overlay className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm" />
+                        <Dialog.Content className="fixed left-1/2 top-1/2 z-50 max-h-[min(90vh,34rem)] w-[calc(100vw-2rem)] max-w-xl -translate-x-1/2 -translate-y-1/2 overflow-y-auto rounded-2xl border border-border bg-card p-6 shadow-xl">
+                          <div className="flex items-start justify-between gap-4">
+                            <div>
+                              <Dialog.Title className="text-base font-semibold">
+                                {financeInsightRows.title}
+                              </Dialog.Title>
+                              <Dialog.Description className="mt-1 text-sm text-muted-foreground">
+                                {financeInsightRows.description}
+                              </Dialog.Description>
+                            </div>
+                            <Dialog.Close asChild>
+                              <Button variant="ghost" size="icon-sm" aria-label="Fechar detalhes">
+                                <X className="size-4" />
+                              </Button>
+                            </Dialog.Close>
+                          </div>
+                          <MetricInsightPanel
+                            className="mt-5 border-0 p-0 shadow-none ring-0"
+                            title={financeInsightRows.title}
+                            description={financeInsightRows.description}
+                            rows={financeInsightRows.rows}
+                            numberLabels={["Vendas", "Itens vendidos"]}
+                            showHeader={false}
+                          />
+                        </Dialog.Content>
+                      </Dialog.Portal>
+                    </Dialog.Root>
 
                     {(financeOverviewCompare !== "none" ||
                       financeOverviewProjection === "month") && (
@@ -6311,11 +6767,29 @@ export function FinancialDashboard() {
                                 <TableRow key={row.productId}>
                                   <TableCell>{index + 1}</TableCell>
                                   <TableCell>
-                                    <div className="flex flex-col">
-                                      <span className="font-medium">{row.productName}</span>
-                                      <span className="text-xs text-muted-foreground">
-                                        {row.sku || "-"}
-                                      </span>
+                                    <div className="flex items-center gap-2">
+                                      <div className="size-9 shrink-0 overflow-hidden rounded-full border bg-muted">
+                                        {row.imageUrl ? (
+                                          <img
+                                            src={row.imageUrl}
+                                            alt={row.productName}
+                                            className="h-full w-full object-cover"
+                                            loading="lazy"
+                                          />
+                                        ) : (
+                                          <div className="flex h-full w-full items-center justify-center text-[10px] text-muted-foreground">
+                                            —
+                                          </div>
+                                        )}
+                                      </div>
+                                      <div className="flex min-w-0 flex-col">
+                                        <span className="truncate font-medium">
+                                          {row.productName}
+                                        </span>
+                                        <span className="text-xs text-muted-foreground">
+                                          {row.sku || "-"}
+                                        </span>
+                                      </div>
                                     </div>
                                   </TableCell>
                                   <TableCell className="text-right">{row.quantitySold}</TableCell>
@@ -10517,7 +10991,7 @@ function AbcParetoChart({ rows }: { rows: AbcProductRow[] }) {
 
   return (
     <div className="space-y-3">
-      <div className="h-[260px] rounded-none border border-border bg-muted/10 p-2">
+      <div className="relative h-[260px] rounded-none border border-border bg-muted/10 p-2">
         <svg viewBox={`0 0 ${width} ${height}`} className="h-full w-full">
           {[0, 25, 50, 75, 100].map((level) => {
             const y = paddingY + ((100 - level) / 100) * chartHeight
@@ -10573,6 +11047,30 @@ function AbcParetoChart({ rows }: { rows: AbcProductRow[] }) {
             return <circle key={`${row.productId}-dot`} cx={x} cy={y} r="2.8" fill="#7c3aed" />
           })}
         </svg>
+        {rows.map((row, index) => {
+          if (!row.imageUrl) return null
+          const x = paddingX + index * (barWidth + barGap) + barWidth / 2
+          const barHeight = (row.metricValue / maxValue) * chartHeight
+          const y = paddingY + chartHeight - barHeight
+          return (
+            <div
+              key={`${row.productId}-image`}
+              className="absolute size-7 -translate-x-1/2 -translate-y-1/2 overflow-hidden rounded-full border-2 border-background bg-muted shadow-sm"
+              style={{
+                left: `${(x / width) * 100}%`,
+                top: `${(Math.max(20, y - 10) / height) * 100}%`,
+              }}
+              title={row.productName}
+            >
+              <img
+                src={row.imageUrl}
+                alt={row.productName}
+                className="h-full w-full object-cover"
+                loading="lazy"
+              />
+            </div>
+          )
+        })}
       </div>
       <div className="flex flex-wrap items-center gap-3 text-xs">
         <span className="inline-flex items-center gap-1">
@@ -10607,45 +11105,73 @@ function BrDateInput({
   ariaLabel?: string
 }) {
   const [displayValue, setDisplayValue] = useState(formatIsoToBrDate(value))
+  const nativeDateInputRef = useRef<HTMLInputElement>(null)
 
   useEffect(() => {
     setDisplayValue(formatIsoToBrDate(value))
   }, [value])
 
   return (
-    <Input
-      type="text"
-      inputMode="numeric"
-      placeholder="dd/mm/aaaa"
-      className={className}
-      aria-label={ariaLabel}
-      value={displayValue}
-      onChange={(event) => {
-        const nextDisplay = normalizeBrDateInput(event.target.value)
-        setDisplayValue(nextDisplay)
-        if (!nextDisplay) {
-          onValueChange("")
-          return
-        }
-        const parsed = parseBrDateToIso(nextDisplay)
-        if (parsed) {
-          onValueChange(parsed)
-        }
-      }}
-      onBlur={() => {
-        if (!displayValue) {
-          onValueChange("")
-          return
-        }
-        const parsed = parseBrDateToIso(displayValue)
-        if (parsed) {
-          setDisplayValue(formatIsoToBrDate(parsed))
-          onValueChange(parsed)
-          return
-        }
-        setDisplayValue(formatIsoToBrDate(value))
-      }}
-    />
+    <div className={cn("relative min-w-0", className)}>
+      <Input
+        type="text"
+        inputMode="numeric"
+        placeholder="dd/mm/aaaa"
+        className="pr-8"
+        aria-label={ariaLabel}
+        value={displayValue}
+        onChange={(event) => {
+          const nextDisplay = normalizeBrDateInput(event.target.value)
+          setDisplayValue(nextDisplay)
+          if (!nextDisplay) {
+            onValueChange("")
+            return
+          }
+          const parsed = parseBrDateToIso(nextDisplay)
+          if (parsed) {
+            onValueChange(parsed)
+          }
+        }}
+        onBlur={() => {
+          if (!displayValue) {
+            onValueChange("")
+            return
+          }
+          const parsed = parseBrDateToIso(displayValue)
+          if (parsed) {
+            setDisplayValue(formatIsoToBrDate(parsed))
+            onValueChange(parsed)
+            return
+          }
+          setDisplayValue(formatIsoToBrDate(value))
+        }}
+      />
+      <input
+        ref={nativeDateInputRef}
+        type="date"
+        tabIndex={-1}
+        aria-hidden="true"
+        className="pointer-events-none absolute inset-0 h-0 w-0 opacity-0"
+        value={value}
+        onChange={(event) => onValueChange(event.target.value)}
+      />
+      <button
+        type="button"
+        className="absolute right-1 top-1/2 inline-flex size-6 -translate-y-1/2 items-center justify-center text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+        aria-label={ariaLabel ? `${ariaLabel} no calendario` : "Escolher data no calendario"}
+        onClick={() => {
+          const input = nativeDateInputRef.current
+          if (!input) return
+          if (typeof input.showPicker === "function") {
+            input.showPicker()
+            return
+          }
+          input.click()
+        }}
+      >
+        <CalendarDays className="size-3.5" />
+      </button>
+    </div>
   )
 }
 
@@ -10684,5 +11210,69 @@ function LineItem({
       <span className="text-muted-foreground">{label}</span>
       <span>{format === "currency" ? formatCurrency(value) : Math.trunc(value)}</span>
     </div>
+  )
+}
+
+function MetricInsightPanel({
+  title,
+  description,
+  rows,
+  numberLabels = [],
+  className,
+  showHeader = true,
+}: {
+  title: string
+  description: string
+  rows: { label: string; value: number; tone?: "income" | "expense" | "neutral" }[]
+  numberLabels?: string[]
+  className?: string
+  showHeader?: boolean
+}) {
+  const maxValue = Math.max(...rows.map((item) => Math.abs(item.value)), 1)
+
+  return (
+    <Card className={cn("border-border/70 shadow-sm", className)}>
+      {showHeader && (
+        <CardHeader className="pb-2">
+          <CardTitle className="text-base">{title}</CardTitle>
+          <CardDescription>{description}</CardDescription>
+        </CardHeader>
+      )}
+      <CardContent className="space-y-3">
+        {rows.map((row) => {
+          const width = Math.min(100, (Math.abs(row.value) / maxValue) * 100)
+          const shouldFormatAsNumber = numberLabels.some((label) => row.label.includes(label))
+          return (
+            <div key={row.label} className="space-y-1.5">
+              <div className="flex items-center justify-between gap-3 text-sm">
+                <span className="min-w-0 truncate text-muted-foreground">{row.label}</span>
+                <span
+                  className={cn(
+                    "shrink-0 font-medium tabular-nums",
+                    row.tone === "income" && "text-emerald-700 dark:text-emerald-400",
+                    row.tone === "expense" && "text-orange-700 dark:text-orange-400",
+                  )}
+                >
+                  {shouldFormatAsNumber ? Math.trunc(row.value) : formatCurrency(row.value)}
+                </span>
+              </div>
+              <div className="h-2 overflow-hidden rounded-full bg-muted">
+                <div
+                  className={cn(
+                    "h-full rounded-full",
+                    row.tone === "income"
+                      ? "bg-emerald-500"
+                      : row.tone === "expense"
+                        ? "bg-orange-500"
+                        : "bg-sky-500",
+                  )}
+                  style={{ width: `${width}%` }}
+                />
+              </div>
+            </div>
+          )
+        })}
+      </CardContent>
+    </Card>
   )
 }

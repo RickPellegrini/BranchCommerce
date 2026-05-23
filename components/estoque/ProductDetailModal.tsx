@@ -1,8 +1,8 @@
 "use client"
 
-import { useState } from "react"
+import { useRef, useState } from "react"
 import { Dialog } from "radix-ui"
-import { X, ChevronRight, Package, Plus } from "lucide-react"
+import { X, ChevronRight, Package, Plus, CalendarDays } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Textarea } from "@/components/ui/textarea"
@@ -70,6 +70,7 @@ export function ProductDetailModal({
   const [aliases, setAliases] = useState<string[]>(product.mlItemAliases ?? [])
   const [newAlias, setNewAlias] = useState("")
   const [aliasError, setAliasError] = useState<string | null>(null)
+  const estimatedArrivalInputRef = useRef<HTMLInputElement>(null)
   const [newCardStatus, setNewCardStatus] = useState<KanbanColumnId>("fulfillment")
   const [newCardQuantity, setNewCardQuantity] = useState("")
   const [newCardError, setNewCardError] = useState<string | null>(null)
@@ -333,11 +334,31 @@ export function ProductDetailModal({
                 product.kanbanStatus === "awaiting_inspection") && (
                 <div className="space-y-1">
                   <label className="text-xs text-muted-foreground">Chegada estimada</label>
-                  <Input
-                    type="date"
-                    value={estimatedArrival}
-                    onChange={(e) => setEstimatedArrival(e.target.value)}
-                  />
+                  <div className="relative">
+                    <Input
+                      ref={estimatedArrivalInputRef}
+                      type="date"
+                      className="pr-8"
+                      value={estimatedArrival}
+                      onChange={(e) => setEstimatedArrival(e.target.value)}
+                    />
+                    <button
+                      type="button"
+                      className="absolute right-1 top-1/2 inline-flex size-6 -translate-y-1/2 items-center justify-center text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                      aria-label="Escolher chegada estimada no calendario"
+                      onClick={() => {
+                        const input = estimatedArrivalInputRef.current
+                        if (!input) return
+                        if (typeof input.showPicker === "function") {
+                          input.showPicker()
+                          return
+                        }
+                        input.click()
+                      }}
+                    >
+                      <CalendarDays className="size-3.5" />
+                    </button>
+                  </div>
                 </div>
               )}
               <div className="col-span-2 space-y-1">
