@@ -12,6 +12,8 @@ import {
   ClipboardList,
   CreditCard,
   Boxes,
+  Activity,
+  Database,
   DollarSign,
   Eye,
   EyeOff,
@@ -41,9 +43,12 @@ import {
   ReceiptText,
   Repeat,
   Settings,
+  ShieldCheck,
   Trophy,
   TrendingDown,
   Wallet,
+  Wifi as WifiIcon,
+  Wrench,
   Paperclip,
 } from "lucide-react"
 import Image from "next/image"
@@ -73,9 +78,7 @@ import {
   TableRow,
 } from "@/components/ui/table"
 import {
-  calculateCostBreakdown,
   calculateProductChampions,
-  expensesByCategory,
   filterTransactions,
   formatCurrency,
   formatDate,
@@ -86,6 +89,7 @@ import type { DayGroup } from "@/lib/mercadopago/future-releases"
 import type {
   AnexoLancamento,
   ExpenseType,
+  FinancialBill,
   FinancialCategory,
   FinancialPeriod,
   FinancialTransaction,
@@ -124,7 +128,6 @@ type FinanceSection =
   | "cashflow"
 type FinanceSourceFilter = "all" | "mercado_livre" | "mercado_pago" | "manual"
 type FinanceTypeFilter = "all" | "income" | "expense"
-type HomeInsightKey = "revenue" | "profit" | "margin" | "stock"
 type FinanceInsightKey = "profit" | "revenue" | "costs" | "sales" | "margin" | "ticket"
 type StockSection = "overview" | "products" | "history"
 type MlSection = "catalogo" | "anuncios" | "orders" | "metrics"
@@ -135,6 +138,22 @@ type HunterSection =
   | "quirografados"
   | "concorrentes"
   | "metricas-analise"
+type CostDetailTarget = "orders" | "history"
+
+type CostDetailGroup = {
+  label: string
+  total: number
+  target: CostDetailTarget
+  items: { label: string; value: number; detail?: string }[]
+}
+
+type HomeActionItem = {
+  title: string
+  description: string
+  tone: "danger" | "warning" | "info" | "success"
+  icon: React.ComponentType<{ className?: string }>
+  onClick: () => void
+}
 
 type StockProduct = {
   id: string
@@ -148,6 +167,7 @@ type StockProduct = {
   minStock: number
   unitCost: number
   sellingPrice?: number
+  stockSource?: "manual" | "ml_full"
   kanbanStatus?: KanbanStatus
   kanbanNote?: string
   estimatedArrival?: string
@@ -1097,53 +1117,6 @@ function dedupeTopProductRows(rows: TopProductRow[]) {
   return Array.from(deduped.values()).sort((a, b) => b.profit - a.profit)
 }
 
-function buildOrdersCostComposition(
-  orders: MlOrder[],
-  productByMlItemId: Map<string, StockProduct>,
-  range?: { startDate?: string; endDate?: string },
-  resolveProduct?: ProductLookupResolver,
-) {
-  const resolve = resolveProduct ?? defaultProductResolver(productByMlItemId)
-  const filteredOrders = orders.filter((order) => {
-    const normalized = order.status.toLowerCase()
-    if (normalized === "cancelled") return false
-    const orderDate = order.dateCreated.slice(0, 10)
-    if (range?.startDate && orderDate < range.startDate) return false
-    if (range?.endDate && orderDate > range.endDate) return false
-    return true
-  })
-
-  const totals = {
-    products: 0,
-    fees: 0,
-    shipping: 0,
-    fulfillment: 0,
-    taxes: 0,
-  }
-
-  for (const order of filteredOrders) {
-    const totalQty = order.items.reduce((sum, item) => sum + Math.max(0, item.quantity), 0)
-    const productCost = order.items.reduce((sum, item) => {
-      const mappedProduct = resolve({ id: item.id, title: item.title, sku: item.sku })
-      return sum + (mappedProduct?.unitCost ?? 0) * Math.max(0, item.quantity)
-    }, 0)
-
-    totals.products += productCost
-    totals.fees += Math.max(0, order.mlFeeAmount)
-    totals.shipping += Math.max(0, order.shippingCostAmount)
-    totals.fulfillment += totalQty * HUB_CENTRALIZE_FULFILLMENT_PER_ITEM
-    totals.taxes += Math.max(0, order.taxesAmount)
-  }
-
-  return [
-    { categoryName: "Produtos", total: totals.products },
-    { categoryName: "Taxas ML", total: totals.fees },
-    { categoryName: "Frete ML", total: totals.shipping },
-    { categoryName: "Centralize (envio + embalagem)", total: totals.fulfillment },
-    { categoryName: "Impostos", total: totals.taxes },
-  ].filter((item) => item.total > 0)
-}
-
 function finalizeAbcRows(
   groupedRows: Array<{
     productId: string
@@ -1271,66 +1244,6 @@ function buildAbcRowsFromOrders(
   return finalizeAbcRows(Array.from(grouped.values()), metric)
 }
 
-type HomeEvolutionRow = {
-  key: string
-  monthLabel: string
-  income: number
-  expense: number
-  result: number
-}
-
-/** Mesma janela de meses que `monthlyEvolution` (transacoes), mas agrega pedidos ML. */
-function monthlyEvolutionFromMlOrders(
-  orders: MlOrder[],
-  productByMlItemId: Map<string, StockProduct>,
-  monthsToShow = 6,
-): HomeEvolutionRow[] {
-  const now = new Date()
-  const keys: string[] = []
-  const map = new Map<string, { income: number; expense: number }>()
-  for (let index = monthsToShow - 1; index >= 0; index -= 1) {
-    const date = new Date(now.getFullYear(), now.getMonth() - index, 1)
-    const key = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}`
-    keys.push(key)
-    map.set(key, { income: 0, expense: 0 })
-  }
-
-  for (const order of orders) {
-    const status = order.status.toLowerCase()
-    if (status === "cancelled") continue
-    const key = order.dateCreated.slice(0, 7)
-    if (!map.has(key)) continue
-
-    const productCost = order.items.reduce((total, item) => {
-      const mappedProduct = productByMlItemId.get(item.id)
-      return total + (mappedProduct?.unitCost ?? 0) * Math.max(0, item.quantity)
-    }, 0)
-    const shippingCost = Math.max(0, order.shippingCostAmount)
-    const taxes = Math.max(0, order.taxesAmount)
-    const mlFee = Math.max(0, order.mlFeeAmount)
-    const orderCosts = productCost + shippingCost + taxes + mlFee
-    const revenue = Math.max(0, order.totalAmount)
-
-    const bucket = map.get(key)
-    if (!bucket) continue
-    bucket.income += revenue
-    bucket.expense += orderCosts
-  }
-
-  return keys.map((key) => {
-    const b = map.get(key) ?? { income: 0, expense: 0 }
-    const [y, m] = key.split("-").map(Number)
-    const dt = new Date(y, (m ?? 1) - 1, 1)
-    return {
-      key,
-      monthLabel: dt.toLocaleDateString("pt-BR", { month: "short", year: "2-digit" }),
-      income: b.income,
-      expense: b.expense,
-      result: b.income - b.expense,
-    }
-  })
-}
-
 function StockLevelLegend() {
   return (
     <div className="flex flex-wrap items-center gap-4 rounded-none border bg-muted/30 px-3 py-2 text-xs">
@@ -1355,8 +1268,6 @@ export function FinancialDashboard() {
   const userId = user?.id
 
   const [activeModule, setActiveModule] = useState<ModuleKey>("home")
-  const [activeHomeInsight, setActiveHomeInsight] = useState<HomeInsightKey>("revenue")
-  const [homeInsightModalOpen, setHomeInsightModalOpen] = useState(false)
   const [activeFinanceInsight, setActiveFinanceInsight] = useState<FinanceInsightKey>("costs")
   const [financeInsightModalOpen, setFinanceInsightModalOpen] = useState(false)
   const [activeFinanceSection, setActiveFinanceSection] = useState<FinanceSection>("overview")
@@ -2195,6 +2106,20 @@ export function FinancialDashboard() {
     [financeData?.transactions],
   )
 
+  const bills = useMemo<FinancialBill[]>(
+    () =>
+      (financeData?.bills ?? []).map((item) => ({
+        id: item._id,
+        title: item.title,
+        amount: item.amount,
+        dueDate: item.dueDate,
+        status: item.status,
+        kind: item.kind,
+        categoryId: item.categoryId,
+      })),
+    [financeData?.bills],
+  )
+
   const products = useMemo<StockProduct[]>(
     () =>
       (stockData?.products ?? []).map((item) => ({
@@ -2209,6 +2134,7 @@ export function FinancialDashboard() {
         minStock: item.minStock,
         unitCost: item.unitCost,
         sellingPrice: item.sellingPrice,
+        stockSource: item.stockSource,
         kanbanStatus: item.kanbanStatus,
         kanbanNote: item.kanbanNote,
         estimatedArrival: item.estimatedArrival,
@@ -2497,12 +2423,6 @@ export function FinancialDashboard() {
     return { entries, fixedCost, operationalCost, recurring }
   }, [historyTransactions])
   const summary = useMemo(() => summarizeTransactions(filteredTransactions), [filteredTransactions])
-  const monthlyReport = useMemo(() => {
-    const currentMonth = today.slice(0, 7)
-    return summarizeTransactions(
-      transactions.filter((transaction) => transaction.date.startsWith(currentMonth)),
-    )
-  }, [transactions])
   const evolutionReport = useMemo(() => monthlyEvolution(transactions), [transactions])
   const evolutionDetailsByLabel = useMemo(() => {
     const labels = new Set(evolutionReport.map((item) => item.monthLabel))
@@ -2527,10 +2447,6 @@ export function FinancialDashboard() {
     .filter((item) => item.kind === "expense")
     .reduce((total, item) => total + item.amount, 0)
   const operatingResult = salesInFilter - expensesInFilter
-  const costBreakdown = useMemo(
-    () => calculateCostBreakdown(filteredTransactions, categories),
-    [filteredTransactions, categories],
-  )
 
   const stockSummary = useMemo(() => {
     const extraUnits = stockKanbanCards.reduce((total, card) => total + card.quantity, 0)
@@ -2569,29 +2485,6 @@ export function FinancialDashboard() {
     () => filteredMovements.filter((movement) => movement.type === "sale").length,
     [filteredMovements],
   )
-  const costComposition = useMemo(() => {
-    const fromOrders = buildOrdersCostComposition(
-      mlOrders,
-      productMapByMlItemId,
-      {
-        startDate: filters.startDate,
-        endDate: filters.endDate,
-      },
-      findProductByOrderItem,
-    )
-    if (fromOrders.length > 0) {
-      return fromOrders
-    }
-    return expensesByCategory(filteredTransactions, categories)
-  }, [
-    categories,
-    filteredTransactions,
-    filters.endDate,
-    filters.startDate,
-    mlOrders,
-    productMapByMlItemId,
-    findProductByOrderItem,
-  ])
   const ordersFinancialSummary = useMemo(
     () =>
       buildOrdersFinancialSummary(
@@ -2750,17 +2643,21 @@ export function FinancialDashboard() {
   const expensesInFilterFinal = hasOrdersFinancialData
     ? ordersFinancialSummary.totalCosts
     : expensesInFilter
+  const financeCostsInFilterFinal = hasOrdersFinancialData
+    ? ordersFinancialSummary.totalCosts + expensesInFilter
+    : expensesInFilter
   const operatingResultFinal = hasOrdersFinancialData
     ? ordersFinancialSummary.netProfit
     : operatingResult
+  const financeOperatingResultFinal = salesInFilterFinal - financeCostsInFilterFinal
   const soldItemsFinal = hasOrdersFinancialData
     ? ordersFinancialSummary.soldItems
     : soldUnitsInFilter
   const salesCountFinal = hasOrdersFinancialData
     ? ordersFinancialSummary.ordersCount
     : salesCountInFilter
-  const operatingMarginFinal =
-    salesInFilterFinal > 0 ? (operatingResultFinal / salesInFilterFinal) * 100 : 0
+  const financeOperatingMarginFinal =
+    salesInFilterFinal > 0 ? (financeOperatingResultFinal / salesInFilterFinal) * 100 : 0
   const ticketMedioFinal = salesCountFinal > 0 ? salesInFilterFinal / salesCountFinal : 0
 
   const homeDreSnapshot = useMemo(() => {
@@ -2782,16 +2679,6 @@ export function FinancialDashboard() {
     transactions,
   ])
   const homeNetProfit = homeDreSnapshot?.netProfit ?? operatingResultFinal
-  const homeExpenses = homeDreSnapshot
-    ? homeDreSnapshot.marketplaceFees +
-      homeDreSnapshot.shippingPaidBySeller +
-      homeDreSnapshot.productCosts +
-      homeDreSnapshot.fulfillmentCost +
-      homeDreSnapshot.taxes +
-      homeDreSnapshot.operationalExpenses +
-      homeDreSnapshot.fixedCosts -
-      homeDreSnapshot.shippingBonus
-    : expensesInFilterFinal
   const homeMarginFinal = salesInFilterFinal > 0 ? (homeNetProfit / salesInFilterFinal) * 100 : 0
   const homePeriodLabel = useMemo(() => {
     if (filters.startDate && filters.endDate) {
@@ -2799,107 +2686,401 @@ export function FinancialDashboard() {
     }
     return "Periodo atual"
   }, [filters.endDate, filters.startDate])
-  const homeInsightRows = useMemo(() => {
-    const stockValueInProducts = products.reduce(
-      (total, item) => total + item.quantity * item.unitCost,
-      0,
-    )
-    const stockValueInKanban = stockKanbanCards.reduce((total, card) => {
-      const product = productMap.get(card.productId)
-      return total + card.quantity * (product?.unitCost ?? 0)
-    }, 0)
-
-    const rowsByInsight: Record<
-      HomeInsightKey,
-      {
-        title: string
-        description: string
-        rows: { label: string; value: number; tone?: "income" | "expense" | "neutral" }[]
-      }
-    > = {
-      revenue: {
-        title: "Origem da receita",
-        description: `${salesCountFinal} pedido(s) no periodo · ticket medio ${formatCurrency(ticketMedioFinal)}`,
-        rows: hasOrdersFinancialData
-          ? [
-              {
-                label: "Pedidos Mercado Livre",
-                value: ordersFinancialSummary.grossRevenue,
-                tone: "income",
-              },
-              { label: "Entradas manuais", value: summary.income, tone: "income" },
-            ]
-          : [
-              { label: "Vendas online", value: salesInFilter, tone: "income" },
-              {
-                label: "Outras entradas manuais",
-                value: Math.max(0, summary.income - salesInFilter),
-                tone: "income",
-              },
-            ],
-      },
-      profit: {
-        title: "Formacao do lucro liquido",
-        description: `Receita menos custos no periodo ${homePeriodLabel}`,
-        rows: [
-          { label: "Receita", value: salesInFilterFinal, tone: "income" },
-          { label: "Custos totais", value: homeExpenses, tone: "expense" },
-          { label: "Lucro liquido", value: homeNetProfit, tone: "neutral" },
-        ],
-      },
-      margin: {
-        title: "Pressao na margem",
-        description: `Margem atual ${homeMarginFinal.toFixed(1)}% sobre a receita`,
-        rows: [
-          { label: "Lucro liquido", value: homeNetProfit, tone: "income" },
-          ...costComposition.slice(0, 5).map((row) => ({
-            label: row.categoryName,
-            value: row.total,
-            tone: "expense" as const,
-          })),
-        ],
-      },
-      stock: {
-        title: "Composicao do estoque",
-        description: `${stockSummary.totalProducts} produto(s) · ${stockSummary.totalUnits} unidade(s)`,
-        rows: [
-          { label: "Produtos em estoque", value: stockValueInProducts, tone: "neutral" },
-          { label: "Cards em transito/kanban", value: stockValueInKanban, tone: "neutral" },
-          {
-            label: "Produtos abaixo do minimo",
-            value: stockSummary.lowStockCount,
-            tone: "expense",
-          },
-        ],
-      },
+  const financeCostDetailGroups = useMemo<CostDetailGroup[]>(() => {
+    const groups: CostDetailGroup[] = []
+    const orderGroups = new Map<string, CostDetailGroup>()
+    const ensureOrderGroup = (label: string) => {
+      const current = orderGroups.get(label)
+      if (current) return current
+      const next: CostDetailGroup = { label, total: 0, target: "orders", items: [] }
+      orderGroups.set(label, next)
+      groups.push(next)
+      return next
     }
 
-    return rowsByInsight[activeHomeInsight]
+    if (hasOrdersFinancialData) {
+      for (const order of mlOrders) {
+        if (
+          !isValidMarketplaceOrder(order) ||
+          !orderInRange(order, { startDate: filters.startDate, endDate: filters.endDate })
+        ) {
+          continue
+        }
+        const orderLabel = `Pedido ML #${order.id}`
+        const itemSummary =
+          order.items.length === 1
+            ? order.items[0]?.title
+            : `${order.items.length} item(ns) no pedido`
+        const totalQty = order.items.reduce((sum, item) => sum + Math.max(0, item.quantity), 0)
+        const productCost = order.items.reduce((sum, item) => {
+          const mappedProduct = findProductByOrderItem({
+            id: item.id,
+            title: item.title,
+            sku: item.sku,
+          })
+          return sum + (mappedProduct?.unitCost ?? 0) * Math.max(0, item.quantity)
+        }, 0)
+        const orderDetails = [
+          {
+            group: "Produtos",
+            value: productCost,
+            detail: itemSummary,
+          },
+          {
+            group: "Taxas ML",
+            value: Math.max(0, order.mlFeeAmount),
+            detail: order.paymentMethod || itemSummary,
+          },
+          {
+            group: "Frete ML",
+            value: Math.max(0, order.shippingCostAmount),
+            detail: `${order.shippingMode || "Envio"} · ${order.shippingLogisticType || "logistica"}`,
+          },
+          {
+            group: "Centralize (envio + embalagem)",
+            value: totalQty * HUB_CENTRALIZE_FULFILLMENT_PER_ITEM,
+            detail: `${totalQty} item(ns) x ${formatCurrency(HUB_CENTRALIZE_FULFILLMENT_PER_ITEM)}`,
+          },
+          {
+            group: "Impostos",
+            value: Math.max(0, order.taxesAmount),
+            detail: itemSummary,
+          },
+        ]
+
+        for (const detail of orderDetails) {
+          if (detail.value <= 0) continue
+          const group = ensureOrderGroup(detail.group)
+          group.total += detail.value
+          group.items.push({
+            label: orderLabel,
+            value: detail.value,
+            detail: detail.detail,
+          })
+        }
+      }
+    }
+
+    const manualExpenses = filteredTransactions.filter(
+      (transaction) => transaction.kind === "expense",
+    )
+    const manualGroups = new Map<string, CostDetailGroup>()
+    for (const transaction of manualExpenses) {
+      const categoryName = categoryMap.get(transaction.categoryId)?.name ?? "Sem categoria"
+      const label =
+        transaction.expenseType === "fixed"
+          ? `Fixo · ${categoryName}`
+          : `Operacional · ${categoryName}`
+      const current = manualGroups.get(label) ?? {
+        label,
+        total: 0,
+        target: "history" as const,
+        items: [],
+      }
+      current.total += transaction.amount
+      current.items.push({
+        label: transaction.description,
+        value: transaction.amount,
+        detail: `${formatDate(transaction.date)}${transaction.origin ? ` · ${transaction.origin}` : ""}`,
+      })
+      manualGroups.set(label, current)
+    }
+    groups.push(...manualGroups.values())
+
+    return groups
+      .filter((group) => group.total > 0)
+      .map((group) => ({
+        ...group,
+        items: group.items.sort((a, b) => b.value - a.value),
+      }))
+      .sort((a, b) => b.total - a.total)
   }, [
-    activeHomeInsight,
-    costComposition,
+    categoryMap,
+    filteredTransactions,
+    filters.endDate,
+    filters.startDate,
+    findProductByOrderItem,
     hasOrdersFinancialData,
-    homeExpenses,
-    homeMarginFinal,
-    homeNetProfit,
-    homePeriodLabel,
-    ordersFinancialSummary.grossRevenue,
-    productMap,
-    products,
-    salesCountFinal,
-    salesInFilter,
-    salesInFilterFinal,
-    stockKanbanCards,
-    stockSummary.lowStockCount,
-    stockSummary.totalProducts,
-    stockSummary.totalUnits,
-    summary.income,
-    ticketMedioFinal,
+    mlOrders,
   ])
-  const openHomeInsight = useCallback((insight: HomeInsightKey) => {
-    setActiveHomeInsight(insight)
-    setHomeInsightModalOpen(true)
-  }, [])
+  const productsWithoutCost = useMemo(
+    () => products.filter((product) => product.unitCost <= 0),
+    [products],
+  )
+  const ordersWithoutProductLink = useMemo(() => {
+    return mlOrders
+      .filter(
+        (order) =>
+          isValidMarketplaceOrder(order) &&
+          orderInRange(order, { startDate: filters.startDate, endDate: filters.endDate }) &&
+          order.items.some(
+            (item) =>
+              !findProductByOrderItem({
+                id: item.id,
+                title: item.title,
+                sku: item.sku,
+              }),
+          ),
+      )
+      .slice(0, 8)
+  }, [filters.endDate, filters.startDate, findProductByOrderItem, mlOrders])
+  const upcomingCommitments = useMemo(() => {
+    const now = new Date(`${today}T00:00:00`)
+    const limit = new Date(now)
+    limit.setDate(limit.getDate() + 30)
+    const limitIso = limit.toISOString().slice(0, 10)
+    const rows: Array<{
+      id: string
+      title: string
+      amount: number
+      dueDate: string
+      source: string
+      overdue: boolean
+    }> = []
+
+    for (const bill of bills) {
+      if (bill.kind !== "payable" || bill.status === "paid") continue
+      if (bill.dueDate > limitIso) continue
+      rows.push({
+        id: `bill-${bill.id}`,
+        title: bill.title,
+        amount: bill.amount,
+        dueDate: bill.dueDate,
+        source: "Conta",
+        overdue: bill.dueDate < today || bill.status === "overdue",
+      })
+    }
+
+    for (const transaction of transactions) {
+      if (
+        transaction.kind !== "expense" ||
+        transaction.payStatus !== "pending" ||
+        transaction.date > limitIso
+      ) {
+        continue
+      }
+      rows.push({
+        id: `tx-${transaction.id}`,
+        title: transaction.description,
+        amount: transaction.amount,
+        dueDate: transaction.date,
+        source:
+          transaction.paymentMethod === "credit" && transaction.installmentIndex
+            ? `Cartao ${transaction.installmentIndex}/${transaction.installmentCount ?? "?"}`
+            : transaction.paymentMethod
+              ? transaction.paymentMethod.toUpperCase()
+              : "Pendente",
+        overdue: transaction.date < today,
+      })
+    }
+
+    const items = rows.sort((a, b) => {
+      if (a.overdue !== b.overdue) return a.overdue ? -1 : 1
+      return a.dueDate.localeCompare(b.dueDate)
+    })
+
+    return {
+      items,
+      total: items.reduce((sum, item) => sum + item.amount, 0),
+      overdueCount: items.filter((item) => item.overdue).length,
+    }
+  }, [bills, transactions])
+  const partnerDistributionPreview = useMemo(() => {
+    const distributableBase = Math.max(0, homeNetProfit)
+    const reinvestment = distributableBase * 0.7
+    const distributable = distributableBase * 0.3
+    return {
+      base: distributableBase,
+      reinvestment,
+      distributable,
+      partnerShare: distributable / 2,
+    }
+  }, [homeNetProfit])
+  const technologyHealth = useMemo(() => {
+    const disconnected = [
+      !mlConnectionStatus?.connected ? "Mercado Livre" : null,
+      !mpConnectionStatus?.connected ? "Mercado Pago" : null,
+    ].filter(Boolean)
+    return {
+      disconnected,
+      connectedCount: 2 - disconnected.length,
+      totalCount: 2,
+      ok: disconnected.length === 0,
+    }
+  }, [mlConnectionStatus?.connected, mpConnectionStatus?.connected])
+  const homeActionItems = useMemo<HomeActionItem[]>(() => {
+    const items: HomeActionItem[] = []
+    if (upcomingCommitments.overdueCount > 0 || upcomingCommitments.items.length > 0) {
+      items.push({
+        title:
+          upcomingCommitments.overdueCount > 0
+            ? `${upcomingCommitments.overdueCount} vencimento(s) atrasado(s)`
+            : `${upcomingCommitments.items.length} compromisso(s) a vencer`,
+        description: `${formatCurrency(upcomingCommitments.total)} nos proximos 30 dias`,
+        tone: upcomingCommitments.overdueCount > 0 ? "danger" : "warning",
+        icon: CalendarDays,
+        onClick: () => {
+          setActiveModule("finance")
+          setActiveFinanceSection("history")
+          setHistoryKindFilter("expense")
+        },
+      })
+    }
+    if (productsWithoutCost.length > 0) {
+      items.push({
+        title: `${productsWithoutCost.length} produto(s) sem custo`,
+        description: "Cadastre custo para margem, lucro e ABC ficarem confiaveis.",
+        tone: "danger",
+        icon: Tag,
+        onClick: () => {
+          setActiveModule("stock")
+          setActiveStockSection("products")
+        },
+      })
+    }
+    if (ordersWithoutProductLink.length > 0) {
+      items.push({
+        title: `${ordersWithoutProductLink.length} pedido(s) ML sem vinculo`,
+        description: "Vincule os itens ao estoque para calcular CMV automaticamente.",
+        tone: "warning",
+        icon: ShoppingBag,
+        onClick: () => {
+          setActiveModule("mercadolivre")
+          setActiveMlSidebarGroup("pedidos")
+          setActiveMlSection("orders")
+        },
+      })
+    }
+    if (stockSummary.lowStockCount > 0) {
+      items.push({
+        title: `${stockSummary.lowStockCount} produto(s) abaixo do minimo`,
+        description: "Revise reposicao antes de perder venda.",
+        tone: "warning",
+        icon: AlertCircle,
+        onClick: () => {
+          setActiveModule("stock")
+          setActiveStockSection("overview")
+        },
+      })
+    }
+    if (!technologyHealth.ok) {
+      items.push({
+        title: `${technologyHealth.disconnected.length} integracao(oes) pendente(s)`,
+        description: technologyHealth.disconnected.join(", "),
+        tone: "info",
+        icon: Settings,
+        onClick: () => setActiveModule("connections"),
+      })
+    }
+    if (items.length === 0) {
+      items.push({
+        title: "Operacao sem alertas criticos",
+        description: "Estoque, financeiro e integracoes sem pendencias prioritarias.",
+        tone: "success",
+        icon: CheckCircle2,
+        onClick: () => setActiveModule("home"),
+      })
+    }
+    return items.slice(0, 6)
+  }, [
+    ordersWithoutProductLink.length,
+    productsWithoutCost.length,
+    stockSummary.lowStockCount,
+    technologyHealth,
+    upcomingCommitments,
+  ])
+  const syncStatusByProvider = useMemo(
+    () => new Map(externalSyncStatuses.map((status) => [status.provider, status])),
+    [externalSyncStatuses],
+  )
+  const fullStockProducts = useMemo(
+    () =>
+      products.filter(
+        (product) => product.stockSource === "ml_full" || product.kanbanStatus === "fulfillment",
+      ),
+    [products],
+  )
+  const stockDivergenceSignals = useMemo(() => {
+    const mlFullByItem = new Map(
+      mlPlainListings
+        .filter((listing) => listing.logisticType === "fulfillment")
+        .map((listing) => [normalizeMercadoLibreItemId(listing.id), listing]),
+    )
+
+    return fullStockProducts.filter((product) => {
+      const mlItemId = product.mlItemId ? normalizeMercadoLibreItemId(product.mlItemId) : ""
+      const listing = mlItemId ? mlFullByItem.get(mlItemId) : undefined
+      return listing ? listing.available_quantity !== product.quantity : false
+    })
+  }, [fullStockProducts, mlPlainListings])
+  const listingsWithoutSku = useMemo(
+    () => mlPlainListings.filter((listing) => !listing.sku?.trim()),
+    [mlPlainListings],
+  )
+  const dataQualityIssues = useMemo(
+    () => [
+      {
+        title: "Produtos sem custo",
+        count: productsWithoutCost.length,
+        description: "Margem, DRE e ABC dependem deste custo.",
+        tone: productsWithoutCost.length > 0 ? "danger" : "success",
+        action: () => {
+          setActiveModule("stock")
+          setActiveStockSection("products")
+        },
+      },
+      {
+        title: "Pedidos ML sem vinculo",
+        count: ordersWithoutProductLink.length,
+        description: "Itens vendidos sem produto encontrado no estoque.",
+        tone: ordersWithoutProductLink.length > 0 ? "warning" : "success",
+        action: () => {
+          setActiveModule("mercadolivre")
+          setActiveMlSidebarGroup("pedidos")
+          setActiveMlSection("orders")
+        },
+      },
+      {
+        title: "Anuncios sem SKU",
+        count: listingsWithoutSku.length,
+        description:
+          mlPlainListings.length > 0
+            ? "Amostra carregada dos anuncios ML."
+            : "Carregue anuncios para validar.",
+        tone: listingsWithoutSku.length > 0 ? "warning" : "success",
+        action: () => {
+          setActiveModule("mercadolivre")
+          setActiveMlSidebarGroup("anuncios")
+          setActiveMlSection("anuncios")
+        },
+      },
+      {
+        title: "Full divergente",
+        count: stockDivergenceSignals.length,
+        description: "Comparacao entre estoque Convex e quantidade ML carregada.",
+        tone: stockDivergenceSignals.length > 0 ? "danger" : "success",
+        action: () => {
+          setActiveModule("stock")
+          setActiveStockSection("overview")
+        },
+      },
+    ],
+    [
+      listingsWithoutSku.length,
+      mlPlainListings.length,
+      ordersWithoutProductLink.length,
+      productsWithoutCost.length,
+      stockDivergenceSignals.length,
+    ],
+  )
+  const technologyAlertCount = dataQualityIssues.reduce(
+    (total, issue) => total + (issue.tone === "success" ? 0 : issue.count || 1),
+    technologyHealth.ok ? 0 : technologyHealth.disconnected.length,
+  )
+  const lastWebhookStatus = "Sem historico persistido"
+  const stockSyncStatus = syncStatusByProvider.get("stock")
+  const mpSyncProviderStatus = syncStatusByProvider.get("mercado_pago")
+  const allSyncStatus = syncStatusByProvider.get("all")
   const financeInsightRows = useMemo(() => {
     const rowsByInsight: Record<
       FinanceInsightKey,
@@ -2914,8 +3095,8 @@ export function FinancialDashboard() {
         description: `Resultado no periodo ${homePeriodLabel}`,
         rows: [
           { label: "Faturamento", value: salesInFilterFinal, tone: "income" },
-          { label: "Custos", value: expensesInFilterFinal, tone: "expense" },
-          { label: "Lucro", value: operatingResultFinal, tone: "neutral" },
+          { label: "Custos", value: financeCostsInFilterFinal, tone: "expense" },
+          { label: "Lucro", value: financeOperatingResultFinal, tone: "neutral" },
         ],
       },
       revenue: {
@@ -2941,19 +3122,12 @@ export function FinancialDashboard() {
       },
       costs: {
         title: "Composicao dos custos",
-        description: `Total no periodo: ${formatCurrency(expensesInFilterFinal)}`,
-        rows:
-          costComposition.length > 0
-            ? costComposition.map((row) => ({
-                label: row.categoryName,
-                value: row.total,
-                tone: "expense" as const,
-              }))
-            : [
-                { label: "Operacional", value: costBreakdown.operationalCost, tone: "expense" },
-                { label: "Fixos", value: costBreakdown.fixedCost, tone: "expense" },
-                { label: "Ferramentas", value: costBreakdown.toolsFixedCost, tone: "expense" },
-              ],
+        description: `Pedidos ML + despesas manuais no periodo: ${formatCurrency(financeCostsInFilterFinal)}`,
+        rows: financeCostDetailGroups.map((row) => ({
+          label: row.label,
+          value: row.total,
+          tone: "expense" as const,
+        })),
       },
       sales: {
         title: "Volume de vendas",
@@ -2965,10 +3139,10 @@ export function FinancialDashboard() {
       },
       margin: {
         title: "Margem do periodo",
-        description: `${operatingMarginFinal.toFixed(1)}% de lucro sobre faturamento`,
+        description: `${financeOperatingMarginFinal.toFixed(1)}% de lucro sobre faturamento`,
         rows: [
-          { label: "Lucro", value: operatingResultFinal, tone: "income" },
-          { label: "Custos", value: expensesInFilterFinal, tone: "expense" },
+          { label: "Lucro", value: financeOperatingResultFinal, tone: "income" },
+          { label: "Custos", value: financeCostsInFilterFinal, tone: "expense" },
           { label: "Faturamento", value: salesInFilterFinal, tone: "neutral" },
         ],
       },
@@ -2986,15 +3160,12 @@ export function FinancialDashboard() {
     return rowsByInsight[activeFinanceInsight]
   }, [
     activeFinanceInsight,
-    costBreakdown.fixedCost,
-    costBreakdown.operationalCost,
-    costBreakdown.toolsFixedCost,
-    costComposition,
-    expensesInFilterFinal,
+    financeCostDetailGroups,
+    financeCostsInFilterFinal,
+    financeOperatingMarginFinal,
+    financeOperatingResultFinal,
     hasOrdersFinancialData,
     homePeriodLabel,
-    operatingMarginFinal,
-    operatingResultFinal,
     ordersFinancialSummary.grossRevenue,
     salesCountFinal,
     salesInFilter,
@@ -3007,46 +3178,6 @@ export function FinancialDashboard() {
     setActiveFinanceInsight(insight)
     setFinanceInsightModalOpen(true)
   }, [])
-  const homeCurrentMonthOrders = useMemo(() => {
-    const d = new Date()
-    const { start, end } = monthDateRange(d.getFullYear(), d.getMonth() + 1)
-    return buildOrdersFinancialSummary(
-      mlOrders,
-      productMapByMlItemId,
-      {
-        startDate: start,
-        endDate: end,
-      },
-      findProductByOrderItem,
-    )
-  }, [mlOrders, productMapByMlItemId, findProductByOrderItem])
-
-  /** Evita repetir o mesmo bloco de pedidos ML quando o filtro ja e o mes civil corrente. */
-  const homeFilterMatchesCurrentMonth = useMemo(() => {
-    if (!filters.startDate || !filters.endDate) return false
-    const d = new Date()
-    const { start, end } = monthDateRange(d.getFullYear(), d.getMonth() + 1)
-    return filters.startDate === start && filters.endDate === end
-  }, [filters.endDate, filters.startDate])
-
-  const homeOrdersEvolution = useMemo(
-    () => monthlyEvolutionFromMlOrders(mlOrders, productMapByMlItemId, 6),
-    [mlOrders, productMapByMlItemId],
-  )
-
-  const homeEvolutionPreview = useMemo((): HomeEvolutionRow[] => {
-    const fromOrders = homeOrdersEvolution.slice(-4)
-    if (hasOrdersFinancialData && fromOrders.some((p) => p.income > 0 || p.expense > 0)) {
-      return fromOrders
-    }
-    return evolutionReport.slice(-4).map((p, i) => ({
-      key: `int-${p.monthLabel}-${i}`,
-      monthLabel: p.monthLabel,
-      income: p.income,
-      expense: p.expense,
-      result: p.result,
-    }))
-  }, [evolutionReport, hasOrdersFinancialData, homeOrdersEvolution])
 
   const homeProductChampions = useMemo(() => {
     if (hasOrdersFinancialData) {
@@ -4820,7 +4951,7 @@ export function FinancialDashboard() {
             onClick={() => setActiveModule("connections")}
           >
             <Settings className="size-4" />
-            Conexões
+            TI
           </Button>
         </div>
         <Separator />
@@ -4980,7 +5111,7 @@ export function FinancialDashboard() {
                         : activeModule === "branchhunter"
                           ? "Branch Hunter"
                           : activeModule === "connections"
-                            ? "Conexões"
+                            ? "TI & Integrações"
                             : "Home"}
                 </p>
               </div>
@@ -4998,7 +5129,7 @@ export function FinancialDashboard() {
               { key: "stock" as const, label: "Estoque", icon: Boxes },
               { key: "mercadolivre" as const, label: "ML", icon: Store },
               { key: "branchhunter" as const, label: "Hunter", icon: Search },
-              { key: "connections" as const, label: "Conexões", icon: Settings },
+              { key: "connections" as const, label: "TI", icon: Settings },
             ].map((item) => {
               const Icon = item.icon
               return (
@@ -5085,35 +5216,33 @@ export function FinancialDashboard() {
           )}
         </div>
         {activeModule === "home" && (
-          <div className="mx-auto max-w-6xl space-y-8 pb-8">
+          <div className="mx-auto max-w-6xl space-y-6 pb-8">
             <div className="relative overflow-hidden rounded-2xl border border-border/60 bg-linear-to-br from-sky-500/10 via-card to-violet-500/5 px-5 py-6 shadow-sm sm:px-8 sm:py-8 dark:from-sky-950/40 dark:via-card dark:to-violet-950/20">
               <div className="relative flex flex-col gap-6 lg:flex-row lg:items-end lg:justify-between">
                 <div className="space-y-2">
                   <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
-                    Painel principal
+                    Central da empresa
                   </p>
                   <h1 className="text-2xl font-semibold tracking-tight sm:text-3xl">
                     Ola, {financeAccountLabel}
                   </h1>
-                  <p className="max-w-xl text-sm text-muted-foreground">
-                    Visao unificada do periodo{" "}
-                    <span className="font-medium text-foreground">{homePeriodLabel}</span>. Ajuste
-                    datas em{" "}
-                    <span className="font-medium text-foreground">Finanças → Visao geral</span>.
+                  <p className="max-w-2xl text-sm text-muted-foreground">
+                    Visao global do periodo{" "}
+                    <span className="font-medium text-foreground">{homePeriodLabel}</span>:
+                    financeiro, operacao, comercial, estoque e tecnologia em uma tela de decisao.
                   </p>
                   <div className="flex flex-wrap gap-2 pt-1">
                     <span
                       className={cn(
                         "inline-flex items-center gap-1.5 rounded-full border px-2.5 py-0.5 text-xs font-medium",
-                        mlConnectionStatus?.connected
+                        technologyHealth.ok
                           ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-800 dark:text-emerald-300"
                           : "border-amber-500/30 bg-amber-500/10 text-amber-900 dark:text-amber-200",
                       )}
                     >
-                      <Store className="size-3.5 shrink-0" />
-                      {mlConnectionStatus?.connected
-                        ? `ML conectado${mlConnectionStatus.mlNickname ? ` · ${mlConnectionStatus.mlNickname}` : ""}`
-                        : "Mercado Livre nao conectado"}
+                      <Settings className="size-3.5 shrink-0" />
+                      {technologyHealth.connectedCount}/{technologyHealth.totalCount} integracoes
+                      ativas
                     </span>
                     {hasOrdersFinancialData && (
                       <span className="inline-flex items-center gap-1.5 rounded-full border border-sky-500/25 bg-sky-500/10 px-2.5 py-0.5 text-xs font-medium text-sky-900 dark:text-sky-200">
@@ -5132,583 +5261,370 @@ export function FinancialDashboard() {
                       setActiveFinanceSection("overview")
                     }}
                   >
-                    Finanças
-                    <ArrowRight className="size-3.5" />
+                    Financeiro <ArrowRight className="size-3.5" />
                   </Button>
                   <Button
                     size="sm"
                     variant="outline"
                     className="gap-1.5 rounded-full"
-                    onClick={() => setActiveModule("stock")}
+                    onClick={() => {
+                      setActiveModule("mercadolivre")
+                      setActiveMlSidebarGroup("pedidos")
+                    }}
                   >
-                    Estoque
+                    Comercial
                   </Button>
                   <Button
                     size="sm"
                     variant="outline"
                     className="gap-1.5 rounded-full"
-                    onClick={() => setActiveModule("mercadolivre")}
+                    onClick={() => setActiveModule("connections")}
                   >
-                    Mercado Livre
+                    TI & Integracoes
                   </Button>
                 </div>
               </div>
             </div>
 
-            <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-              <Card
-                role="button"
-                tabIndex={0}
-                onClick={() => openHomeInsight("revenue")}
-                onKeyDown={(event) => {
-                  if (event.key === "Enter" || event.key === " ") openHomeInsight("revenue")
+            <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+              <HomeExecutiveCard
+                icon={CircleDollarSign}
+                label="Faturamento"
+                value={formatCurrency(salesInFilterFinal)}
+                detail={`${salesCountFinal} pedido(s) · ticket ${formatCurrency(ticketMedioFinal)}`}
+                tone="income"
+                onClick={() => {
+                  setActiveModule("finance")
+                  setActiveFinanceSection("overview")
                 }}
-                className={cn(
-                  "cursor-pointer border-border/70 shadow-sm transition hover:border-emerald-500/50 hover:shadow-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
-                  activeHomeInsight === "revenue" &&
-                    "border-emerald-500/60 ring-1 ring-emerald-500/25",
-                )}
-              >
-                <CardContent className="pt-6">
-                  <div className="flex items-start justify-between gap-2">
-                    <div className="rounded-lg bg-emerald-500/10 p-2 text-emerald-700 dark:text-emerald-400">
-                      <CircleDollarSign className="size-5" />
-                    </div>
-                    <span className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
-                      Receita
-                    </span>
-                  </div>
-                  <p className="mt-4 text-2xl font-bold tabular-nums tracking-tight sm:text-3xl">
-                    {formatCurrency(salesInFilterFinal)}
-                  </p>
-                  <p className="mt-1 text-xs text-muted-foreground">
-                    {salesCountFinal} pedidos · ticket {formatCurrency(ticketMedioFinal)}
-                  </p>
+              />
+              <HomeExecutiveCard
+                icon={TrendingUp}
+                label="Lucro estimado"
+                value={formatCurrency(homeNetProfit)}
+                detail={`Margem ${homeMarginFinal.toFixed(1)}% · visual DRE`}
+                tone={homeNetProfit >= 0 ? "income" : "danger"}
+                onClick={() => {
+                  setActiveModule("finance")
+                  setActiveFinanceSection("dre")
+                }}
+              />
+              <HomeExecutiveCard
+                icon={CalendarDays}
+                label="Proximos vencimentos"
+                value={formatCurrency(upcomingCommitments.total)}
+                detail={`${upcomingCommitments.items.length} em 30 dias${
+                  upcomingCommitments.overdueCount
+                    ? ` · ${upcomingCommitments.overdueCount} atrasado(s)`
+                    : ""
+                }`}
+                tone={upcomingCommitments.overdueCount > 0 ? "danger" : "warning"}
+                onClick={() => {
+                  setActiveModule("finance")
+                  setActiveFinanceSection("history")
+                  setHistoryKindFilter("expense")
+                }}
+              />
+              <HomeExecutiveCard
+                icon={AlertCircle}
+                label="Alertas criticos"
+                value={String(homeActionItems.filter((item) => item.tone !== "success").length)}
+                detail="Pendencias que pedem acao"
+                tone={homeActionItems.some((item) => item.tone === "danger") ? "danger" : "neutral"}
+                onClick={homeActionItems[0]?.onClick ?? (() => setActiveModule("home"))}
+              />
+            </div>
+
+            <div className="grid gap-4 lg:grid-cols-[1.15fr_0.85fr]">
+              <Card className="border-border/70 shadow-sm">
+                <CardHeader className="pb-2">
+                  <CardTitle className="text-base">O que precisa ser feito agora</CardTitle>
+                  <CardDescription>
+                    Prioridades operacionais, financeiras e tecnicas.
+                  </CardDescription>
+                </CardHeader>
+                <CardContent className="grid gap-3 sm:grid-cols-2">
+                  {homeActionItems.map((item) => {
+                    const Icon = item.icon
+
+                    return (
+                      <button
+                        key={item.title}
+                        type="button"
+                        onClick={item.onClick}
+                        className={cn(
+                          "rounded-none border p-3 text-left transition hover:bg-muted/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+                          item.tone === "danger" && "border-red-500/30 bg-red-500/5",
+                          item.tone === "warning" && "border-amber-500/30 bg-amber-500/5",
+                          item.tone === "info" && "border-sky-500/30 bg-sky-500/5",
+                          item.tone === "success" && "border-emerald-500/30 bg-emerald-500/5",
+                        )}
+                      >
+                        <div className="flex items-start gap-3">
+                          <Icon className="mt-0.5 size-4 shrink-0" />
+                          <div className="min-w-0">
+                            <p className="font-medium">{item.title}</p>
+                            <p className="mt-1 text-xs/relaxed text-muted-foreground">
+                              {item.description}
+                            </p>
+                          </div>
+                        </div>
+                      </button>
+                    )
+                  })}
                 </CardContent>
               </Card>
-              <Card
-                role="button"
-                tabIndex={0}
-                onClick={() => openHomeInsight("profit")}
-                onKeyDown={(event) => {
-                  if (event.key === "Enter" || event.key === " ") openHomeInsight("profit")
-                }}
-                className={cn(
-                  "cursor-pointer border-border/70 shadow-sm transition hover:border-primary/50 hover:shadow-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
-                  activeHomeInsight === "profit" && "border-primary/60 ring-1 ring-primary/25",
-                )}
-              >
-                <CardContent className="pt-6">
-                  <div className="flex items-start justify-between gap-2">
-                    <div
-                      className={cn(
-                        "rounded-lg p-2",
-                        homeNetProfit >= 0
-                          ? "bg-primary/10 text-primary"
-                          : "bg-destructive/10 text-destructive",
-                      )}
-                    >
-                      <TrendingUp className="size-5" />
-                    </div>
-                    <span className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
-                      Lucro liquido
-                    </span>
+
+              <Card className="border-border/70 shadow-sm">
+                <CardHeader className="flex flex-row items-start justify-between gap-3 pb-2">
+                  <div>
+                    <CardTitle className="text-base">Compromissos</CardTitle>
+                    <CardDescription>Boletos, cartao, contas e parcelas.</CardDescription>
                   </div>
-                  <p
-                    className={cn(
-                      "mt-4 text-2xl font-bold tabular-nums tracking-tight sm:text-3xl",
-                      homeNetProfit >= 0
-                        ? "text-emerald-700 dark:text-emerald-400"
-                        : "text-destructive",
-                    )}
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="text-sky-600 dark:text-sky-400"
+                    onClick={() => {
+                      setActiveModule("finance")
+                      setActiveFinanceSection("history")
+                      setHistoryKindFilter("expense")
+                    }}
                   >
-                    {formatCurrency(homeNetProfit)}
-                  </p>
-                  <p className="mt-1 text-xs text-muted-foreground">
-                    DRE no periodo (pedidos + despesas cadastradas)
-                  </p>
-                </CardContent>
-              </Card>
-              <Card
-                role="button"
-                tabIndex={0}
-                onClick={() => openHomeInsight("margin")}
-                onKeyDown={(event) => {
-                  if (event.key === "Enter" || event.key === " ") openHomeInsight("margin")
-                }}
-                className={cn(
-                  "cursor-pointer border-border/70 shadow-sm transition hover:border-orange-500/50 hover:shadow-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
-                  activeHomeInsight === "margin" &&
-                    "border-orange-500/60 ring-1 ring-orange-500/25",
-                )}
-              >
-                <CardContent className="pt-6">
-                  <div className="flex items-start justify-between gap-2">
-                    <div className="rounded-lg bg-orange-500/10 p-2 text-orange-700 dark:text-orange-400">
-                      <Percent className="size-5" />
-                    </div>
-                    <span className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
-                      Margem
-                    </span>
-                  </div>
-                  <p
-                    className={cn(
-                      "mt-4 text-2xl font-bold tabular-nums tracking-tight sm:text-3xl",
-                      homeMarginFinal >= 0 ? "text-foreground" : "text-destructive",
-                    )}
-                  >
-                    {homeMarginFinal.toFixed(1)}%
-                  </p>
-                  <p className="mt-1 text-xs text-muted-foreground">
-                    Sobre receita · custos totais {formatCurrency(homeExpenses)}
-                  </p>
-                </CardContent>
-              </Card>
-              <Card
-                role="button"
-                tabIndex={0}
-                onClick={() => openHomeInsight("stock")}
-                onKeyDown={(event) => {
-                  if (event.key === "Enter" || event.key === " ") openHomeInsight("stock")
-                }}
-                className={cn(
-                  "cursor-pointer border-border/70 shadow-sm transition hover:border-violet-500/50 hover:shadow-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
-                  activeHomeInsight === "stock" && "border-violet-500/60 ring-1 ring-violet-500/25",
-                )}
-              >
-                <CardContent className="pt-6">
-                  <div className="flex items-start justify-between gap-2">
-                    <div className="rounded-lg bg-violet-500/10 p-2 text-violet-700 dark:text-violet-300">
-                      <Boxes className="size-5" />
-                    </div>
-                    <span className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
-                      Estoque
-                    </span>
-                  </div>
-                  <p className="mt-4 text-2xl font-bold tabular-nums tracking-tight sm:text-3xl">
-                    {formatCurrency(stockSummary.stockValue)}
-                  </p>
-                  <p className="mt-1 text-xs text-muted-foreground">
-                    {stockSummary.totalProducts} produtos · {stockSummary.totalUnits} unidades
-                  </p>
+                    Ver tudo <ArrowRight className="size-3.5" />
+                  </Button>
+                </CardHeader>
+                <CardContent className="space-y-3">
+                  {upcomingCommitments.items.length === 0 ? (
+                    <p className="text-sm text-muted-foreground">
+                      Nenhum compromisso pendente nos proximos 30 dias.
+                    </p>
+                  ) : (
+                    upcomingCommitments.items.slice(0, 5).map((item) => (
+                      <div key={item.id} className="flex items-start justify-between gap-3 text-sm">
+                        <div className="min-w-0">
+                          <p className="truncate font-medium">{item.title}</p>
+                          <p className="text-xs text-muted-foreground">
+                            {formatDate(item.dueDate)} · {item.source}
+                            {item.overdue ? " · atrasado" : ""}
+                          </p>
+                        </div>
+                        <span
+                          className={cn(
+                            "shrink-0 font-medium tabular-nums",
+                            item.overdue && "text-red-700 dark:text-red-300",
+                          )}
+                        >
+                          {formatCurrency(item.amount)}
+                        </span>
+                      </div>
+                    ))
+                  )}
                 </CardContent>
               </Card>
             </div>
 
-            <Dialog.Root open={homeInsightModalOpen} onOpenChange={setHomeInsightModalOpen}>
-              <Dialog.Portal>
-                <Dialog.Overlay className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm" />
-                <Dialog.Content className="fixed left-1/2 top-1/2 z-50 max-h-[min(90vh,34rem)] w-[calc(100vw-2rem)] max-w-xl -translate-x-1/2 -translate-y-1/2 overflow-y-auto rounded-2xl border border-border bg-card p-6 shadow-xl">
-                  <div className="flex items-start justify-between gap-4">
-                    <div>
-                      <Dialog.Title className="text-base font-semibold">
-                        {homeInsightRows.title}
-                      </Dialog.Title>
-                      <Dialog.Description className="mt-1 text-sm text-muted-foreground">
-                        {homeInsightRows.description}
-                      </Dialog.Description>
-                    </div>
-                    <Dialog.Close asChild>
-                      <Button variant="ghost" size="icon-sm" aria-label="Fechar detalhes">
-                        <X className="size-4" />
-                      </Button>
-                    </Dialog.Close>
-                  </div>
-                  <div className="mt-5 space-y-4">
-                    {homeInsightRows.rows.map((row) => {
-                      const maxValue = Math.max(
-                        ...homeInsightRows.rows.map((item) => Math.abs(item.value)),
-                        1,
-                      )
-                      const width = Math.min(100, (Math.abs(row.value) / maxValue) * 100)
-                      return (
-                        <div key={row.label} className="space-y-1.5">
-                          <div className="flex items-center justify-between gap-3 text-sm">
-                            <span className="min-w-0 truncate text-muted-foreground">
-                              {row.label}
-                            </span>
-                            <span
-                              className={cn(
-                                "shrink-0 font-medium tabular-nums",
-                                row.tone === "income" && "text-emerald-700 dark:text-emerald-400",
-                                row.tone === "expense" && "text-orange-700 dark:text-orange-400",
-                              )}
-                            >
-                              {activeHomeInsight === "stock" && row.label.includes("abaixo")
-                                ? Math.trunc(row.value)
-                                : formatCurrency(row.value)}
-                            </span>
-                          </div>
-                          <div className="h-2 overflow-hidden rounded-full bg-muted">
-                            <div
-                              className={cn(
-                                "h-full rounded-full",
-                                row.tone === "income"
-                                  ? "bg-emerald-500"
-                                  : row.tone === "expense"
-                                    ? "bg-orange-500"
-                                    : "bg-sky-500",
-                              )}
-                              style={{ width: `${width}%` }}
-                            />
-                          </div>
-                        </div>
-                      )
-                    })}
-                  </div>
-                </Dialog.Content>
-              </Dialog.Portal>
-            </Dialog.Root>
+            <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+              <HomeAreaCard
+                icon={Wallet}
+                title="Financeiro"
+                metric={formatCurrency(financeOperatingResultFinal)}
+                detail={`${financeOperatingMarginFinal.toFixed(1)}% margem · ${formatCurrency(
+                  financeCostsInFilterFinal,
+                )} custos`}
+                onClick={() => {
+                  setActiveModule("finance")
+                  setActiveFinanceSection("overview")
+                }}
+              />
+              <HomeAreaCard
+                icon={Store}
+                title="Comercial"
+                metric={`${salesCountFinal} pedido(s)`}
+                detail={`${mlListingsCount ?? 0} anuncios · ticket ${formatCurrency(ticketMedioFinal)}`}
+                onClick={() => {
+                  setActiveModule("mercadolivre")
+                  setActiveMlSidebarGroup("pedidos")
+                }}
+              />
+              <HomeAreaCard
+                icon={Boxes}
+                title="Operacao e estoque"
+                metric={formatCurrency(stockSummary.stockValue)}
+                detail={`${stockSummary.lowStockCount} abaixo minimo · ${productsWithoutCost.length} sem custo`}
+                onClick={() => {
+                  setActiveModule("stock")
+                  setActiveStockSection("overview")
+                }}
+              />
+              <HomeAreaCard
+                icon={Settings}
+                title="TI & Integracoes"
+                metric={`${technologyHealth.connectedCount}/${technologyHealth.totalCount} online`}
+                detail={
+                  technologyHealth.ok
+                    ? "ML e MP conectados"
+                    : technologyHealth.disconnected.join(", ")
+                }
+                onClick={() => setActiveModule("connections")}
+              />
+            </div>
 
             <div className="grid gap-4 lg:grid-cols-3">
               <Card className="border-border/70 shadow-sm lg:col-span-2">
-                <CardHeader className="pb-3">
-                  <div className="flex flex-wrap items-center justify-between gap-2">
-                    <div>
-                      <CardTitle className="text-base">Resumo financeiro</CardTitle>
-                      <CardDescription>
-                        {hasOrdersFinancialData
-                          ? homeFilterMatchesCurrentMonth
-                            ? "Filtro = mes atual: pedidos ML a esquerda; lancamentos manuais a direita (sem duplicar ML)."
-                            : "Pedidos ML no periodo do filtro (esq.) e resumo do mes civil atual (dir., para comparar)."
-                          : "Lancamentos manuais no periodo do filtro e mes corrente."}
-                      </CardDescription>
-                    </div>
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      className="text-sky-600 dark:text-sky-400 hover:text-sky-700"
-                      onClick={() => {
-                        setActiveModule("finance")
-                        setActiveFinanceSection("overview")
-                      }}
-                    >
-                      Ver detalhes
-                      <ArrowRight className="ml-1 size-3.5" />
-                    </Button>
+                <CardHeader className="flex flex-row flex-wrap items-center justify-between gap-2 pb-2">
+                  <div>
+                    <CardTitle className="inline-flex items-center gap-2 text-base">
+                      <Trophy className="size-4 text-amber-500" /> Radar comercial
+                    </CardTitle>
+                    <CardDescription>
+                      Vendas, anuncios e produtos campeoes do periodo.
+                    </CardDescription>
                   </div>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => {
+                      setActiveModule("finance")
+                      setActiveFinanceSection("abc")
+                    }}
+                  >
+                    ABC completo
+                  </Button>
                 </CardHeader>
-                <CardContent className="grid gap-6 sm:grid-cols-2">
-                  {hasOrdersFinancialData ? (
-                    <>
-                      <div className="space-y-3 rounded-xl border border-border/60 bg-muted/30 p-4">
-                        <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
-                          Pedidos ML (periodo do filtro)
-                        </p>
-                        <LineItem label="Receita bruta" value={salesInFilterFinal} />
-                        <LineItem label="Custos dos pedidos" value={expensesInFilterFinal} />
-                        <div className="border-t border-border/60 pt-2">
-                          <LineItem label="Lucro (pedidos)" value={operatingResultFinal} strong />
-                        </div>
-                        <p className="text-[11px] text-muted-foreground">
-                          {salesCountFinal} pedido(s) no filtro · alinhado aos cards do topo
-                        </p>
-                        {(summary.income > 0 || summary.expense > 0) && (
-                          <div className="border-t border-border/60 pt-3">
-                            <p className="mb-2 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
-                              + Lancamentos manuais (mesmo periodo)
-                            </p>
-                            <LineItem label="Entradas" value={summary.income} />
-                            <LineItem label="Saidas" value={summary.expense} />
-                            <LineItem label="Saldo manual" value={summary.balance} />
-                          </div>
-                        )}
-                      </div>
-                      <div className="space-y-3 rounded-xl border border-border/60 bg-muted/30 p-4">
-                        <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
-                          {homeFilterMatchesCurrentMonth
-                            ? "Lancamentos manuais (mes atual)"
-                            : "Mes civil atual · pedidos ML + manual"}
-                        </p>
-                        {!homeFilterMatchesCurrentMonth && (
-                          <>
-                            <LineItem
-                              label="Receita (pedidos ML)"
-                              value={homeCurrentMonthOrders.grossRevenue}
-                            />
-                            <LineItem
-                              label="Custos (pedidos ML)"
-                              value={homeCurrentMonthOrders.totalCosts}
-                            />
-                            <div className="border-t border-border/60 pt-2">
-                              <LineItem
-                                label="Lucro (pedidos ML)"
-                                value={homeCurrentMonthOrders.netProfit}
-                                strong
-                              />
-                            </div>
-                            <p className="text-[11px] text-muted-foreground">
-                              {homeCurrentMonthOrders.ordersCount} pedido(s) neste mes na lista
-                              carregada
-                            </p>
-                          </>
-                        )}
-                        <div
-                          className={cn(
-                            "space-y-2",
-                            !homeFilterMatchesCurrentMonth && "border-t border-border/60 pt-3",
-                          )}
-                        >
-                          {!homeFilterMatchesCurrentMonth && (
-                            <p className="mb-1 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
-                              Lancamentos manuais (mes calendario)
-                            </p>
-                          )}
-                          <LineItem label="Entradas" value={monthlyReport.income} />
-                          <LineItem label="Saidas" value={monthlyReport.expense} />
-                          <LineItem label="Resultado" value={monthlyReport.balance} />
-                        </div>
-                        <p className="text-[11px] text-muted-foreground">
-                          {transactions.length} lancamento(s) cadastrado(s) no total
-                        </p>
-                      </div>
-                    </>
+                <CardContent className="space-y-4">
+                  <div className="grid gap-3 sm:grid-cols-3">
+                    <LineItem label="Receita" value={salesInFilterFinal} />
+                    <LineItem label="Pedidos" value={salesCountFinal} format="number" />
+                    <LineItem label="Itens vendidos" value={soldItemsFinal} format="number" />
+                  </div>
+                  {homeProductChampions.length === 0 ? (
+                    <p className="text-sm text-muted-foreground">
+                      Sem campeoes no periodo ou produtos sem custo cadastrado.
+                    </p>
                   ) : (
-                    <>
-                      <div className="space-y-3 rounded-xl border border-border/60 bg-muted/30 p-4">
-                        <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
-                          Lancamentos (filtro)
-                        </p>
-                        <LineItem label="Entradas" value={summary.income} />
-                        <LineItem label="Saidas" value={summary.expense} />
-                        <div className="border-t border-border/60 pt-2">
-                          <LineItem label="Saldo no periodo" value={summary.balance} strong />
-                        </div>
-                      </div>
-                      <div className="space-y-3 rounded-xl border border-border/60 bg-muted/30 p-4">
-                        <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
-                          Mes atual (calendario)
-                        </p>
-                        <LineItem label="Entradas" value={monthlyReport.income} />
-                        <LineItem label="Saidas" value={monthlyReport.expense} />
-                        <div className="border-t border-border/60 pt-2">
-                          <LineItem label="Resultado do mes" value={monthlyReport.balance} strong />
-                        </div>
-                        <p className="text-[11px] text-muted-foreground">
-                          {transactions.length} lancamentos no total
-                        </p>
-                      </div>
-                    </>
+                    <ul className="divide-y divide-border/60">
+                      {homeProductChampions.slice(0, 4).map((item, index) => {
+                        const itemImageUrl = "imageUrl" in item ? item.imageUrl : undefined
+
+                        return (
+                          <li
+                            key={item.productId}
+                            className="flex flex-wrap items-center justify-between gap-3 py-3 first:pt-0"
+                          >
+                            <div className="flex min-w-0 flex-1 items-center gap-3">
+                              <span className="flex size-8 shrink-0 items-center justify-center rounded-full bg-amber-500/15 text-xs font-bold text-amber-800 dark:text-amber-200">
+                                {index + 1}
+                              </span>
+                              <div className="size-9 shrink-0 overflow-hidden rounded-full border bg-muted">
+                                {itemImageUrl ? (
+                                  <img
+                                    src={itemImageUrl}
+                                    alt={item.productName}
+                                    className="h-full w-full object-cover"
+                                    loading="lazy"
+                                  />
+                                ) : (
+                                  <div className="flex h-full w-full items-center justify-center text-[10px] text-muted-foreground">
+                                    --
+                                  </div>
+                                )}
+                              </div>
+                              <div className="min-w-0">
+                                <p className="truncate font-medium">{item.productName}</p>
+                                <p className="text-xs text-muted-foreground">
+                                  {item.unitsSold} un. · margem {item.marginPercent.toFixed(1)}%
+                                </p>
+                              </div>
+                            </div>
+                            <div className="text-right tabular-nums">
+                              <p className={cn("font-semibold", valueToneClass(item.profit))}>
+                                {formatCurrency(item.profit)}
+                              </p>
+                              <p className="text-xs text-muted-foreground">
+                                rec. {formatCurrency(item.revenue)}
+                              </p>
+                            </div>
+                          </li>
+                        )
+                      })}
+                    </ul>
                   )}
                 </CardContent>
               </Card>
 
-              <div className="flex flex-col gap-4">
-                {stockSummary.lowStockCount > 0 && (
-                  <Card className="border-amber-500/40 bg-amber-500/6 shadow-sm dark:bg-amber-950/20">
-                    <CardContent className="flex items-start gap-3 pt-5">
-                      <AlertCircle className="mt-0.5 size-5 shrink-0 text-amber-600 dark:text-amber-400" />
-                      <div>
-                        <p className="font-medium text-amber-950 dark:text-amber-100">
-                          {stockSummary.lowStockCount} produto(s) abaixo do minimo
-                        </p>
-                        <Button
-                          variant="link"
-                          className="h-auto p-0 text-amber-800 dark:text-amber-200"
-                          onClick={() => {
-                            setActiveModule("stock")
-                            setActiveStockSection("overview")
-                          }}
-                        >
-                          Revisar estoque
-                        </Button>
-                      </div>
-                    </CardContent>
-                  </Card>
-                )}
-                <Card className="border-border/70 shadow-sm">
-                  <CardHeader className="pb-2">
-                    <CardTitle className="text-base">Mercado Livre</CardTitle>
-                    <CardDescription>Anuncios e pedidos (totais da API)</CardDescription>
-                  </CardHeader>
-                  <CardContent className="grid grid-cols-2 gap-3">
-                    <div className="rounded-lg border border-border/50 bg-muted/20 p-3">
-                      <p className="text-xs text-muted-foreground">Anuncios</p>
-                      <p className="text-xl font-semibold tabular-nums">{mlListingsCount ?? "—"}</p>
-                    </div>
-                    <div className="rounded-lg border border-border/50 bg-muted/20 p-3">
-                      <p className="text-xs text-muted-foreground">Pedidos</p>
-                      <p className="text-xl font-semibold tabular-nums">{mlOrdersCount ?? "—"}</p>
-                    </div>
-                  </CardContent>
-                </Card>
-                <Card className="border-border/70 shadow-sm">
-                  <CardHeader className="pb-2">
-                    <CardTitle className="text-base">Custos no periodo</CardTitle>
-                    <CardDescription className="text-xs">
-                      {hasOrdersFinancialData
-                        ? "Composicao dos pedidos ML no filtro (produto, taxas, frete, etc.)."
-                        : "Despesas por tipo nos lancamentos manuais."}
-                    </CardDescription>
-                  </CardHeader>
-                  <CardContent className="space-y-2 text-sm">
-                    {hasOrdersFinancialData && costComposition.length > 0 ? (
-                      costComposition.map((row) => (
-                        <LineItem
-                          key={row.categoryName}
-                          label={row.categoryName}
-                          value={row.total}
-                        />
-                      ))
-                    ) : (
-                      <>
-                        <LineItem label="Operacional" value={costBreakdown.operationalCost} />
-                        <LineItem label="Fixos" value={costBreakdown.fixedCost} />
-                        <LineItem label="Ferramentas (fixo)" value={costBreakdown.toolsFixedCost} />
-                      </>
-                    )}
-                  </CardContent>
-                </Card>
-              </div>
-            </div>
-
-            {homeEvolutionPreview.length > 0 && (
               <Card className="border-border/70 shadow-sm">
                 <CardHeader className="pb-2">
-                  <CardTitle className="text-base">Receita vs despesas (ultimos meses)</CardTitle>
-                  <CardDescription>
-                    {hasOrdersFinancialData &&
-                    homeOrdersEvolution.some((p) => p.income > 0 || p.expense > 0)
-                      ? "Agregado por mes a partir dos pedidos Mercado Livre carregados."
-                      : "Baseado nos lancamentos financeiros manuais."}
-                  </CardDescription>
+                  <CardTitle className="text-base">Socios e reinvestimento</CardTitle>
+                  <CardDescription>Visual, sem lancar custo automaticamente.</CardDescription>
                 </CardHeader>
-                <CardContent>
-                  <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-                    {homeEvolutionPreview.map((point) => {
-                      const max = Math.max(point.income, point.expense, 1)
-                      return (
-                        <div
-                          key={point.key}
-                          className="rounded-xl border border-border/50 bg-muted/20 p-3"
-                        >
-                          <p className="text-xs font-medium text-muted-foreground">
-                            {point.monthLabel}
-                          </p>
-                          <p className="mt-1 text-sm font-semibold text-emerald-700 dark:text-emerald-400">
-                            + {formatCurrency(point.income)}
-                          </p>
-                          <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-muted">
-                            <div
-                              className="h-full rounded-full bg-emerald-500/80"
-                              style={{ width: `${Math.min(100, (point.income / max) * 100)}%` }}
-                            />
-                          </div>
-                          <p className="mt-2 text-xs text-muted-foreground">
-                            Desp. {formatCurrency(point.expense)}
-                          </p>
-                          <div className="mt-1 h-1.5 overflow-hidden rounded-full bg-muted">
-                            <div
-                              className="h-full rounded-full bg-orange-500/70"
-                              style={{ width: `${Math.min(100, (point.expense / max) * 100)}%` }}
-                            />
-                          </div>
-                        </div>
-                      )
-                    })}
+                <CardContent className="space-y-3 text-sm">
+                  <LineItem label="Lucro base" value={partnerDistributionPreview.base} strong />
+                  <LineItem
+                    label="Reinvestir 70%"
+                    value={partnerDistributionPreview.reinvestment}
+                  />
+                  <LineItem
+                    label="Distribuir 30%"
+                    value={partnerDistributionPreview.distributable}
+                  />
+                  <div className="rounded-none border border-border/70 bg-muted/20 p-3">
+                    <LineItem label="Socio A 50%" value={partnerDistributionPreview.partnerShare} />
+                    <LineItem label="Socio B 50%" value={partnerDistributionPreview.partnerShare} />
                   </div>
+                  <p className="text-xs/relaxed text-muted-foreground">
+                    Sem retirada registrada, o lucro e tratado como reinvestido na leitura
+                    gerencial.
+                  </p>
                 </CardContent>
               </Card>
-            )}
+            </div>
 
-            <Card className="border-border/70 shadow-sm">
-              <CardHeader className="flex flex-row flex-wrap items-center justify-between gap-2 pb-2">
-                <div>
-                  <CardTitle className="inline-flex items-center gap-2 text-base">
-                    <Trophy className="size-4 text-amber-500" />
-                    Campeoes de lucro
-                  </CardTitle>
-                  <CardDescription>
-                    {hasOrdersFinancialData
-                      ? "Lucro por item nos pedidos ML do periodo (taxas e frete rateados)."
-                      : "Vendas registradas como saida no estoque no periodo filtrado."}
-                  </CardDescription>
-                </div>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  className="rounded-full"
-                  onClick={() => {
-                    setActiveModule("finance")
-                    setActiveFinanceSection("abc")
-                  }}
-                >
-                  ABC completo
-                </Button>
-              </CardHeader>
-              <CardContent>
-                {homeProductChampions.length === 0 ? (
-                  <p className="text-sm text-muted-foreground">
-                    {hasOrdersFinancialData
-                      ? "Sem itens nos pedidos do periodo ou custos de produto zerados no estoque."
-                      : "Sem vendas no periodo ou cadastre custos nos produtos para ver margem."}
-                  </p>
-                ) : (
-                  <ul className="divide-y divide-border/60">
-                    {homeProductChampions.map((item, index) => {
-                      const itemImageUrl = "imageUrl" in item ? item.imageUrl : undefined
-                      return (
-                        <li
-                          key={item.productId}
-                          className="flex flex-wrap items-center justify-between gap-3 py-3 first:pt-0"
-                        >
-                          <div className="flex min-w-0 flex-1 items-center gap-3">
-                            <span className="flex size-8 shrink-0 items-center justify-center rounded-full bg-amber-500/15 text-xs font-bold text-amber-800 dark:text-amber-200">
-                              {index + 1}
-                            </span>
-                            <div className="size-9 shrink-0 overflow-hidden rounded-full border bg-muted">
-                              {itemImageUrl ? (
-                                <img
-                                  src={itemImageUrl}
-                                  alt={item.productName}
-                                  className="h-full w-full object-cover"
-                                  loading="lazy"
-                                />
-                              ) : (
-                                <div className="flex h-full w-full items-center justify-center text-[10px] text-muted-foreground">
-                                  —
-                                </div>
-                              )}
-                            </div>
-                            <div className="min-w-0">
-                              <p className="truncate font-medium">{item.productName}</p>
-                              <p className="text-xs text-muted-foreground">
-                                {item.unitsSold} un. · margem {item.marginPercent.toFixed(1)}%
-                              </p>
-                            </div>
-                          </div>
-                          <div className="text-right tabular-nums">
-                            <p className={cn("font-semibold", valueToneClass(item.profit))}>
-                              {formatCurrency(item.profit)}
-                            </p>
-                            <p className="text-xs text-muted-foreground">
-                              rec. {formatCurrency(item.revenue)}
-                            </p>
-                          </div>
-                        </li>
-                      )
-                    })}
-                  </ul>
-                )}
-              </CardContent>
-            </Card>
+            <div className="grid gap-4 md:grid-cols-2">
+              <HomeAreaCard
+                icon={Search}
+                title="Branch Hunter"
+                metric="Analises e oportunidades"
+                detail="Abrir radar de produtos, concorrencia e anuncios."
+                onClick={() => {
+                  setActiveModule("branchhunter")
+                  setActiveHunterSection("analise-anuncio")
+                }}
+              />
+              <HomeAreaCard
+                icon={RefreshCw}
+                title="Sincronizacao"
+                metric={globalSyncLoading ? "Sincronizando" : "Atualizar dados"}
+                detail={globalSyncStatus || "Rodar sync de ML, MP e dados externos."}
+                onClick={() => setActiveModule("connections")}
+              />
+            </div>
           </div>
         )}
 
         {activeModule === "connections" && (
-          <section className="mx-auto max-w-5xl space-y-4">
+          <section className="mx-auto max-w-6xl space-y-5 pb-8">
             <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
               <div>
-                <h1 className="text-2xl font-semibold tracking-tight">Conexões e sync</h1>
+                <h1 className="text-2xl font-semibold tracking-tight">TI & Integrações</h1>
                 <p className="text-sm text-muted-foreground">
-                  Conecte marketplaces uma vez. O dashboard sincroniza em background ao abrir e
-                  mantém os dados no Convex.
+                  Saúde das APIs, sincronizações, dados críticos e manutenção da operação digital.
                 </p>
               </div>
-              <Button disabled={globalSyncLoading} onClick={() => void syncAllExternalData(true)}>
-                <RefreshCw className={cn("mr-2 size-4", globalSyncLoading && "animate-spin")} />
-                {globalSyncLoading ? "Sincronizando..." : "Atualizar agora"}
-              </Button>
+              <div className="flex flex-wrap gap-2">
+                <Button
+                  variant="outline"
+                  disabled={mlListingsLoading}
+                  onClick={() => void loadMlListings(true)}
+                >
+                  <Database className={cn("mr-2 size-4", mlListingsLoading && "animate-pulse")} />
+                  Validar anúncios
+                </Button>
+                <Button disabled={globalSyncLoading} onClick={() => void syncAllExternalData(true)}>
+                  <RefreshCw className={cn("mr-2 size-4", globalSyncLoading && "animate-spin")} />
+                  {globalSyncLoading ? "Sincronizando..." : "Sincronizar tudo"}
+                </Button>
+              </div>
             </div>
 
             {globalSyncStatus && (
@@ -5717,77 +5633,273 @@ export function FinancialDashboard() {
               </div>
             )}
 
-            <div className="grid gap-3 md:grid-cols-2">
-              <Card>
-                <CardHeader>
-                  <CardTitle className="flex items-center gap-2 text-base">
-                    <Store className="size-4" />
-                    Mercado Livre
+            <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+              <HomeExecutiveCard
+                icon={ShieldCheck}
+                label="Saúde geral"
+                value={technologyAlertCount > 0 ? `${technologyAlertCount} alerta(s)` : "OK"}
+                detail={`${technologyHealth.connectedCount}/${technologyHealth.totalCount} integrações conectadas`}
+                tone={technologyAlertCount > 0 ? "warning" : "income"}
+                onClick={() => void syncAllExternalData(true)}
+              />
+              <HomeExecutiveCard
+                icon={Database}
+                label="Convex"
+                value={financeData && stockData ? "Online" : "Carregando"}
+                detail="Financeiro, estoque, contas e histórico salvos no banco"
+                tone={financeData && stockData ? "income" : "neutral"}
+                onClick={() => setActiveModule("home")}
+              />
+              <HomeExecutiveCard
+                icon={Store}
+                label="Mercado Livre"
+                value={mlConnectionStatus?.connected ? "Conectado" : "Pendente"}
+                detail={`${mlListingsCount ?? 0} anúncios · ${mlOrdersCount ?? 0} pedidos`}
+                tone={mlConnectionStatus?.connected ? "income" : "danger"}
+                onClick={() => setActiveModule("mercadolivre")}
+              />
+              <HomeExecutiveCard
+                icon={Wallet}
+                label="Mercado Pago"
+                value={mpConnectionStatus?.connected ? "Conectado" : "Pendente"}
+                detail={`Último report: ${formatSyncTimestamp(mpSyncProviderStatus?.lastSuccessAt)}`}
+                tone={mpConnectionStatus?.connected ? "income" : "danger"}
+                onClick={() => {
+                  setActiveModule("finance")
+                  setActiveFinanceSection("cashflow")
+                }}
+              />
+            </div>
+
+            <div className="grid gap-4 lg:grid-cols-[1.1fr_0.9fr]">
+              <Card className="border-border/70 shadow-sm">
+                <CardHeader className="pb-2">
+                  <CardTitle className="inline-flex items-center gap-2 text-base">
+                    <Activity className="size-4 text-sky-600" />
+                    Sincronizações
                   </CardTitle>
                   <CardDescription>
-                    Pedidos, anúncios, métricas e estoque sincronizado.
+                    Execução, resultado e atualização das fontes externas.
                   </CardDescription>
                 </CardHeader>
-                <CardContent className="space-y-3 text-sm">
-                  <div className="flex items-center justify-between">
-                    <span>Status</span>
-                    <Badge variant={mlConnectionStatus?.connected ? "default" : "secondary"}>
-                      {mlConnectionStatus?.connected ? "Conectado" : "Não conectado"}
-                    </Badge>
-                  </div>
-                  <div className="flex items-center justify-between">
-                    <span>Último sync estoque</span>
-                    <span className="text-muted-foreground">
-                      {externalSyncStatuses.find((s) => s.provider === "stock")?.lastSuccessAt
-                        ? new Date(
-                            externalSyncStatuses.find((s) => s.provider === "stock")!
-                              .lastSuccessAt!,
-                          ).toLocaleString("pt-BR")
-                        : "Nunca"}
-                    </span>
-                  </div>
-                  <div className="flex gap-2">
-                    <Button asChild size="sm" variant="outline">
-                      <a href="/api/ml/connect">Conectar</a>
+                <CardContent className="space-y-3">
+                  <SyncStatusRow
+                    label="Sync geral"
+                    status={allSyncStatus?.status ?? "idle"}
+                    lastSuccessAt={allSyncStatus?.lastSuccessAt}
+                    message={allSyncStatus?.message}
+                  />
+                  <SyncStatusRow
+                    label="Estoque Mercado Livre"
+                    status={stockSyncStatus?.status ?? "idle"}
+                    lastSuccessAt={stockSyncStatus?.lastSuccessAt ?? mlLastSyncAt ?? undefined}
+                    message={stockSyncStatus?.message ?? mlInfo ?? undefined}
+                  />
+                  <SyncStatusRow
+                    label="Mercado Pago reports"
+                    status={mpSyncProviderStatus?.status ?? mpSyncState}
+                    lastSuccessAt={mpSyncProviderStatus?.lastSuccessAt}
+                    message={mpSyncProviderStatus?.message ?? mpSyncStatus ?? undefined}
+                  />
+                  <div className="flex flex-wrap gap-2 pt-1">
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      disabled={mlSyncingStock}
+                      onClick={() => void syncStockWithMl()}
+                    >
+                      <RefreshCw
+                        className={cn("mr-2 size-3.5", mlSyncingStock && "animate-spin")}
+                      />
+                      Sync estoque ML
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      disabled={mlOrdersLoading}
+                      onClick={() =>
+                        void loadMlOrders({
+                          startDate: filters.startDate,
+                          endDate: filters.endDate,
+                        })
+                      }
+                    >
+                      <ShoppingBag className="mr-2 size-3.5" />
+                      Atualizar pedidos
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      disabled={mpSyncLoading}
+                      onClick={() => void syncMpReports({ manual: true })}
+                    >
+                      <Wallet className="mr-2 size-3.5" />
+                      Sync Mercado Pago
                     </Button>
                   </div>
                 </CardContent>
               </Card>
 
-              <Card>
-                <CardHeader>
-                  <CardTitle className="flex items-center gap-2 text-base">
-                    <Wallet className="size-4" />
-                    Mercado Pago
+              <Card className="border-border/70 shadow-sm">
+                <CardHeader className="pb-2">
+                  <CardTitle className="inline-flex items-center gap-2 text-base">
+                    <AlertCircle className="size-4 text-amber-600" />
+                    Qualidade dos dados
                   </CardTitle>
                   <CardDescription>
-                    Reports oficiais, ledger de saldo e lançamentos futuros.
+                    Pontos que afetam margem, estoque e leitura gerencial.
+                  </CardDescription>
+                </CardHeader>
+                <CardContent className="space-y-2">
+                  {dataQualityIssues.map((issue) => (
+                    <button
+                      key={issue.title}
+                      type="button"
+                      onClick={issue.action}
+                      className="flex w-full items-start justify-between gap-3 rounded-none border border-border/70 px-3 py-2 text-left transition hover:bg-muted/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                    >
+                      <div className="min-w-0">
+                        <p className="text-sm font-medium">{issue.title}</p>
+                        <p className="text-xs text-muted-foreground">{issue.description}</p>
+                      </div>
+                      <Badge
+                        variant={issue.tone === "success" ? "default" : "secondary"}
+                        className={cn(
+                          "shrink-0",
+                          issue.tone === "danger" && "bg-red-500/15 text-red-700 dark:text-red-300",
+                          issue.tone === "warning" &&
+                            "bg-amber-500/15 text-amber-800 dark:text-amber-200",
+                        )}
+                      >
+                        {issue.count}
+                      </Badge>
+                    </button>
+                  ))}
+                </CardContent>
+              </Card>
+            </div>
+
+            <div className="grid gap-4 lg:grid-cols-3">
+              <Card className="border-border/70 shadow-sm">
+                <CardHeader className="pb-2">
+                  <CardTitle className="inline-flex items-center gap-2 text-base">
+                    <Boxes className="size-4 text-emerald-600" />
+                    Automação de estoque
+                  </CardTitle>
+                  <CardDescription>Controle de baixa, Full e reconciliação.</CardDescription>
+                </CardHeader>
+                <CardContent className="space-y-3 text-sm">
+                  <LineItem
+                    label="Produtos Full"
+                    value={fullStockProducts.length}
+                    format="number"
+                  />
+                  <LineItem
+                    label="Abaixo do mínimo"
+                    value={stockSummary.lowStockCount}
+                    format="number"
+                  />
+                  <LineItem label="Sem custo" value={productsWithoutCost.length} format="number" />
+                  <LineItem
+                    label="Sinais de divergência"
+                    value={stockDivergenceSignals.length}
+                    format="number"
+                  />
+                  <p className="text-xs/relaxed text-muted-foreground">
+                    A baixa persistida hoje vem da reconciliação com o Mercado Livre e das
+                    movimentações salvas no Convex. Vendas novas devem aparecer aqui como pendência
+                    se o sync não refletir a quantidade.
+                  </p>
+                </CardContent>
+              </Card>
+
+              <Card className="border-border/70 shadow-sm">
+                <CardHeader className="pb-2">
+                  <CardTitle className="inline-flex items-center gap-2 text-base">
+                    <WifiIcon className="size-4 text-violet-600" />
+                    Webhooks e APIs
+                  </CardTitle>
+                  <CardDescription>
+                    Recebimento de eventos e disponibilidade externa.
                   </CardDescription>
                 </CardHeader>
                 <CardContent className="space-y-3 text-sm">
-                  <div className="flex items-center justify-between">
-                    <span>Status</span>
-                    <Badge variant={mpConnectionStatus?.connected ? "default" : "secondary"}>
-                      {mpConnectionStatus?.connected ? "Conectado" : "Não conectado"}
-                    </Badge>
-                  </div>
-                  <div className="flex items-center justify-between">
-                    <span>Último sync reports</span>
-                    <span className="text-muted-foreground">
-                      {externalSyncStatuses.find((s) => s.provider === "mercado_pago")
-                        ?.lastSuccessAt
-                        ? new Date(
-                            externalSyncStatuses.find((s) => s.provider === "mercado_pago")!
-                              .lastSuccessAt!,
-                          ).toLocaleString("pt-BR")
-                        : "Nunca"}
-                    </span>
-                  </div>
-                  <div className="flex gap-2">
-                    <Button asChild size="sm" variant="outline">
-                      <a href="/api/mp/connect">Conectar</a>
-                    </Button>
-                  </div>
+                  <TechStatusLine label="Webhook ML" value={lastWebhookStatus} tone="warning" />
+                  <TechStatusLine
+                    label="Pedidos ML API"
+                    value={mlOrdersLoading ? "Carregando" : `${mlOrders.length} no período`}
+                    tone={mlConnectionStatus?.connected ? "success" : "danger"}
+                  />
+                  <TechStatusLine
+                    label="Anúncios ML API"
+                    value={
+                      mlListingsLoading
+                        ? "Carregando"
+                        : `${mlPlainListings.length || mlListingsCount || 0} carregado(s)`
+                    }
+                    tone={mlConnectionStatus?.connected ? "success" : "danger"}
+                  />
+                  <TechStatusLine
+                    label="Mercado Pago API"
+                    value={mpConnectionStatus?.connected ? "Disponível" : "Não conectado"}
+                    tone={mpConnectionStatus?.connected ? "success" : "danger"}
+                  />
+                </CardContent>
+              </Card>
+
+              <Card className="border-border/70 shadow-sm">
+                <CardHeader className="pb-2">
+                  <CardTitle className="inline-flex items-center gap-2 text-base">
+                    <Wrench className="size-4 text-slate-600" />
+                    Manutenção
+                  </CardTitle>
+                  <CardDescription>Ações rápidas para corrigir a base.</CardDescription>
+                </CardHeader>
+                <CardContent className="grid gap-2">
+                  <Button
+                    variant="outline"
+                    className="justify-start"
+                    onClick={() => {
+                      setActiveModule("mercadolivre")
+                      setActiveMlSidebarGroup("pedidos")
+                      setActiveMlSection("orders")
+                      setMlOrdersOnlyNoSku(true)
+                    }}
+                  >
+                    <ShoppingBag className="mr-2 size-4" />
+                    Resolver pedidos sem vínculo
+                  </Button>
+                  <Button
+                    variant="outline"
+                    className="justify-start"
+                    onClick={() => {
+                      setActiveModule("stock")
+                      setActiveStockSection("products")
+                    }}
+                  >
+                    <Tag className="mr-2 size-4" />
+                    Cadastrar custos
+                  </Button>
+                  <Button
+                    variant="outline"
+                    className="justify-start"
+                    onClick={() => {
+                      setActiveModule("finance")
+                      setActiveFinanceSection("history")
+                    }}
+                  >
+                    <ReceiptText className="mr-2 size-4" />
+                    Revisar lançamentos
+                  </Button>
+                  <Button
+                    variant="outline"
+                    className="justify-start"
+                    disabled={globalSyncLoading}
+                    onClick={() => void syncAllExternalData(true)}
+                  >
+                    <RefreshCw className="mr-2 size-4" />
+                    Reprocessar sincronizações
+                  </Button>
                 </CardContent>
               </Card>
             </div>
@@ -6048,8 +6160,8 @@ export function FinancialDashboard() {
                             <CircleDollarSign className="size-3.5" />
                             Lucro
                           </CardDescription>
-                          <CardTitle className={valueToneClass(operatingResultFinal)}>
-                            {formatCurrency(operatingResultFinal)}
+                          <CardTitle className={valueToneClass(financeOperatingResultFinal)}>
+                            {formatCurrency(financeOperatingResultFinal)}
                           </CardTitle>
                         </CardHeader>
                         <CardContent className="text-xs text-muted-foreground">
@@ -6101,7 +6213,7 @@ export function FinancialDashboard() {
                             Custos
                           </CardDescription>
                           <CardTitle className="text-orange-700 dark:text-orange-400">
-                            {formatCurrency(expensesInFilterFinal)}
+                            {formatCurrency(financeCostsInFilterFinal)}
                           </CardTitle>
                         </CardHeader>
                         <CardContent className="text-xs text-muted-foreground">
@@ -6152,8 +6264,8 @@ export function FinancialDashboard() {
                             <Percent className="size-3.5" />
                             Margem
                           </CardDescription>
-                          <CardTitle className={valueToneClass(operatingMarginFinal)}>
-                            {operatingMarginFinal.toFixed(1)}%
+                          <CardTitle className={valueToneClass(financeOperatingMarginFinal)}>
+                            {financeOperatingMarginFinal.toFixed(1)}%
                           </CardTitle>
                         </CardHeader>
                         <CardContent className="text-xs text-muted-foreground">
@@ -6218,6 +6330,25 @@ export function FinancialDashboard() {
                             numberLabels={["Vendas", "Itens vendidos"]}
                             showHeader={false}
                           />
+                          {activeFinanceInsight === "costs" && (
+                            <CostDetailList
+                              groups={financeCostDetailGroups}
+                              onOpenTarget={(target) => {
+                                setFinanceInsightModalOpen(false)
+                                if (target === "orders") {
+                                  setActiveModule("mercadolivre")
+                                  setActiveMlSidebarGroup("pedidos")
+                                  setActiveMlSection("orders")
+                                  return
+                                }
+                                setActiveModule("finance")
+                                setActiveFinanceSection("history")
+                                setHistoryKindFilter("expense")
+                                setHistoryStartDate(filters.startDate ?? "")
+                                setHistoryEndDate(filters.endDate ?? "")
+                              }}
+                            />
+                          )}
                         </Dialog.Content>
                       </Dialog.Portal>
                     </Dialog.Root>
@@ -11213,6 +11344,184 @@ function LineItem({
   )
 }
 
+function HomeExecutiveCard({
+  icon: Icon,
+  label,
+  value,
+  detail,
+  tone,
+  onClick,
+}: {
+  icon: React.ComponentType<{ className?: string }>
+  label: string
+  value: string
+  detail: string
+  tone: "income" | "warning" | "danger" | "neutral"
+  onClick: () => void
+}) {
+  const accentClass =
+    tone === "income"
+      ? "bg-emerald-500/10 text-emerald-700 dark:text-emerald-300"
+      : tone === "warning"
+        ? "bg-amber-500/10 text-amber-700 dark:text-amber-300"
+        : tone === "danger"
+          ? "bg-red-500/10 text-red-700 dark:text-red-300"
+          : "bg-primary/10 text-primary"
+
+  return (
+    <Card
+      role="button"
+      tabIndex={0}
+      className="cursor-pointer border-border/70 shadow-sm transition hover:border-primary/35 hover:shadow-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+      onClick={onClick}
+      onKeyDown={(event) => {
+        if (event.key === "Enter" || event.key === " ") {
+          event.preventDefault()
+          onClick()
+        }
+      }}
+    >
+      <CardContent className="pt-6">
+        <div className="flex items-start justify-between gap-3">
+          <div className={cn("rounded-lg p-2", accentClass)}>
+            <Icon className="size-5" />
+          </div>
+          <span className="text-right text-xs font-medium uppercase tracking-wide text-muted-foreground">
+            {label}
+          </span>
+        </div>
+        <p
+          className={cn(
+            "mt-4 text-2xl font-bold tracking-tight tabular-nums sm:text-3xl",
+            tone === "income" && "text-emerald-700 dark:text-emerald-300",
+            tone === "danger" && "text-red-700 dark:text-red-300",
+          )}
+        >
+          {value}
+        </p>
+        <p className="mt-1 text-xs text-muted-foreground">{detail}</p>
+      </CardContent>
+    </Card>
+  )
+}
+
+function HomeAreaCard({
+  icon: Icon,
+  title,
+  metric,
+  detail,
+  onClick,
+}: {
+  icon: React.ComponentType<{ className?: string }>
+  title: string
+  metric: string
+  detail: string
+  onClick: () => void
+}) {
+  return (
+    <Card
+      role="button"
+      tabIndex={0}
+      className="cursor-pointer border-border/70 shadow-sm transition hover:border-primary/35 hover:bg-muted/20 hover:shadow-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+      onClick={onClick}
+      onKeyDown={(event) => {
+        if (event.key === "Enter" || event.key === " ") {
+          event.preventDefault()
+          onClick()
+        }
+      }}
+    >
+      <CardContent className="flex items-start gap-3 pt-5">
+        <div className="rounded-lg bg-primary/10 p-2 text-primary">
+          <Icon className="size-4" />
+        </div>
+        <div className="min-w-0 flex-1">
+          <p className="text-sm font-medium">{title}</p>
+          <p className="mt-1 truncate text-lg font-semibold tabular-nums">{metric}</p>
+          <p className="mt-1 line-clamp-2 text-xs text-muted-foreground">{detail}</p>
+        </div>
+        <ArrowRight className="mt-1 size-4 shrink-0 text-muted-foreground" />
+      </CardContent>
+    </Card>
+  )
+}
+
+function formatSyncTimestamp(timestamp?: number) {
+  return timestamp ? new Date(timestamp).toLocaleString("pt-BR") : "Nunca"
+}
+
+function SyncStatusRow({
+  label,
+  status,
+  lastSuccessAt,
+  message,
+}: {
+  label: string
+  status: "idle" | "running" | "success" | "failed" | "pending"
+  lastSuccessAt?: number
+  message?: string
+}) {
+  const tone =
+    status === "success"
+      ? "bg-emerald-500/15 text-emerald-700 dark:text-emerald-300"
+      : status === "failed"
+        ? "bg-red-500/15 text-red-700 dark:text-red-300"
+        : status === "running" || status === "pending"
+          ? "bg-sky-500/15 text-sky-700 dark:text-sky-300"
+          : "bg-muted text-muted-foreground"
+
+  return (
+    <div className="rounded-none border border-border/70 px-3 py-2">
+      <div className="flex flex-wrap items-start justify-between gap-2">
+        <div className="min-w-0">
+          <p className="text-sm font-medium">{label}</p>
+          <p className="text-xs text-muted-foreground">
+            Último sucesso: {formatSyncTimestamp(lastSuccessAt)}
+          </p>
+          {message && <p className="mt-1 line-clamp-2 text-xs text-muted-foreground">{message}</p>}
+        </div>
+        <Badge className={cn("shrink-0", tone)} variant="secondary">
+          {status === "running"
+            ? "rodando"
+            : status === "pending"
+              ? "pendente"
+              : status === "success"
+                ? "sucesso"
+                : status === "failed"
+                  ? "falha"
+                  : "idle"}
+        </Badge>
+      </div>
+    </div>
+  )
+}
+
+function TechStatusLine({
+  label,
+  value,
+  tone,
+}: {
+  label: string
+  value: string
+  tone: "success" | "warning" | "danger" | "neutral"
+}) {
+  return (
+    <div className="flex items-center justify-between gap-3">
+      <span className="text-muted-foreground">{label}</span>
+      <span
+        className={cn(
+          "text-right font-medium",
+          tone === "success" && "text-emerald-700 dark:text-emerald-300",
+          tone === "warning" && "text-amber-700 dark:text-amber-300",
+          tone === "danger" && "text-red-700 dark:text-red-300",
+        )}
+      >
+        {value}
+      </span>
+    </div>
+  )
+}
+
 function MetricInsightPanel({
   title,
   description,
@@ -11274,5 +11583,68 @@ function MetricInsightPanel({
         })}
       </CardContent>
     </Card>
+  )
+}
+
+function CostDetailList({
+  groups,
+  onOpenTarget,
+}: {
+  groups: CostDetailGroup[]
+  onOpenTarget: (target: CostDetailTarget) => void
+}) {
+  if (groups.length === 0) return null
+
+  return (
+    <div className="mt-5 space-y-3 border-t border-border/70 pt-4">
+      {groups.map((group) => {
+        const visibleItems = group.items.slice(0, 4)
+        const hiddenCount = Math.max(0, group.items.length - visibleItems.length)
+        return (
+          <div key={group.label} className="rounded-none border border-border/70 bg-muted/20 p-3">
+            <div className="flex items-start justify-between gap-3">
+              <div className="min-w-0">
+                <p className="truncate text-sm font-medium">{group.label}</p>
+                <p className="text-xs text-muted-foreground">{group.items.length} registro(s)</p>
+              </div>
+              <span className="shrink-0 text-sm font-semibold tabular-nums text-orange-700 dark:text-orange-400">
+                {formatCurrency(group.total)}
+              </span>
+            </div>
+
+            <div className="mt-3 space-y-2">
+              {visibleItems.map((item, index) => (
+                <div
+                  key={`${group.label}-${item.label}-${index}`}
+                  className="flex items-start justify-between gap-3 text-xs"
+                >
+                  <div className="min-w-0">
+                    <p className="truncate text-foreground">{item.label}</p>
+                    {item.detail && <p className="truncate text-muted-foreground">{item.detail}</p>}
+                  </div>
+                  <span className="shrink-0 tabular-nums">{formatCurrency(item.value)}</span>
+                </div>
+              ))}
+              {hiddenCount > 0 && (
+                <p className="text-xs text-muted-foreground">
+                  + {hiddenCount} registro(s) resumido(s)
+                </p>
+              )}
+            </div>
+
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              className="mt-3 px-0 text-xs text-sky-700 hover:text-sky-800 dark:text-sky-300"
+              onClick={() => onOpenTarget(group.target)}
+            >
+              Ver mais
+              <ArrowRight className="size-3.5" />
+            </Button>
+          </div>
+        )
+      })}
+    </div>
   )
 }
