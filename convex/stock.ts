@@ -417,6 +417,17 @@ function isMlFullStockProduct(product: { stockSource?: string; kanbanStatus?: st
   return stockSourceForProduct(product) === "ml_full"
 }
 
+function buildMlAliasOwnerMap<T extends { mlItemAliases?: string[] }>(products: T[]) {
+  const aliasOwner = new Map<string, T>()
+  for (const product of products) {
+    for (const alias of product.mlItemAliases ?? []) {
+      const normalized = normalizeMlItemIdForStock(alias)
+      if (normalized) aliasOwner.set(normalized, product)
+    }
+  }
+  return aliasOwner
+}
+
 /**
  * Move no Kanban com persistência correta: ir para "Em falta" zera quantidade,
  * registra movimento de saída e mantém status coerente com o estoque.
@@ -768,26 +779,38 @@ export const syncFromMercadoLivre = mutation({
     const today = new Date().toISOString().slice(0, 10)
     let created = 0
     let updated = 0
+    const allProducts = await ctx.db
+      .query("stockProducts")
+      .withIndex("by_user", (q) => q.eq("userId", args.userId))
+      .collect()
+    const aliasOwner = buildMlAliasOwnerMap(allProducts)
 
     for (const listing of args.listings) {
       const nextQuantity = Math.max(0, Math.floor(listing.availableQuantity))
+      const normalizedListingId = normalizeMlItemIdForStock(listing.id)
 
       const byMlItems = await ctx.db
         .query("stockProducts")
         .withIndex("by_user_ml_item", (queryBuilder) =>
-          queryBuilder.eq("userId", args.userId).eq("mlItemId", listing.id),
+          queryBuilder.eq("userId", args.userId).eq("mlItemId", normalizedListingId),
         )
         .collect()
 
       const isFull = listing.logisticType === "fulfillment"
       const existing = isFull
-        ? (byMlItems.find(isMlFullStockProduct) ?? null)
-        : (byMlItems[0] ?? null)
+        ? (byMlItems.find(isMlFullStockProduct) ??
+          (normalizedListingId ? aliasOwner.get(normalizedListingId) : null) ??
+          null)
+        : (byMlItems[0] ??
+          (normalizedListingId ? aliasOwner.get(normalizedListingId) : null) ??
+          null)
 
       if (existing) {
+        const existingMlItemId = normalizeMlItemIdForStock(existing.mlItemId ?? "")
+        const matchedByAlias =
+          Boolean(normalizedListingId) && existingMlItemId !== normalizedListingId
         const patchData: Record<string, unknown> = {
-          mlItemId: listing.id,
-          sku: listing.id,
+          ...(matchedByAlias ? {} : { mlItemId: normalizedListingId, sku: normalizedListingId }),
           imageUrl: listing.thumbnail,
           sellingPrice: listing.price,
           updatedAt: now,
@@ -804,7 +827,9 @@ export const syncFromMercadoLivre = mutation({
             productId: existing._id,
             kanbanStatus: "fulfillment",
             quantity: nextQuantity,
-            note: "Quantidade no Full sincronizada pelo Mercado Livre",
+            note: matchedByAlias
+              ? `Quantidade no Full sincronizada pelo Mercado Livre (${normalizedListingId})`
+              : "Quantidade no Full sincronizada pelo Mercado Livre",
           })
         }
 
@@ -833,8 +858,8 @@ export const syncFromMercadoLivre = mutation({
       const productId = await ctx.db.insert("stockProducts", {
         userId: args.userId,
         name: listing.title,
-        sku: listing.id,
-        mlItemId: listing.id,
+        sku: normalizedListingId,
+        mlItemId: normalizedListingId,
         imageUrl: listing.thumbnail,
         category: "Mercado Livre",
         quantity: nextQuantity,
@@ -966,23 +991,23 @@ export const reconcileWithMlData = mutation({
       .query("stockProducts")
       .withIndex("by_user", (q) => q.eq("userId", args.userId))
       .collect()
-    const aliasOwner = new Map<string, (typeof allProducts)[number]>()
-    for (const p of allProducts) {
-      for (const a of p.mlItemAliases ?? []) aliasOwner.set(a, p)
-    }
+    const aliasOwner = buildMlAliasOwnerMap(allProducts)
 
     for (const item of args.items) {
+      const normalizedItemId = normalizeMlItemIdForStock(item.mlItemId)
       const byMlItems = await ctx.db
         .query("stockProducts")
         .withIndex("by_user_ml_item", (q) =>
-          q.eq("userId", args.userId).eq("mlItemId", item.mlItemId),
+          q.eq("userId", args.userId).eq("mlItemId", normalizedItemId),
         )
         .collect()
 
       const isFull = item.logisticType === "fulfillment"
       const product = isFull
-        ? (byMlItems.find(isMlFullStockProduct) ?? null)
-        : (byMlItems[0] ?? aliasOwner.get(item.mlItemId) ?? null)
+        ? (byMlItems.find(isMlFullStockProduct) ??
+          (normalizedItemId ? aliasOwner.get(normalizedItemId) : null) ??
+          null)
+        : (byMlItems[0] ?? (normalizedItemId ? aliasOwner.get(normalizedItemId) : null) ?? null)
 
       if (!product) {
         if (!isFull) continue
@@ -991,8 +1016,8 @@ export const reconcileWithMlData = mutation({
         const productId = await ctx.db.insert("stockProducts", {
           userId: args.userId,
           name: item.title,
-          sku: item.mlItemId,
-          mlItemId: item.mlItemId,
+          sku: normalizedItemId,
+          mlItemId: normalizedItemId,
           imageUrl: item.imageUrl,
           category: "Mercado Livre",
           quantity: nextQty,
@@ -1021,10 +1046,11 @@ export const reconcileWithMlData = mutation({
         continue
       }
 
-      const isAlias = product.mlItemId !== item.mlItemId
+      const productMlItemId = normalizeMlItemIdForStock(product.mlItemId ?? "")
+      const isAlias = Boolean(normalizedItemId) && productMlItemId !== normalizedItemId
       const patch: Record<string, unknown> = {
         updatedAt: now,
-        ...(isAlias ? {} : { mlItemId: item.mlItemId, sku: item.mlItemId }),
+        ...(isAlias ? {} : { mlItemId: normalizedItemId, sku: normalizedItemId }),
       }
 
       if (!isAlias && item.title && item.title !== product.name) {
@@ -1044,10 +1070,12 @@ export const reconcileWithMlData = mutation({
           productId: product._id,
           kanbanStatus: "fulfillment",
           quantity: nextQty,
-          note: "Quantidade no Full sincronizada pelo Mercado Livre",
+          note: isAlias
+            ? `Quantidade no Full sincronizada pelo Mercado Livre (${normalizedItemId})`
+            : "Quantidade no Full sincronizada pelo Mercado Livre",
         })
       }
-      if (isFull) {
+      if (isFull && product.kanbanStatus === "fulfillment") {
         patch.stockSource = "ml_full"
       }
 
