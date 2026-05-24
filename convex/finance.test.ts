@@ -135,6 +135,37 @@ describe("finance", () => {
     })
   })
 
+  // ── addExpenseWithPayment ────────────────────────────────────────
+
+  describe("addExpenseWithPayment", () => {
+    it("sets credit installments to the first day of each month", async () => {
+      const t = convexTest(schema, modules)
+      const catId = await t.mutation(api.finance.addCategory, {
+        userId: "user1",
+        name: "Compras",
+        kind: "expense",
+      })
+
+      await t.mutation(api.finance.addExpenseWithPayment, {
+        userId: "user1",
+        amount: 300,
+        date: "2025-06-18",
+        description: "Compra parcelada",
+        categoryId: catId,
+        paymentMethod: "credit",
+        installmentCount: 3,
+        firstChargeDate: "2025-07-20",
+      })
+
+      const data = await t.query(api.finance.getDashboardData, { userId: "user1" })
+      const dates = data.transactions
+        .sort((a, b) => (a.installmentIndex ?? 0) - (b.installmentIndex ?? 0))
+        .map((transaction) => transaction.date)
+
+      expect(dates).toEqual(["2025-07-01", "2025-08-01", "2025-09-01"])
+    })
+  })
+
   // ── updateTransaction ─────────────────────────────────────────────
 
   describe("updateTransaction", () => {

@@ -2,7 +2,7 @@ import { v } from "convex/values"
 
 import { mutation, query } from "./_generated/server"
 
-import { addMonthsIsoDate, attachmentDedupeKey } from "./dedupeHelpers"
+import { addMonthsIsoDate, attachmentDedupeKey, firstDayOfIsoMonth } from "./dedupeHelpers"
 import type { Id } from "./_generated/dataModel"
 import type { MutationCtx } from "./_generated/server"
 
@@ -492,7 +492,7 @@ export const addExpenseWithPayment = mutation({
 
     if (args.paymentMethod === "credit") {
       const count = Math.min(24, Math.max(1, Math.floor(args.installmentCount ?? 1)))
-      const first = args.firstChargeDate ?? args.date
+      const first = firstDayOfIsoMonth(args.firstChargeDate ?? args.date)
       const desc = args.description.trim()
       const planId = `credit_${args.userId}_${args.categoryId}_${args.amount}_${first}_${count}_${desc}`
       const per = Math.round((args.amount / count) * 100) / 100

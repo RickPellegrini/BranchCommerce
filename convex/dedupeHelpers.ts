@@ -22,6 +22,10 @@ export function manualStockDedupeKey(
   return `${userId}|${productName.trim().toLowerCase()}|${supplier.trim().toLowerCase()}|${date}`
 }
 
+export function firstDayOfIsoMonth(isoDate: string): string {
+  return `${isoDate.slice(0, 7)}-01`
+}
+
 /** Soma meses a uma data YYYY-MM-DD */
 export function addMonthsIsoDate(isoDate: string, months: number): string {
   const [y, m, d] = isoDate.split("-").map(Number)

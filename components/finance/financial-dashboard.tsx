@@ -481,6 +481,10 @@ function toIsoDate(date: Date) {
   ).padStart(2, "0")}`
 }
 
+function firstDayOfIsoMonth(isoDate: string) {
+  return `${isoDate.slice(0, 7)}-01`
+}
+
 /** Desloca inicio e fim pelo mesmo numero de meses (comparacao vs mes/ano anterior). */
 function shiftIsoRangeByMonths(
   startIso: string,
@@ -2852,10 +2856,15 @@ export function FinancialDashboard() {
     }
 
     for (const transaction of transactions) {
+      const dueDate =
+        transaction.paymentMethod === "credit" && transaction.installmentIndex
+          ? firstDayOfIsoMonth(transaction.date)
+          : transaction.date
+
       if (
         transaction.kind !== "expense" ||
         transaction.payStatus !== "pending" ||
-        transaction.date > limitIso
+        dueDate > limitIso
       ) {
         continue
       }
@@ -2863,14 +2872,14 @@ export function FinancialDashboard() {
         id: `tx-${transaction.id}`,
         title: transaction.description,
         amount: transaction.amount,
-        dueDate: transaction.date,
+        dueDate,
         source:
           transaction.paymentMethod === "credit" && transaction.installmentIndex
             ? `Cartao ${transaction.installmentIndex}/${transaction.installmentCount ?? "?"}`
             : transaction.paymentMethod
               ? transaction.paymentMethod.toUpperCase()
               : "Pendente",
-        overdue: transaction.date < today,
+        overdue: dueDate < today,
       })
     }
 
