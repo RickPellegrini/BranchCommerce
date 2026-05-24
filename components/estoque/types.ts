@@ -55,7 +55,7 @@ export const KANBAN_COLUMNS: Array<{
   { id: "in_transit", label: "Em trânsito" },
   { id: "awaiting_inspection", label: "Aguardando conferência" },
   { id: "returned", label: "Devolvido" },
-  { id: "completed", label: "Concluído" },
+  { id: "completed", label: "Anunciado" },
 ]
 
 export const EM_FALTA_COLUMN = {
