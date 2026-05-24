@@ -3,8 +3,15 @@ import { redirect } from "next/navigation"
 
 import { FinancialDashboard, type ModuleKey } from "@/components/finance/financial-dashboard"
 import { isAdminEmail } from "@/lib/auth/admin"
+import type { AdminDocumentCategory } from "@/lib/administrativo/documents"
 
-export async function AuthenticatedModulePage({ module }: { module: ModuleKey }) {
+export async function AuthenticatedModulePage({
+  module,
+  administrativeCategory,
+}: {
+  module: ModuleKey
+  administrativeCategory?: AdminDocumentCategory
+}) {
   const { userId } = await auth()
   if (!userId) {
     redirect("/sign-in")
@@ -19,5 +26,7 @@ export async function AuthenticatedModulePage({ module }: { module: ModuleKey })
     redirect("/unauthorized")
   }
 
-  return <FinancialDashboard initialModule={module} />
+  return (
+    <FinancialDashboard initialModule={module} administrativeCategory={administrativeCategory} />
+  )
 }

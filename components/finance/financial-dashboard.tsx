@@ -110,6 +110,7 @@ import { cn } from "@/lib/utils"
 import { AnalysisModal } from "@/features/product-analysis/components/AnalysisModal"
 import { HunterAnalysisPage } from "@/features/product-analysis/components/HunterAnalysisPage"
 import { AdministrativePage } from "@/components/administrativo/administrative-page"
+import type { AdminDocumentCategory } from "@/lib/administrativo/documents"
 import { KanbanBoard } from "@/components/estoque/KanbanBoard"
 import { ProductNameInputWithSuggestions } from "@/components/estoque/ProductNameInputWithSuggestions"
 import type { ProductKanbanEventRow } from "@/components/estoque/ProductDetailModal"
@@ -1359,7 +1360,13 @@ const moduleRoutes: Record<ModuleKey, string> = {
   administrative: "/administrativo",
 }
 
-export function FinancialDashboard({ initialModule = "home" }: { initialModule?: ModuleKey }) {
+export function FinancialDashboard({
+  initialModule = "home",
+  administrativeCategory = null,
+}: {
+  initialModule?: ModuleKey
+  administrativeCategory?: AdminDocumentCategory | null
+}) {
   const { user, isLoaded } = useUser()
   const userId = user?.id
 
@@ -6294,7 +6301,9 @@ export function FinancialDashboard({ initialModule = "home" }: { initialModule?:
           </section>
         )}
 
-        {activeModule === "administrative" && <AdministrativePage />}
+        {activeModule === "administrative" && (
+          <AdministrativePage initialCategory={administrativeCategory} />
+        )}
 
         {activeModule === "finance" && (
           <>

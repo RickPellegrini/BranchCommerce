@@ -37,16 +37,18 @@ export function DocumentUploadDialog({
   open,
   onOpenChange,
   onSubmit,
+  defaultCategory,
 }: {
   open: boolean
   onOpenChange: (open: boolean) => void
   onSubmit: (payload: DocumentUploadPayload) => Promise<void>
+  defaultCategory?: AdminDocumentCategory
 }) {
   const inputRef = useRef<HTMLInputElement>(null)
   const [file, setFile] = useState<File | null>(null)
   const [title, setTitle] = useState("")
   const [description, setDescription] = useState("")
-  const [category, setCategory] = useState<AdminDocumentCategory>("Contratos")
+  const [category, setCategory] = useState<AdminDocumentCategory>(defaultCategory ?? "Contratos")
   const [tagsText, setTagsText] = useState("")
   const [isDragging, setIsDragging] = useState(false)
   const [isUploading, setIsUploading] = useState(false)
@@ -65,7 +67,7 @@ export function DocumentUploadDialog({
     setFile(null)
     setTitle("")
     setDescription("")
-    setCategory("Contratos")
+    setCategory(defaultCategory ?? "Contratos")
     setTagsText("")
     setError(null)
   }

@@ -13,6 +13,33 @@ export const ADMIN_DOCUMENT_CATEGORIES = [
 
 export type AdminDocumentCategory = (typeof ADMIN_DOCUMENT_CATEGORIES)[number]
 
+const ADMIN_DOCUMENT_CATEGORY_SLUGS: Record<AdminDocumentCategory, string> = {
+  Contratos: "contratos",
+  Sociedade: "sociedade",
+  CCMEI: "ccmei",
+  Certificados: "certificados",
+  Compliance: "compliance",
+  Financeiro: "financeiro",
+  Comprovantes: "comprovantes",
+  Fornecedores: "fornecedores",
+  Políticas: "politicas",
+  Outros: "outros",
+}
+
+export function adminDocumentCategoryToSlug(category: AdminDocumentCategory): string {
+  return ADMIN_DOCUMENT_CATEGORY_SLUGS[category]
+}
+
+export function adminDocumentSlugToCategory(slug?: string): AdminDocumentCategory | null {
+  if (!slug) return null
+  const normalized = slug.trim().toLowerCase()
+  return (
+    ADMIN_DOCUMENT_CATEGORIES.find(
+      (category) => ADMIN_DOCUMENT_CATEGORY_SLUGS[category] === normalized,
+    ) ?? null
+  )
+}
+
 export const MAX_ADMIN_DOCUMENT_BYTES = 10 * 1024 * 1024
 
 export const ADMIN_DOCUMENT_ACCEPT_ATTR =

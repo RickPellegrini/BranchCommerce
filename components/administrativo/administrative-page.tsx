@@ -3,7 +3,8 @@
 import { Dialog } from "radix-ui"
 import { useUser } from "@clerk/nextjs"
 import { useConvex, useMutation, useQuery } from "convex/react"
-import { Briefcase, FileText, FolderArchive, HardDrive, Upload, X } from "lucide-react"
+import { ArrowLeft, Briefcase, FileText, FolderArchive, HardDrive, Upload, X } from "lucide-react"
+import Link from "next/link"
 import { useMemo, useState } from "react"
 
 import { api } from "@/convex/_generated/api"
@@ -26,6 +27,7 @@ import { DocumentsTable } from "./documents-table"
 import type { AdministrativeDocument } from "./types"
 import {
   ADMIN_DOCUMENT_CATEGORIES,
+  adminDocumentCategoryToSlug,
   formatDocumentDate,
   formatDocumentFileSize,
   type AdminDocumentCategory,
@@ -57,7 +59,11 @@ function matchesFileType(document: AdministrativeDocument, filter: FileTypeFilte
   return !knownType
 }
 
-export function AdministrativePage() {
+export function AdministrativePage({
+  initialCategory = null,
+}: {
+  initialCategory?: AdminDocumentCategory | null
+}) {
   const { user, isLoaded } = useUser()
   const userId = user?.id
   const convex = useConvex()
@@ -72,7 +78,7 @@ export function AdministrativePage() {
 
   const [uploadOpen, setUploadOpen] = useState(false)
   const [search, setSearch] = useState("")
-  const [categoryFilter, setCategoryFilter] = useState("all")
+  const [categoryFilter, setCategoryFilter] = useState(initialCategory ?? "all")
   const [fileTypeFilter, setFileTypeFilter] = useState<FileTypeFilter>("all")
   const [feedback, setFeedback] = useState<string | null>(null)
   const [previewDocument, setPreviewDocument] = useState<AdministrativeDocument | null>(null)
@@ -98,6 +104,26 @@ export function AdministrativePage() {
       )
     })
   }, [categoryFilter, documents, fileTypeFilter, search])
+
+  const folderSummaries = useMemo(
+    () =>
+      ADMIN_DOCUMENT_CATEGORIES.map((category) => {
+        const rows = (documents ?? []).filter((document) => document.category === category)
+        const bytes = rows.reduce((total, document) => total + document.fileSize, 0)
+        const last = rows.reduce<number | undefined>(
+          (latest, document) =>
+            latest === undefined || document.createdAt > latest ? document.createdAt : latest,
+          undefined,
+        )
+        return {
+          category,
+          count: rows.length,
+          bytes,
+          last,
+        }
+      }),
+    [documents],
+  )
 
   const categoryCount = useMemo(
     () => new Set((documents ?? []).map((document) => document.category)).size,
@@ -220,13 +246,31 @@ export function AdministrativePage() {
     setFeedback("Documento arquivado.")
   }
 
+  const isFolderRoute = Boolean(initialCategory)
+
   return (
     <section className="space-y-5 pb-8">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
         <div>
-          <h1 className="text-2xl font-semibold tracking-tight">Administrativo</h1>
+          {initialCategory ? (
+            <div className="mb-2 flex flex-wrap items-center gap-2 text-sm text-muted-foreground">
+              <Button type="button" asChild variant="ghost" size="sm" className="h-8 px-2">
+                <Link href="/administrativo">
+                  <ArrowLeft className="mr-1 size-4" />
+                  Administrativo
+                </Link>
+              </Button>
+              <span>/</span>
+              <span className="font-medium text-foreground">{initialCategory}</span>
+            </div>
+          ) : null}
+          <h1 className="text-2xl font-semibold tracking-tight">
+            {initialCategory ?? "Administrativo"}
+          </h1>
           <p className="text-sm text-muted-foreground">
-            Centralize contratos, documentos da empresa, certificados e políticas internas.
+            {initialCategory
+              ? "Documentos filtrados por pasta, salvos no Convex Storage."
+              : "Centralize contratos, documentos da empresa, certificados e políticas internas."}
           </p>
         </div>
         <Button onClick={() => setUploadOpen(true)}>
@@ -259,6 +303,33 @@ export function AdministrativePage() {
         />
       </div>
 
+      {!isFolderRoute && (
+        <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
+          {folderSummaries.map((folder) => (
+            <Link
+              key={folder.category}
+              href={`/administrativo/${adminDocumentCategoryToSlug(folder.category)}`}
+              className="group block focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            >
+              <Card className="h-full transition hover:border-primary/50 hover:bg-muted/25">
+                <CardHeader className="pb-2">
+                  <CardDescription className="inline-flex items-center gap-2">
+                    <FolderArchive className="size-4 text-primary" />
+                    Pasta
+                  </CardDescription>
+                  <CardTitle className="truncate text-base">{folder.category}</CardTitle>
+                </CardHeader>
+                <CardContent className="space-y-1 text-sm text-muted-foreground">
+                  <p>{folder.count} documento(s)</p>
+                  <p>{formatDocumentFileSize(folder.bytes)}</p>
+                  <p className="text-xs">Último upload: {formatDocumentDate(folder.last)}</p>
+                </CardContent>
+              </Card>
+            </Link>
+          ))}
+        </div>
+      )}
+
       <Card>
         <CardHeader className="pb-3">
           <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
@@ -273,7 +344,9 @@ export function AdministrativePage() {
                 placeholder="Buscar por nome..."
                 className="h-9 sm:w-64"
               />
-              <CategoryFilter value={categoryFilter} onValueChange={setCategoryFilter} />
+              {!isFolderRoute && (
+                <CategoryFilter value={categoryFilter} onValueChange={setCategoryFilter} />
+              )}
               <Select
                 value={fileTypeFilter}
                 onValueChange={(value) => setFileTypeFilter(value as FileTypeFilter)}
@@ -309,6 +382,7 @@ export function AdministrativePage() {
         open={uploadOpen}
         onOpenChange={setUploadOpen}
         onSubmit={handleUpload}
+        defaultCategory={initialCategory ?? undefined}
       />
       <DocumentPreviewModal
         open={Boolean(previewDocument)}
