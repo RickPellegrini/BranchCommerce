@@ -129,6 +129,7 @@ type FinanceSection =
 type FinanceSourceFilter = "all" | "mercado_livre" | "mercado_pago" | "manual"
 type FinanceTypeFilter = "all" | "income" | "expense"
 type FinanceInsightKey = "profit" | "revenue" | "costs" | "sales" | "margin" | "ticket"
+type HistorySummaryFilter = "entries" | "fixed" | "operational" | "recurring"
 type StockSection = "overview" | "products" | "history"
 type MlSection = "catalogo" | "anuncios" | "orders" | "metrics"
 type MlSidebarGroup = "anuncios" | "pedidos" | "metricas"
@@ -1466,6 +1467,9 @@ export function FinancialDashboard() {
   >("all")
   const [historyStartDate, setHistoryStartDate] = useState("")
   const [historyEndDate, setHistoryEndDate] = useState("")
+  const [historySummaryFilter, setHistorySummaryFilter] = useState<HistorySummaryFilter | null>(
+    null,
+  )
   const [anexosByLancamentoId, setAnexosByLancamentoId] = useState<
     Record<string, AnexoLancamento[]>
   >({})
@@ -2368,7 +2372,7 @@ export function FinancialDashboard() {
     () => filterTransactions(transactions, filters),
     [transactions, filters],
   )
-  const historyTransactions = useMemo(() => {
+  const baseHistoryTransactions = useMemo(() => {
     const search = historySearch.trim().toLowerCase()
     return transactions
       .filter((transaction) => {
@@ -2407,25 +2411,61 @@ export function FinancialDashboard() {
     historyStartDate,
     transactions,
   ])
+  const historyTransactions = useMemo(() => {
+    if (!historySummaryFilter) return baseHistoryTransactions
+
+    return baseHistoryTransactions.filter((transaction) => {
+      if (historySummaryFilter === "entries") return transaction.kind === "income"
+      if (historySummaryFilter === "fixed") {
+        return transaction.kind === "expense" && transaction.expenseType === "fixed"
+      }
+      if (historySummaryFilter === "operational") {
+        return transaction.kind === "expense" && transaction.expenseType !== "fixed"
+      }
+      return (transaction.periodicity ?? "one_time") !== "one_time"
+    })
+  }, [baseHistoryTransactions, historySummaryFilter])
   const historySummary = useMemo(() => {
-    const entries = historyTransactions
+    const entries = baseHistoryTransactions
       .filter((transaction) => transaction.kind === "income")
       .reduce((total, transaction) => total + transaction.amount, 0)
-    const fixedCost = historyTransactions
+    const fixedCost = baseHistoryTransactions
       .filter(
         (transaction) => transaction.kind === "expense" && transaction.expenseType === "fixed",
       )
       .reduce((total, transaction) => total + transaction.amount, 0)
-    const operationalCost = historyTransactions
+    const operationalCost = baseHistoryTransactions
       .filter(
         (transaction) => transaction.kind === "expense" && transaction.expenseType !== "fixed",
       )
       .reduce((total, transaction) => total + transaction.amount, 0)
-    const recurring = historyTransactions.filter(
+    const recurring = baseHistoryTransactions.filter(
       (transaction) => (transaction.periodicity ?? "one_time") !== "one_time",
     ).length
     return { entries, fixedCost, operationalCost, recurring }
-  }, [historyTransactions])
+  }, [baseHistoryTransactions])
+  const historySummaryFilterLabel =
+    historySummaryFilter === "entries"
+      ? "Entradas"
+      : historySummaryFilter === "fixed"
+        ? "Custo Fixo"
+        : historySummaryFilter === "operational"
+          ? "Custo Operacional"
+          : historySummaryFilter === "recurring"
+            ? "Recorrentes"
+            : null
+  function openHistorySummaryDetails(filter: HistorySummaryFilter) {
+    setHistorySummaryFilter((current) => (current === filter ? null : filter))
+  }
+  function handleHistorySummaryCardKeyDown(
+    event: React.KeyboardEvent<HTMLDivElement>,
+    filter: HistorySummaryFilter,
+  ) {
+    if (event.key === "Enter" || event.key === " ") {
+      event.preventDefault()
+      openHistorySummaryDetails(filter)
+    }
+  }
   const summary = useMemo(() => summarizeTransactions(filteredTransactions), [filteredTransactions])
   const evolutionReport = useMemo(() => monthlyEvolution(transactions), [transactions])
   const evolutionDetailsByLabel = useMemo(() => {
@@ -7876,7 +7916,18 @@ export function FinancialDashboard() {
                     </div>
 
                     <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
-                      <Card className="border-emerald-200/70 bg-emerald-50/40 dark:border-emerald-800/50 dark:bg-emerald-950/30">
+                      <Card
+                        role="button"
+                        tabIndex={0}
+                        aria-pressed={historySummaryFilter === "entries"}
+                        className={cn(
+                          "cursor-pointer border-emerald-200/70 bg-emerald-50/40 transition hover:border-emerald-500/60 hover:shadow-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring dark:border-emerald-800/50 dark:bg-emerald-950/30",
+                          historySummaryFilter === "entries" &&
+                            "border-emerald-500 shadow-sm ring-1 ring-emerald-500/40",
+                        )}
+                        onClick={() => openHistorySummaryDetails("entries")}
+                        onKeyDown={(event) => handleHistorySummaryCardKeyDown(event, "entries")}
+                      >
                         <CardHeader className="pb-2">
                           <CardDescription>Entradas</CardDescription>
                           <CardTitle className="text-emerald-700 dark:text-emerald-400">
@@ -7887,7 +7938,18 @@ export function FinancialDashboard() {
                           Total de receitas
                         </CardContent>
                       </Card>
-                      <Card className="border-amber-200/70 bg-amber-50/40 dark:border-amber-800/50 dark:bg-amber-950/30">
+                      <Card
+                        role="button"
+                        tabIndex={0}
+                        aria-pressed={historySummaryFilter === "fixed"}
+                        className={cn(
+                          "cursor-pointer border-amber-200/70 bg-amber-50/40 transition hover:border-amber-500/60 hover:shadow-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring dark:border-amber-800/50 dark:bg-amber-950/30",
+                          historySummaryFilter === "fixed" &&
+                            "border-amber-500 shadow-sm ring-1 ring-amber-500/40",
+                        )}
+                        onClick={() => openHistorySummaryDetails("fixed")}
+                        onKeyDown={(event) => handleHistorySummaryCardKeyDown(event, "fixed")}
+                      >
                         <CardHeader className="pb-2">
                           <CardDescription>Custo Fixo</CardDescription>
                           <CardTitle className="text-amber-700 dark:text-amber-300">
@@ -7898,7 +7960,18 @@ export function FinancialDashboard() {
                           Custos fixos mensais
                         </CardContent>
                       </Card>
-                      <Card className="border-orange-200/70 bg-orange-50/40 dark:border-orange-800/50 dark:bg-orange-950/30">
+                      <Card
+                        role="button"
+                        tabIndex={0}
+                        aria-pressed={historySummaryFilter === "operational"}
+                        className={cn(
+                          "cursor-pointer border-orange-200/70 bg-orange-50/40 transition hover:border-orange-500/60 hover:shadow-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring dark:border-orange-800/50 dark:bg-orange-950/30",
+                          historySummaryFilter === "operational" &&
+                            "border-orange-500 shadow-sm ring-1 ring-orange-500/40",
+                        )}
+                        onClick={() => openHistorySummaryDetails("operational")}
+                        onKeyDown={(event) => handleHistorySummaryCardKeyDown(event, "operational")}
+                      >
                         <CardHeader className="pb-2">
                           <CardDescription>Custo Operacional</CardDescription>
                           <CardTitle className="text-orange-700 dark:text-orange-400">
@@ -7909,7 +7982,18 @@ export function FinancialDashboard() {
                           Custos operacionais
                         </CardContent>
                       </Card>
-                      <Card className="border-blue-200/70 bg-blue-50/40 dark:border-blue-800/50 dark:bg-blue-950/30">
+                      <Card
+                        role="button"
+                        tabIndex={0}
+                        aria-pressed={historySummaryFilter === "recurring"}
+                        className={cn(
+                          "cursor-pointer border-blue-200/70 bg-blue-50/40 transition hover:border-blue-500/60 hover:shadow-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring dark:border-blue-800/50 dark:bg-blue-950/30",
+                          historySummaryFilter === "recurring" &&
+                            "border-blue-500 shadow-sm ring-1 ring-blue-500/40",
+                        )}
+                        onClick={() => openHistorySummaryDetails("recurring")}
+                        onKeyDown={(event) => handleHistorySummaryCardKeyDown(event, "recurring")}
+                      >
                         <CardHeader className="pb-2">
                           <CardDescription>Recorrentes</CardDescription>
                           <CardTitle className="text-blue-700 dark:text-blue-300">
@@ -7921,6 +8005,24 @@ export function FinancialDashboard() {
                         </CardContent>
                       </Card>
                     </div>
+
+                    {historySummaryFilterLabel ? (
+                      <div className="flex flex-wrap items-center justify-between gap-2 rounded-none border border-border bg-muted/20 px-3 py-2 text-sm">
+                        <span>
+                          Exibindo detalhes de{" "}
+                          <span className="font-medium">{historySummaryFilterLabel}</span>:{" "}
+                          {historyTransactions.length} lancamento(s)
+                        </span>
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => setHistorySummaryFilter(null)}
+                        >
+                          Limpar detalhe
+                        </Button>
+                      </div>
+                    ) : null}
 
                     {editingTransactionId && (
                       <div className="grid gap-3 rounded-none border border-border p-3 md:grid-cols-2">
