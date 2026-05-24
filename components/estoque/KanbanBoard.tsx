@@ -575,9 +575,7 @@ export function KanbanBoard({
                           [colId]: !prev[colId],
                         }))
                       }
-                      onHideColumn={() =>
-                        setHiddenColumns((prev) => ({ ...prev, [colId]: true }))
-                      }
+                      onHideColumn={() => setHiddenColumns((prev) => ({ ...prev, [colId]: true }))}
                       products={getColumnProducts(colId)}
                       onCardDetails={setSelectedProduct}
                       onCardMoveTo={(product, columnTarget) =>
