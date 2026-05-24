@@ -148,6 +148,16 @@ type CostDetailGroup = {
   items: { label: string; value: number; detail?: string }[]
 }
 
+type InsightValueFormat = "currency" | "number" | "percent"
+
+type FinanceInsightDetailGroup = {
+  label: string
+  total: number
+  format?: InsightValueFormat
+  target?: CostDetailTarget
+  items: { label: string; value: number; detail?: string; format?: InsightValueFormat }[]
+}
+
 type HomeActionItem = {
   title: string
   description: string
@@ -349,7 +359,7 @@ type OrderCostAnalysis = {
   shippingCost: number
   /** R$ 5,00 / item — taxa de envio/processamento Centralize. */
   centralizeShipping: number
-  /** R$ 1,50 / item — custo medio de embalagem. */
+  /** custo medio de embalagem por produto. */
   centralizePackaging: number
   mlFee: number
   taxes: number
@@ -366,13 +376,13 @@ const today = new Date().toISOString().slice(0, 10)
  * em CIMA de `order.shippingCostAmount` (que e o frete ML cobrado do vendedor),
  * porque sao etapas distintas:
  *  - HUB_CENTRALIZE_SHIPPING_PER_ITEM: taxa fixa de logistica/processamento por item (R$ 5,00).
- *  - HUB_CENTRALIZE_PACKAGING_PER_ITEM: custo medio de embalagem por item (R$ 1,50).
+ *  - HUB_CENTRALIZE_PACKAGING_PER_ITEM: custo medio padrao de embalagem por item (R$ 1,50).
+ *  - Multiprocessador usa 3 embalagens por item (R$ 4,50).
  * Entram na DRE em "Custos de Fulfillment", separados de Frete ML, Taxas ML e CMV.
  */
 const HUB_CENTRALIZE_SHIPPING_PER_ITEM = 5
 const HUB_CENTRALIZE_PACKAGING_PER_ITEM = 1.5
-const HUB_CENTRALIZE_FULFILLMENT_PER_ITEM =
-  HUB_CENTRALIZE_SHIPPING_PER_ITEM + HUB_CENTRALIZE_PACKAGING_PER_ITEM
+const HUB_CENTRALIZE_MULTIPROCESSADOR_PACKAGING_PER_ITEM = 4.5
 const HUB_ML_AVG_FEE_RATE = 0.16
 
 // Mesmo tokenize usado em convex/stock.ts enrichPhotosFromMl — fallback para
@@ -385,6 +395,31 @@ function tokenizeTitle(text: string): string[] {
     .replace(/[\u0300-\u036f]/g, "")
     .split(/\s+/)
     .filter((t) => t.length > 2)
+}
+
+function isMultiprocessadorProduct(product?: Pick<StockProduct, "name"> | null, title = "") {
+  const text = `${product?.name ?? ""} ${title}`
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+  return text.includes("multiprocessador")
+}
+
+function centralizePackagingPerItem(product?: Pick<StockProduct, "name"> | null, title = "") {
+  return isMultiprocessadorProduct(product, title)
+    ? HUB_CENTRALIZE_MULTIPROCESSADOR_PACKAGING_PER_ITEM
+    : HUB_CENTRALIZE_PACKAGING_PER_ITEM
+}
+
+function centralizeFulfillmentCostForItem(
+  product: Pick<StockProduct, "name"> | undefined,
+  quantity: number,
+  title = "",
+) {
+  const safeQuantity = Math.max(0, quantity)
+  return (
+    safeQuantity * (HUB_CENTRALIZE_SHIPPING_PER_ITEM + centralizePackagingPerItem(product, title))
+  )
 }
 
 function movementLabel(type: StockMovement["type"]) {
@@ -728,12 +763,18 @@ function calculateDreSnapshot({
 
   for (const order of validOrders) {
     ordersCount += 1
-    const totalQty = order.items.reduce((sum, item) => sum + Math.max(0, item.quantity), 0)
     revenueConfirmed += Math.max(0, order.totalAmount)
     marketplaceFees += Math.max(0, order.mlFeeAmount)
     shippingPaidBySeller += Math.max(0, order.shippingCostAmount)
     taxes += Math.max(0, order.taxesAmount)
-    fulfillmentCost += totalQty * HUB_CENTRALIZE_FULFILLMENT_PER_ITEM
+    fulfillmentCost += order.items.reduce((sum, item) => {
+      const byItem = item.id ? productByMlItemId.get(item.id) : undefined
+      const bySku = item.sku ? productBySku.get(item.sku.toLowerCase()) : undefined
+      return (
+        sum +
+        centralizeFulfillmentCostForItem(byItem ?? bySku, Math.max(0, item.quantity), item.title)
+      )
+    }, 0)
 
     const cogs = order.items.reduce((total, item) => {
       const byItem = item.id ? productByMlItemId.get(item.id) : undefined
@@ -839,7 +880,7 @@ type CommerceCashFlowRow = {
   cogs: number
   mlFees: number
   shipping: number
-  /** Custo Centralize (envio R$ 5/item + embalagem R$ 1,50/item). */
+  /** Custo Centralize: envio fixo + embalagem por produto. */
   fulfillment: number
   taxes: number
   manualExpenses: number
@@ -904,7 +945,7 @@ type DreSnapshot = {
   netReceived: number
   returnsAmount: number
   productCosts: number
-  /** Custo Centralize: envio fixo (R$ 5/item) + embalagem (R$ 1,50/item). */
+  /** Custo Centralize: envio fixo + embalagem por produto. */
   fulfillmentCost: number
   taxes: number
   grossProfit: number
@@ -991,7 +1032,6 @@ function buildOrdersSalesEvolutionData(
     const bucket = buckets.get(key)
     if (!bucket) continue
 
-    const totalQty = order.items.reduce((sum, item) => sum + Math.max(0, item.quantity), 0)
     const productCost = order.items.reduce((sum, item) => {
       const mappedProduct = resolve({ id: item.id, title: item.title, sku: item.sku })
       return sum + (mappedProduct?.unitCost ?? 0) * Math.max(0, item.quantity)
@@ -999,7 +1039,13 @@ function buildOrdersSalesEvolutionData(
     const shippingCost = Math.max(0, order.shippingCostAmount)
     const taxes = Math.max(0, order.taxesAmount)
     const mlFee = Math.max(0, order.mlFeeAmount)
-    const fulfillmentCost = totalQty * HUB_CENTRALIZE_FULFILLMENT_PER_ITEM
+    const fulfillmentCost = order.items.reduce((sum, item) => {
+      const mappedProduct = resolve({ id: item.id, title: item.title, sku: item.sku })
+      return (
+        sum +
+        centralizeFulfillmentCostForItem(mappedProduct, Math.max(0, item.quantity), item.title)
+      )
+    }, 0)
     const totalCosts = productCost + shippingCost + taxes + mlFee + fulfillmentCost
     const revenue = Math.max(0, order.totalAmount)
 
@@ -1038,7 +1084,13 @@ function buildOrdersFinancialSummary(
       const shippingCost = Math.max(0, order.shippingCostAmount)
       const taxes = Math.max(0, order.taxesAmount)
       const mlFee = Math.max(0, order.mlFeeAmount)
-      const fulfillmentCost = totalQty * HUB_CENTRALIZE_FULFILLMENT_PER_ITEM
+      const fulfillmentCost = order.items.reduce((sum, item) => {
+        const mappedProduct = resolve({ id: item.id, title: item.title, sku: item.sku })
+        return (
+          sum +
+          centralizeFulfillmentCostForItem(mappedProduct, Math.max(0, item.quantity), item.title)
+        )
+      }, 0)
       const orderCosts = productCost + shippingCost + taxes + mlFee + fulfillmentCost
 
       acc.grossRevenue += Math.max(0, order.totalAmount)
@@ -1948,6 +2000,7 @@ export function FinancialDashboard() {
   const updateKanbanCard = useMutation(api.stock.updateKanbanCard)
   const deleteKanbanCard = useMutation(api.stock.deleteKanbanCard)
   const setProductKanbanHidden = useMutation(api.stock.setProductKanbanHidden)
+  const saveKanbanColumnOrder = useMutation(api.stock.saveKanbanColumnOrder)
   const addManualStockEntryMutation = useMutation(api.stock.addManualStockEntry)
   const addExpenseWithPayment = useMutation(api.finance.addExpenseWithPayment)
   const generateAttachmentUploadUrl = useMutation(api.finance.generateAttachmentUploadUrl)
@@ -2081,7 +2134,7 @@ export function FinancialDashboard() {
         const reconcileResult = (reconcilePayload.data ?? {}) as StockSalesReconcileReport
         setStockSalesReconcileReport(reconcileResult)
         setMlInfo(
-          `Sincronização concluída: ${d.totalMlItems ?? 0} anúncios, ${d.updated ?? 0} atualizados, ${d.notFound ?? 0} sem vínculo. Vendas: ${reconcileResult.movementsCreated ?? 0} baixa(s), ${reconcileResult.unmatchedItems ?? 0} sem vínculo.`,
+          `Sincronização concluída: ${d.totalMlItems ?? 0} anúncios, ${d.updated ?? 0} atualizados, ${d.created ?? 0} criados, ${d.linkedManual ?? 0} manual(is) vinculados. Vendas: ${reconcileResult.movementsCreated ?? 0} baixa(s), ${reconcileResult.unmatchedItems ?? 0} sem vínculo.`,
         )
         setMlLastSyncAt(Date.now())
       } catch (error) {
@@ -2637,8 +2690,10 @@ export function FinancialDashboard() {
       const fees = Math.max(0, order.mlFeeAmount)
       const shipping = Math.max(0, order.shippingCostAmount)
       const taxes = Math.max(0, order.taxesAmount)
-      const totalQty = order.items.reduce((sum, item) => sum + Math.max(0, item.quantity), 0)
-      const fulfillment = totalQty * HUB_CENTRALIZE_FULFILLMENT_PER_ITEM
+      const fulfillment = order.items.reduce((sum, item) => {
+        const product = findProductByOrderItem({ id: item.id, title: item.title, sku: item.sku })
+        return sum + centralizeFulfillmentCostForItem(product, item.quantity, item.title)
+      }, 0)
       bucket.salesIncome += Math.max(0, order.totalAmount)
       bucket.cogs += cogs
       bucket.mlFees += fees
@@ -2792,7 +2847,6 @@ export function FinancialDashboard() {
           order.items.length === 1
             ? order.items[0]?.title
             : `${order.items.length} item(ns) no pedido`
-        const totalQty = order.items.reduce((sum, item) => sum + Math.max(0, item.quantity), 0)
         const productCost = order.items.reduce((sum, item) => {
           const mappedProduct = findProductByOrderItem({
             id: item.id,
@@ -2819,8 +2873,17 @@ export function FinancialDashboard() {
           },
           {
             group: "Centralize (envio + embalagem)",
-            value: totalQty * HUB_CENTRALIZE_FULFILLMENT_PER_ITEM,
-            detail: `${totalQty} item(ns) x ${formatCurrency(HUB_CENTRALIZE_FULFILLMENT_PER_ITEM)}`,
+            value: order.items.reduce((sum, item) => {
+              const mappedProduct = findProductByOrderItem({
+                id: item.id,
+                title: item.title,
+                sku: item.sku,
+              })
+              return (
+                sum + centralizeFulfillmentCostForItem(mappedProduct, item.quantity, item.title)
+              )
+            }, 0),
+            detail: `Embalagem padrao ${formatCurrency(HUB_CENTRALIZE_PACKAGING_PER_ITEM)}; Multiprocessador ${formatCurrency(HUB_CENTRALIZE_MULTIPROCESSADOR_PACKAGING_PER_ITEM)}`,
           },
           {
             group: "Impostos",
@@ -2883,6 +2946,161 @@ export function FinancialDashboard() {
     findProductByOrderItem,
     hasOrdersFinancialData,
     mlOrders,
+  ])
+  const financeInsightDetailGroups = useMemo<
+    Record<FinanceInsightKey, FinanceInsightDetailGroup[]>
+  >(() => {
+    const validOrders = mlOrders.filter(
+      (order) =>
+        isValidMarketplaceOrder(order) &&
+        orderInRange(order, { startDate: filters.startDate, endDate: filters.endDate }),
+    )
+    const manualIncomeTransactions = filteredTransactions.filter(
+      (transaction) => transaction.kind === "income" && transactionIsManualAdjustment(transaction),
+    )
+    const mlRevenueItems = validOrders.map((order) => ({
+      label: `Pedido ML #${order.id}`,
+      value: Math.max(0, order.totalAmount),
+      detail: order.items.map((item) => item.title).join(", ") || order.paymentMethod,
+    }))
+    const manualIncomeItems = manualIncomeTransactions.map((transaction) => ({
+      label: transaction.description,
+      value: transaction.amount,
+      detail: transaction.origin || formatDate(transaction.date),
+    }))
+    const salesItems = validOrders.map((order) => ({
+      label: `Pedido ML #${order.id}`,
+      value: 1,
+      format: "number" as const,
+      detail: `${order.items.reduce((sum, item) => sum + Math.max(0, item.quantity), 0)} item(ns) · ${formatCurrency(order.totalAmount)}`,
+    }))
+    const itemVolumeRows = validOrders.flatMap((order) =>
+      order.items.map((item) => ({
+        label: item.title,
+        value: Math.max(0, item.quantity),
+        format: "number" as const,
+        detail: `Pedido ML #${order.id}`,
+      })),
+    )
+
+    return {
+      profit: [
+        {
+          label: "Faturamento",
+          total: salesInFilterFinal,
+          target: "orders",
+          items: mlRevenueItems,
+        },
+        {
+          label: "Custos",
+          total: financeCostsInFilterFinal,
+          target: "orders",
+          items: financeCostDetailGroups.flatMap((group) =>
+            group.items.map((item) => ({
+              label: `${group.label} · ${item.label}`,
+              value: item.value,
+              detail: item.detail,
+            })),
+          ),
+        },
+        {
+          label: "Lucro",
+          total: financeOperatingResultFinal,
+          items: [
+            {
+              label: "Faturamento - custos",
+              value: financeOperatingResultFinal,
+              detail: `${formatCurrency(salesInFilterFinal)} - ${formatCurrency(financeCostsInFilterFinal)}`,
+            },
+          ],
+        },
+      ],
+      revenue: [
+        {
+          label: "Pedidos Mercado Livre",
+          total: ordersFinancialSummary.grossRevenue,
+          target: "orders",
+          items: mlRevenueItems,
+        },
+        {
+          label: "Entradas manuais",
+          total: manualIncomeTransactions.reduce((sum, transaction) => sum + transaction.amount, 0),
+          target: "history",
+          items: manualIncomeItems,
+        },
+      ],
+      costs: financeCostDetailGroups,
+      sales: [
+        {
+          label: "Pedidos",
+          total: salesCountFinal,
+          format: "number",
+          target: "orders",
+          items: salesItems,
+        },
+        {
+          label: "Itens vendidos",
+          total: soldItemsFinal,
+          format: "number",
+          target: "orders",
+          items: itemVolumeRows,
+        },
+      ],
+      margin: [
+        {
+          label: "Margem operacional",
+          total: financeOperatingMarginFinal,
+          format: "percent",
+          items: [
+            {
+              label: "Lucro / faturamento",
+              value: financeOperatingMarginFinal,
+              format: "percent",
+              detail: `${formatCurrency(financeOperatingResultFinal)} / ${formatCurrency(salesInFilterFinal)}`,
+            },
+          ],
+        },
+        {
+          label: "Lucro",
+          total: financeOperatingResultFinal,
+          items: [{ label: "Resultado no periodo", value: financeOperatingResultFinal }],
+        },
+      ],
+      ticket: [
+        {
+          label: "Ticket medio",
+          total: ticketMedioFinal,
+          items: [
+            {
+              label: "Faturamento / vendas",
+              value: ticketMedioFinal,
+              detail: `${formatCurrency(salesInFilterFinal)} / ${salesCountFinal || 0} venda(s)`,
+            },
+          ],
+        },
+        {
+          label: "Pedidos considerados",
+          total: salesCountFinal,
+          format: "number",
+          target: "orders",
+          items: salesItems,
+        },
+      ],
+    }
+  }, [
+    filteredTransactions,
+    filters.endDate,
+    filters.startDate,
+    financeCostDetailGroups,
+    financeCostsInFilterFinal,
+    financeOperatingMarginFinal,
+    financeOperatingResultFinal,
+    mlOrders,
+    ordersFinancialSummary.grossRevenue,
+    salesCountFinal,
+    salesInFilterFinal,
+    soldItemsFinal,
+    ticketMedioFinal,
   ])
   const productsWithoutCost = useMemo(
     () => products.filter((product) => product.unitCost <= 0),
@@ -3491,7 +3709,7 @@ export function FinancialDashboard() {
         unitCost -
         estimatedFees -
         HUB_CENTRALIZE_SHIPPING_PER_ITEM -
-        HUB_CENTRALIZE_PACKAGING_PER_ITEM
+        centralizePackagingPerItem(product, row.title)
       return [
         row.itemId,
         row.title.replace(/"/g, '""'),
@@ -3632,7 +3850,7 @@ export function FinancialDashboard() {
       { label: "(-) Devolucoes", value: -dreSnapshot.returnsAmount },
       { label: "(-) Custo dos Produtos", value: -dreSnapshot.productCosts },
       {
-        label: "(-) Custos Centralize (envio R$ 5/item + embalagem R$ 1,50/item)",
+        label: "(-) Custos Centralize (envio R$ 5/item + embalagem por produto)",
         value: -dreSnapshot.fulfillmentCost,
       },
       { label: "(-) Impostos", value: -dreSnapshot.taxes },
@@ -4263,6 +4481,19 @@ export function FinancialDashboard() {
     }
   }
 
+  const handleKanbanColumnOrderChange = async (columnOrder: string[]) => {
+    if (!userId) return
+    try {
+      await saveKanbanColumnOrder({ userId, columnOrder })
+    } catch (error) {
+      setProductFeedback({
+        type: "error",
+        message:
+          error instanceof Error ? error.message : "Nao foi possivel salvar a ordem das colunas.",
+      })
+    }
+  }
+
   const handleKanbanSaveEdits = async (
     productId: string,
     updates: Partial<KanbanProduct>,
@@ -4470,13 +4701,6 @@ export function FinancialDashboard() {
       setProductFeedback({
         type: "error",
         message: "Preencha nome do produto e fornecedor.",
-      })
-      return
-    }
-    if (!manualStockForm.mlItemId.trim()) {
-      setProductFeedback({
-        type: "error",
-        message: "Informe o MLB ID do produto.",
       })
       return
     }
@@ -4741,7 +4965,7 @@ export function FinancialDashboard() {
       const reconcileResult = (reconcilePayload.data ?? {}) as StockSalesReconcileReport
       setStockSalesReconcileReport(reconcileResult)
       setMlInfo(
-        `Sincronização concluída: ${syncResult.totalMlItems ?? 0} anúncios, ${syncResult.updated ?? 0} atualizados, ${syncResult.created ?? 0} criados. Vendas: ${reconcileResult.movementsCreated ?? 0} baixa(s), ${reconcileResult.unmatchedItems ?? 0} sem vínculo.`,
+        `Sincronização concluída: ${syncResult.totalMlItems ?? 0} anúncios, ${syncResult.updated ?? 0} atualizados, ${syncResult.created ?? 0} criados, ${syncResult.linkedManual ?? 0} manual(is) vinculados. Vendas: ${reconcileResult.movementsCreated ?? 0} baixa(s), ${reconcileResult.unmatchedItems ?? 0} sem vínculo.`,
       )
       setMlLastSyncAt(Date.now())
       setMlLastSyncDurationMs(Date.now() - startedAt)
@@ -4816,13 +5040,20 @@ export function FinancialDashboard() {
     }
   }
 
-  const openOrderCostAnalysis = (order: MlOrder, unitCost: number, quantity: number) => {
+  const openOrderCostAnalysis = (
+    order: MlOrder,
+    product: Pick<StockProduct, "name" | "unitCost"> | undefined,
+    quantity: number,
+    title = "",
+  ) => {
     const revenueTotal = order.totalAmount
     const receivedAmount = order.totalPaidAmount
+    const unitCost = product?.unitCost ?? 0
+    const packagingPerItem = centralizePackagingPerItem(product, title || order.items[0]?.title)
     const productCost = Math.max(0, unitCost * quantity)
     const shippingCost = Math.max(0, order.shippingCostAmount)
     const centralizeShipping = Math.max(0, quantity * HUB_CENTRALIZE_SHIPPING_PER_ITEM)
-    const centralizePackaging = Math.max(0, quantity * HUB_CENTRALIZE_PACKAGING_PER_ITEM)
+    const centralizePackaging = Math.max(0, quantity * packagingPerItem)
     const taxes = Math.max(0, order.taxesAmount)
     const shippingBonus = 0
     const mlFee = Math.max(0, order.mlFeeAmount)
@@ -6453,25 +6684,23 @@ export function FinancialDashboard() {
                             numberLabels={["Vendas", "Itens vendidos"]}
                             showHeader={false}
                           />
-                          {activeFinanceInsight === "costs" && (
-                            <CostDetailList
-                              groups={financeCostDetailGroups}
-                              onOpenTarget={(target) => {
-                                setFinanceInsightModalOpen(false)
-                                if (target === "orders") {
-                                  setActiveModule("mercadolivre")
-                                  setActiveMlSidebarGroup("pedidos")
-                                  setActiveMlSection("orders")
-                                  return
-                                }
-                                setActiveModule("finance")
-                                setActiveFinanceSection("history")
-                                setHistoryKindFilter("expense")
-                                setHistoryStartDate(filters.startDate ?? "")
-                                setHistoryEndDate(filters.endDate ?? "")
-                              }}
-                            />
-                          )}
+                          <CostDetailList
+                            groups={financeInsightDetailGroups[activeFinanceInsight]}
+                            onOpenTarget={(target) => {
+                              setFinanceInsightModalOpen(false)
+                              if (target === "orders") {
+                                setActiveModule("mercadolivre")
+                                setActiveMlSidebarGroup("pedidos")
+                                setActiveMlSection("orders")
+                                return
+                              }
+                              setActiveModule("finance")
+                              setActiveFinanceSection("history")
+                              setHistoryKindFilter(target === "history" ? "all" : "expense")
+                              setHistoryStartDate(filters.startDate ?? "")
+                              setHistoryEndDate(filters.endDate ?? "")
+                            }}
+                          />
                         </Dialog.Content>
                       </Dialog.Portal>
                     </Dialog.Root>
@@ -6776,8 +7005,9 @@ export function FinancialDashboard() {
                                     : undefined
                                   openOrderCostAnalysis(
                                     fullOrder,
-                                    stockProduct?.unitCost ?? 0,
+                                    stockProduct,
                                     firstItem?.quantity ?? 0,
+                                    firstItem?.title ?? "",
                                   )
                                 }
                                 return (
@@ -8906,9 +9136,9 @@ export function FinancialDashboard() {
                       <div>
                         <CardTitle className="text-base">Entrada manual (fornecedor)</CardTitle>
                         <CardDescription>
-                          Informe o SKU (obrigatorio) — nao e gerado automaticamente. A miniatura so
-                          aparece se houver URL de imagem (ex.: ao escolher sugestao do catalogo
-                          ML). Dedup: mesmo nome + fornecedor + data.
+                          O MLB ID e opcional. Quando o anuncio for criado no site oficial do ML, a
+                          sincronizacao vincula foto, MLB, preco e tipo de envio ao produto manual.
+                          Dedup: mesmo nome + fornecedor + data.
                         </CardDescription>
                       </div>
                       <Button
@@ -8941,9 +9171,9 @@ export function FinancialDashboard() {
                         />
                       </div>
                       <div className="space-y-1">
-                        <label className="text-xs text-muted-foreground">MLB ID</label>
+                        <label className="text-xs text-muted-foreground">MLB ID opcional</label>
                         <Input
-                          placeholder="Ex.: MLB1234567890"
+                          placeholder="Preenchido pelo sync do ML"
                           value={manualStockForm.mlItemId}
                           onChange={(e) =>
                             setManualStockForm((p) => ({
@@ -9072,6 +9302,8 @@ export function FinancialDashboard() {
                   mlSyncDisabled={!mlConnectionStatus?.connected}
                   onSyncWithMl={syncStockWithMl}
                   onReconcileSales={reconcileStockSalesWithMl}
+                  initialColumnOrder={stockData?.preferences?.kanbanColumnOrder}
+                  onColumnOrderChange={handleKanbanColumnOrderChange}
                   kanbanTimelineEvents={kanbanTimelineEvents}
                   onAddProduct={() => setShowManualStockForm((v) => !v)}
                   showAddForm={showManualStockForm}
@@ -9999,7 +10231,7 @@ export function FinancialDashboard() {
                               unitCost -
                               estimatedFees -
                               HUB_CENTRALIZE_SHIPPING_PER_ITEM -
-                              HUB_CENTRALIZE_PACKAGING_PER_ITEM
+                              centralizePackagingPerItem(product, row.title)
                             return (
                               <Card key={row.itemId} className="rounded-none border">
                                 <CardContent className="pt-4">
@@ -10176,7 +10408,7 @@ export function FinancialDashboard() {
                               unitCostAnuncio -
                               estimatedFeesAnuncio -
                               HUB_CENTRALIZE_SHIPPING_PER_ITEM -
-                              HUB_CENTRALIZE_PACKAGING_PER_ITEM
+                              centralizePackagingPerItem(stockProduct, listing.title)
                             return (
                               <Card key={listing.id} className="rounded-none border">
                                 <CardContent className="pt-4">
@@ -10419,7 +10651,11 @@ export function FinancialDashboard() {
                         const orderFees = Math.max(0, order.mlFeeAmount)
                         const orderShipping = Math.max(0, order.shippingCostAmount)
                         const orderTaxes = Math.max(0, order.taxesAmount)
-                        const orderCentralize = quantity * HUB_CENTRALIZE_FULFILLMENT_PER_ITEM
+                        const orderCentralize = centralizeFulfillmentCostForItem(
+                          stockProduct,
+                          quantity,
+                          firstItem?.title ?? "",
+                        )
                         const orderTotalCost =
                           productCost + orderFees + orderShipping + orderTaxes + orderCentralize
                         const payout = order.totalPaidAmount
@@ -10592,8 +10828,9 @@ export function FinancialDashboard() {
                                     onClick={() =>
                                       openOrderCostAnalysis(
                                         order,
-                                        stockProduct?.unitCost ?? 0,
+                                        stockProduct,
                                         firstItem?.quantity ?? 0,
+                                        firstItem?.title ?? "",
                                       )
                                     }
                                   >
@@ -10982,7 +11219,7 @@ export function FinancialDashboard() {
                       color: "bg-cyan-500",
                     },
                     {
-                      label: "Centralize — embalagem (R$ 1,50/item)",
+                      label: "Centralize — embalagem",
                       value: mlOrderCostAnalysis.centralizePackaging,
                       color: "bg-sky-500",
                     },
@@ -11879,16 +12116,22 @@ function CostDetailList({
   groups,
   onOpenTarget,
 }: {
-  groups: CostDetailGroup[]
+  groups: FinanceInsightDetailGroup[]
   onOpenTarget: (target: CostDetailTarget) => void
 }) {
   if (groups.length === 0) return null
+  const formatInsightValue = (value: number, format?: InsightValueFormat) => {
+    if (format === "number") return Math.round(value).toLocaleString("pt-BR")
+    if (format === "percent") return `${value.toFixed(1)}%`
+    return formatCurrency(value)
+  }
 
   return (
     <div className="mt-5 space-y-3 border-t border-border/70 pt-4">
       {groups.map((group) => {
         const visibleItems = group.items.slice(0, 4)
         const hiddenCount = Math.max(0, group.items.length - visibleItems.length)
+        const target = group.target
         return (
           <div key={group.label} className="rounded-none border border-border/70 bg-muted/20 p-3">
             <div className="flex items-start justify-between gap-3">
@@ -11896,8 +12139,8 @@ function CostDetailList({
                 <p className="truncate text-sm font-medium">{group.label}</p>
                 <p className="text-xs text-muted-foreground">{group.items.length} registro(s)</p>
               </div>
-              <span className="shrink-0 text-sm font-semibold tabular-nums text-orange-700 dark:text-orange-400">
-                {formatCurrency(group.total)}
+              <span className="shrink-0 text-sm font-semibold tabular-nums text-foreground">
+                {formatInsightValue(group.total, group.format)}
               </span>
             </div>
 
@@ -11911,7 +12154,9 @@ function CostDetailList({
                     <p className="truncate text-foreground">{item.label}</p>
                     {item.detail && <p className="truncate text-muted-foreground">{item.detail}</p>}
                   </div>
-                  <span className="shrink-0 tabular-nums">{formatCurrency(item.value)}</span>
+                  <span className="shrink-0 tabular-nums">
+                    {formatInsightValue(item.value, item.format ?? group.format)}
+                  </span>
                 </div>
               ))}
               {hiddenCount > 0 && (
@@ -11921,16 +12166,18 @@ function CostDetailList({
               )}
             </div>
 
-            <Button
-              type="button"
-              variant="ghost"
-              size="sm"
-              className="mt-3 px-0 text-xs text-sky-700 hover:text-sky-800 dark:text-sky-300"
-              onClick={() => onOpenTarget(group.target)}
-            >
-              Ver mais
-              <ArrowRight className="size-3.5" />
-            </Button>
+            {target && (
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                className="mt-3 px-0 text-xs text-sky-700 hover:text-sky-800 dark:text-sky-300"
+                onClick={() => onOpenTarget(target)}
+              >
+                Ver mais
+                <ArrowRight className="size-3.5" />
+              </Button>
+            )}
           </div>
         )
       })}

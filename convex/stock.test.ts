@@ -339,6 +339,38 @@ describe("stock", () => {
     })
   })
 
+  // ── stockUserPreferences ─────────────────────────────────────────
+
+  describe("stockUserPreferences", () => {
+    it("saves kanban column order per user", async () => {
+      const t = convexTest(schema, modules)
+
+      await t.mutation(api.stock.saveKanbanColumnOrder, {
+        userId: "user1",
+        columnOrder: ["in_stock", "em_falta", "completed"],
+      })
+
+      const data = await t.query(api.stock.getDashboardData, { userId: "user1" })
+      expect(data.preferences?.kanbanColumnOrder).toEqual(["in_stock", "em_falta", "completed"])
+    })
+
+    it("updates existing kanban column order instead of creating duplicates", async () => {
+      const t = convexTest(schema, modules)
+
+      await t.mutation(api.stock.saveKanbanColumnOrder, {
+        userId: "user1",
+        columnOrder: ["in_stock", "em_falta"],
+      })
+      await t.mutation(api.stock.saveKanbanColumnOrder, {
+        userId: "user1",
+        columnOrder: ["em_falta", "in_stock", "in_stock"],
+      })
+
+      const data = await t.query(api.stock.getDashboardData, { userId: "user1" })
+      expect(data.preferences?.kanbanColumnOrder).toEqual(["em_falta", "in_stock"])
+    })
+  })
+
   // ── addMovement ───────────────────────────────────────────────────
 
   describe("addMovement", () => {
@@ -479,7 +511,7 @@ describe("stock", () => {
   // ── addManualStockEntry ───────────────────────────────────────────
 
   describe("addManualStockEntry", () => {
-    it("requires mlItemId and stores normalized MLB ID as sku", async () => {
+    it("stores normalized MLB ID as sku when provided", async () => {
       const t = convexTest(schema, modules)
       const id = await t.mutation(api.stock.addManualStockEntry, {
         userId: "user1",
@@ -495,6 +527,24 @@ describe("stock", () => {
       const data = await t.query(api.stock.getDashboardData, { userId: "user1" })
       expect(data.products[0].mlItemId).toBe("MLB300001")
       expect(data.products[0].sku).toBe("MLB300001")
+    })
+
+    it("allows manual entry before the ML listing exists", async () => {
+      const t = convexTest(schema, modules)
+      const id = await t.mutation(api.stock.addManualStockEntry, {
+        userId: "user1",
+        name: "Item manual sem anuncio",
+        mlItemId: "",
+        quantity: 2,
+        unitCost: 10,
+        supplier: "Forn X",
+        manualEntryDate: "2025-01-15",
+        location: "in_stock_physical",
+      })
+      expect(id).toBeTruthy()
+      const data = await t.query(api.stock.getDashboardData, { userId: "user1" })
+      expect(data.products[0].mlItemId).toBeUndefined()
+      expect(data.products[0].sku).toContain("manual:")
     })
 
     it("rejects duplicate MLB ID", async () => {
@@ -787,6 +837,45 @@ describe("stock", () => {
       })
       expect(result.updated).toBe(1)
       expect(result.created).toBe(0)
+    })
+
+    it("links official ML listing back to manual product without MLB", async () => {
+      const t = convexTest(schema, modules)
+      await t.mutation(api.stock.addManualStockEntry, {
+        userId: "user1",
+        name: "Multiprocessador Philco",
+        mlItemId: "",
+        quantity: 3,
+        unitCost: 120,
+        supplier: "Forn X",
+        manualEntryDate: "2025-01-15",
+        location: "in_stock_physical",
+      })
+
+      const result = await t.mutation(api.stock.syncFromMercadoLivre, {
+        userId: "user1",
+        listings: [
+          {
+            id: "MLB999",
+            title: "Multiprocessador Philco 900W",
+            price: 299,
+            availableQuantity: 3,
+            thumbnail: "https://example.com/foto.jpg",
+            logisticType: "cross_docking",
+          },
+        ],
+      })
+
+      expect(result.created).toBe(0)
+      expect(result.updated).toBe(1)
+      expect(result.linkedManual).toBe(1)
+      const data = await t.query(api.stock.getDashboardData, { userId: "user1" })
+      expect(data.products).toHaveLength(1)
+      expect(data.products[0].mlItemId).toBe("MLB999")
+      expect(data.products[0].imageUrl).toBe("https://example.com/foto.jpg")
+      expect(data.products[0].sellingPrice).toBe(299)
+      expect(data.products[0].kanbanStatus).toBe("completed")
+      expect(data.kanbanCards.some((card) => card.kanbanStatus === "completed")).toBe(true)
     })
 
     it("creates adjustment movement when quantity changes", async () => {

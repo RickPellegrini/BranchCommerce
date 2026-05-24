@@ -42,7 +42,41 @@ export const getDashboardData = query({
       .withIndex("by_user", (queryBuilder) => queryBuilder.eq("userId", args.userId))
       .collect()
 
-    return { products, movements, kanbanEvents, kanbanCards }
+    const preferences = await ctx.db
+      .query("stockUserPreferences")
+      .withIndex("by_user", (queryBuilder) => queryBuilder.eq("userId", args.userId))
+      .first()
+
+    return { products, movements, kanbanEvents, kanbanCards, preferences }
+  },
+})
+
+export const saveKanbanColumnOrder = mutation({
+  args: {
+    userId: v.string(),
+    columnOrder: v.array(v.string()),
+  },
+  handler: async (ctx, args) => {
+    const normalizedOrder = [...new Set(args.columnOrder.filter(Boolean))]
+    const now = Date.now()
+    const existing = await ctx.db
+      .query("stockUserPreferences")
+      .withIndex("by_user", (queryBuilder) => queryBuilder.eq("userId", args.userId))
+      .first()
+
+    if (existing) {
+      await ctx.db.patch(existing._id, {
+        kanbanColumnOrder: normalizedOrder,
+        updatedAt: now,
+      })
+      return existing._id
+    }
+
+    return await ctx.db.insert("stockUserPreferences", {
+      userId: args.userId,
+      kanbanColumnOrder: normalizedOrder,
+      updatedAt: now,
+    })
   },
 })
 
@@ -498,6 +532,39 @@ function findProductForSaleItem(
   return { product: null, matchMethod: "none", score: bestScore }
 }
 
+function findManualProductForMlListing(
+  products: Doc<"stockProducts">[],
+  listing: { title: string; sku?: string },
+): { product: Doc<"stockProducts"> | null; matchMethod: string; score: number } {
+  const normalizedSku = normalizeMlItemIdForStock(listing.sku ?? "")
+  const candidates = products.filter(
+    (product) => !normalizeMlItemIdForStock(product.mlItemId ?? ""),
+  )
+
+  if (normalizedSku) {
+    const bySku = candidates.find(
+      (product) => normalizeMlItemIdForStock(product.sku) === normalizedSku,
+    )
+    if (bySku) return { product: bySku, matchMethod: "sku", score: 1 }
+  }
+
+  let bestProduct: Doc<"stockProducts"> | null = null
+  let bestScore = 0
+  for (const product of candidates) {
+    const score = titleSimilarity(product.name, listing.title)
+    if (score > bestScore) {
+      bestScore = score
+      bestProduct = product
+    }
+  }
+
+  if (bestProduct && bestScore >= 0.55) {
+    return { product: bestProduct, matchMethod: "title", score: bestScore }
+  }
+
+  return { product: null, matchMethod: "none", score: bestScore }
+}
+
 /**
  * Move no Kanban com persistência correta: ir para "Em falta" zera quantidade,
  * registra movimento de saída e mantém status coerente com o estoque.
@@ -691,19 +758,20 @@ export const addManualStockEntry = mutation({
     if (!normalizedName || !supplier) {
       throw new Error("Preencha nome e fornecedor.")
     }
-    if (!normalizedMl) {
-      throw new Error("Informe o MLB ID do produto.")
-    }
     if (args.quantity < 0 || args.unitCost < 0) {
       throw new Error("Quantidade e custo devem ser zero ou positivos.")
     }
 
-    const duplicateMl = await ctx.db
-      .query("stockProducts")
-      .withIndex("by_user_ml_item", (q) => q.eq("userId", args.userId).eq("mlItemId", normalizedMl))
-      .first()
-    if (duplicateMl) {
-      throw new Error("MLB ID ja cadastrado em outro produto.")
+    if (normalizedMl) {
+      const duplicateMl = await ctx.db
+        .query("stockProducts")
+        .withIndex("by_user_ml_item", (q) =>
+          q.eq("userId", args.userId).eq("mlItemId", normalizedMl),
+        )
+        .first()
+      if (duplicateMl) {
+        throw new Error("MLB ID ja cadastrado em outro produto.")
+      }
     }
 
     const dedupeKey = manualStockDedupeKey(
@@ -749,8 +817,8 @@ export const addManualStockEntry = mutation({
     const productId = await ctx.db.insert("stockProducts", {
       userId: args.userId,
       name: normalizedName,
-      sku: normalizedMl,
-      mlItemId: normalizedMl,
+      sku: normalizedMl || args.sku?.trim() || `manual:${dedupeKey}`,
+      ...(normalizedMl ? { mlItemId: normalizedMl } : {}),
       category: "Entrada manual",
       quantity: args.quantity,
       minStock: 0,
@@ -857,11 +925,13 @@ export const syncFromMercadoLivre = mutation({
     const today = new Date().toISOString().slice(0, 10)
     let created = 0
     let updated = 0
+    let linkedManual = 0
     const allProducts = await ctx.db
       .query("stockProducts")
       .withIndex("by_user", (q) => q.eq("userId", args.userId))
       .collect()
     const aliasOwner = buildMlAliasOwnerMap(allProducts)
+    const linkedManualProductIds = new Set<string>()
 
     for (const listing of args.listings) {
       const nextQuantity = Math.max(0, Math.floor(listing.availableQuantity))
@@ -932,6 +1002,59 @@ export const syncFromMercadoLivre = mutation({
         continue
       }
 
+      const manualMatch = findManualProductForMlListing(allProducts, {
+        title: listing.title,
+        sku: listing.sku,
+      })
+      const manualProduct =
+        manualMatch.product && !linkedManualProductIds.has(manualMatch.product._id)
+          ? manualMatch.product
+          : null
+
+      if (manualProduct) {
+        const previousQuantity = manualProduct.quantity
+        const nextKanbanStatus = isFull ? "fulfillment" : "completed"
+        const nextStockSource = isFull ? "ml_full" : manualProduct.stockSource
+        const patchData: Record<string, unknown> = {
+          mlItemId: normalizedListingId,
+          sku: listing.sku?.trim() || normalizedListingId,
+          imageUrl: listing.thumbnail,
+          sellingPrice: listing.price,
+          kanbanStatus: nextKanbanStatus,
+          stockSource: nextStockSource,
+          updatedAt: now,
+        }
+        if (isFull) {
+          patchData.quantity = nextQuantity
+        }
+
+        await ctx.db.patch(manualProduct._id, patchData)
+        await upsertKanbanCardForStatus(ctx, {
+          userId: args.userId,
+          productId: manualProduct._id,
+          kanbanStatus: nextKanbanStatus,
+          quantity: isFull ? nextQuantity : manualProduct.quantity,
+          note: `Anuncio ML ${normalizedListingId} vinculado por ${manualMatch.matchMethod}`,
+        })
+
+        if (isFull && previousQuantity !== nextQuantity) {
+          await ctx.db.insert("stockMovements", {
+            userId: args.userId,
+            productId: manualProduct._id,
+            type: "adjustment",
+            quantity: nextQuantity,
+            date: today,
+            note: `Sincronizacao ML: ${previousQuantity} -> ${nextQuantity}`,
+            createdAt: now,
+          })
+        }
+
+        linkedManualProductIds.add(manualProduct._id)
+        linkedManual += 1
+        updated += 1
+        continue
+      }
+
       if (!isFull) continue
 
       const productId = await ctx.db.insert("stockProducts", {
@@ -969,6 +1092,7 @@ export const syncFromMercadoLivre = mutation({
     return {
       created,
       updated,
+      linkedManual,
       removedManual: 0,
       total: args.listings.length,
     }
@@ -1065,12 +1189,14 @@ export const reconcileWithMlData = mutation({
     const today = new Date().toISOString().slice(0, 10)
     let updated = 0
     let created = 0
+    let linkedManual = 0
 
     const allProducts = await ctx.db
       .query("stockProducts")
       .withIndex("by_user", (q) => q.eq("userId", args.userId))
       .collect()
     const aliasOwner = buildMlAliasOwnerMap(allProducts)
+    const linkedManualProductIds = new Set<string>()
 
     for (const item of args.items) {
       const normalizedItemId = normalizeMlItemIdForStock(item.mlItemId)
@@ -1090,6 +1216,61 @@ export const reconcileWithMlData = mutation({
         : (byMlItems[0] ?? (normalizedItemId ? aliasOwner.get(normalizedItemId) : null) ?? null)
 
       if (!product) {
+        const manualMatch = findManualProductForMlListing(allProducts, {
+          title: item.title,
+          sku: item.sku,
+        })
+        const manualProduct =
+          manualMatch.product && !linkedManualProductIds.has(manualMatch.product._id)
+            ? manualMatch.product
+            : null
+
+        if (manualProduct) {
+          const nextQty = Math.max(0, Math.floor(item.availableQuantity))
+          const nextKanbanStatus = isFull ? "fulfillment" : "completed"
+          const patch: Record<string, unknown> = {
+            mlItemId: normalizedItemId,
+            sku: item.sku?.trim() || normalizedItemId,
+            imageUrl: item.imageUrl,
+            sellingPrice: item.price,
+            kanbanStatus: nextKanbanStatus,
+            stockSource: isFull ? "ml_full" : manualProduct.stockSource,
+            updatedAt: now,
+          }
+          if (item.title && item.title !== manualProduct.name) {
+            patch.name = item.title
+          }
+          if (isFull) {
+            patch.quantity = nextQty
+          }
+
+          await ctx.db.patch(manualProduct._id, patch)
+          await upsertKanbanCardForStatus(ctx, {
+            userId: args.userId,
+            productId: manualProduct._id,
+            kanbanStatus: nextKanbanStatus,
+            quantity: isFull ? nextQty : manualProduct.quantity,
+            note: `Anuncio ML ${normalizedItemId} vinculado por ${manualMatch.matchMethod}`,
+          })
+
+          if (isFull && nextQty !== manualProduct.quantity) {
+            await ctx.db.insert("stockMovements", {
+              userId: args.userId,
+              productId: manualProduct._id,
+              type: "adjustment",
+              quantity: nextQty,
+              date: today,
+              note: `Reconciliação ML: ${manualProduct.quantity} → ${nextQty}`,
+              createdAt: now,
+            })
+          }
+
+          linkedManualProductIds.add(manualProduct._id)
+          linkedManual += 1
+          updated += 1
+          continue
+        }
+
         if (!isFull) continue
 
         const nextQty = Math.max(0, Math.floor(item.availableQuantity))
@@ -1176,7 +1357,7 @@ export const reconcileWithMlData = mutation({
       updated += 1
     }
 
-    return { updated, created, total: args.items.length }
+    return { updated, created, linkedManual, total: args.items.length }
   },
 })
 

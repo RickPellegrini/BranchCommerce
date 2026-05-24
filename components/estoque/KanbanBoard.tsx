@@ -72,6 +72,13 @@ function isDefaultColumnId(id: string): id is KanbanColumnId {
   return DEFAULT_COL_IDS.some((defaultId) => defaultId === id)
 }
 
+function normalizeColumnOrder(order: string[] | undefined): string[] {
+  if (!order) return DEFAULT_COL_IDS
+  const saved = [...new Set(order)]
+  const missing = DEFAULT_COL_IDS.filter((id) => !saved.includes(id))
+  return [...saved.filter(isDefaultColumnId), ...missing]
+}
+
 function extractMlCodes(product: Pick<KanbanProduct, "mlItemId" | "mlItemAliases">): string[] {
   const candidates = [product.mlItemId, ...(product.mlItemAliases ?? [])]
   return [
@@ -126,6 +133,8 @@ interface KanbanBoardProps {
   ) => Promise<void>
   onSyncWithMl?: () => Promise<void>
   onReconcileSales?: () => Promise<void>
+  initialColumnOrder?: string[]
+  onColumnOrderChange?: (columnOrder: string[]) => Promise<void>
   mlSyncing?: boolean
   mlSyncDisabled?: boolean
   kanbanTimelineEvents?: ProductKanbanEventRow[]
@@ -144,6 +153,8 @@ export function KanbanBoard({
   onAddKanbanCard,
   onSyncWithMl,
   onReconcileSales,
+  initialColumnOrder,
+  onColumnOrderChange,
   mlSyncing = false,
   mlSyncDisabled = false,
   kanbanTimelineEvents = [],
@@ -186,17 +197,27 @@ export function KanbanBoard({
     }
   })
   const [columnOrder, setColumnOrder] = useState<string[]>(() => {
+    if (initialColumnOrder) return normalizeColumnOrder(initialColumnOrder)
     if (typeof window === "undefined") return DEFAULT_COL_IDS
     try {
       const raw = localStorage.getItem(LS_COL_ORDER)
       if (!raw) return DEFAULT_COL_IDS
-      const saved = JSON.parse(raw) as string[]
-      const missing = DEFAULT_COL_IDS.filter((id) => !saved.includes(id))
-      return [...saved.filter(isDefaultColumnId), ...missing]
+      return normalizeColumnOrder(JSON.parse(raw) as string[])
     } catch {
       return DEFAULT_COL_IDS
     }
   })
+
+  useEffect(() => {
+    if (!initialColumnOrder) return
+    let cancelled = false
+    queueMicrotask(() => {
+      if (!cancelled) setColumnOrder(normalizeColumnOrder(initialColumnOrder))
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [initialColumnOrder])
 
   useEffect(() => {
     try {
@@ -367,16 +388,26 @@ export function KanbanBoard({
     )
   }
 
-  const handleColumnDragEnd = useCallback((event: DragEndEvent) => {
-    const { active, over } = event
-    if (!over || active.id === over.id) return
-    setColumnOrder((prev) => {
-      const oldIdx = prev.indexOf(active.id as string)
-      const newIdx = prev.indexOf(over.id as string)
-      if (oldIdx === -1 || newIdx === -1) return prev
-      return arrayMove(prev, oldIdx, newIdx)
-    })
-  }, [])
+  const handleColumnDragEnd = useCallback(
+    (event: DragEndEvent) => {
+      const { active, over } = event
+      if (!over || active.id === over.id) return
+      const oldIdx = columnOrder.indexOf(active.id as string)
+      const newIdx = columnOrder.indexOf(over.id as string)
+      if (oldIdx === -1 || newIdx === -1) return
+      const nextOrder = arrayMove(columnOrder, oldIdx, newIdx)
+      setColumnOrder(nextOrder)
+      try {
+        localStorage.setItem(LS_COL_ORDER, JSON.stringify(nextOrder))
+      } catch {
+        /* ignore */
+      }
+      if (onColumnOrderChange) {
+        void onColumnOrderChange(nextOrder)
+      }
+    },
+    [columnOrder, onColumnOrderChange],
+  )
 
   const columnSensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 12 } }),

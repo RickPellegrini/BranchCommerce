@@ -168,6 +168,12 @@ export default defineSchema({
     .index("by_user", ["userId"])
     .index("by_user_product", ["userId", "productId"]),
 
+  stockUserPreferences: defineTable({
+    userId: v.string(),
+    kanbanColumnOrder: v.optional(v.array(v.string())),
+    updatedAt: v.number(),
+  }).index("by_user", ["userId"]),
+
   /** Metadados de ficheiros no Convex Storage, por lançamento */
   transactionAttachments: defineTable({
     userId: v.string(),
