@@ -1810,6 +1810,25 @@ export function FinancialDashboard() {
     }
   }, [])
 
+  const loadMlConnectionStatus = useCallback(async () => {
+    setMlLoading(true)
+    try {
+      const response = await fetch("/api/ml/account", { cache: "no-store" })
+      const payload = await response.json()
+      if (!response.ok || !payload.ok) {
+        throw new Error(payload.error ?? "Falha ao carregar status do Mercado Livre.")
+      }
+      const connectionData = payload.data as MlConnectionStatus
+      setMlConnectionStatus(connectionData)
+      return connectionData
+    } catch (error) {
+      setMlError(error instanceof Error ? error.message : "Erro ao consultar conta Mercado Livre.")
+      return null
+    } finally {
+      setMlLoading(false)
+    }
+  }, [])
+
   const syncAllExternalData = useCallback(
     async (force = false) => {
       if (globalSyncLoading) return
@@ -2023,6 +2042,8 @@ export function FinancialDashboard() {
     if (mlConnected === "1") {
       setMlInfo("Conta do Mercado Livre conectada com sucesso.")
       setMlError(null)
+      void loadMlConnectionStatus()
+      void syncAllExternalData(true)
     }
 
     if (mlErrorCode) {
@@ -2058,42 +2079,7 @@ export function FinancialDashboard() {
 
     const cleanUrl = `${window.location.pathname}`
     window.history.replaceState({}, "", cleanUrl)
-  }, [])
-
-  useEffect(() => {
-    if (activeModule !== "mercadolivre") return
-
-    const load = async () => {
-      setMlLoading(true)
-      setMlError(null)
-      try {
-        const response = await fetch("/api/ml/account", { cache: "no-store" })
-        const payload = await response.json()
-        if (!response.ok || !payload.ok) {
-          const details =
-            typeof payload.details === "string"
-              ? ` (${payload.details})`
-              : payload.details
-                ? ` (${JSON.stringify(payload.details)})`
-                : ""
-          throw new Error((payload.error ?? "Falha ao carregar status do Mercado Livre.") + details)
-        }
-        const connectionData = payload.data as MlConnectionStatus
-        setMlConnectionStatus(connectionData)
-        if (connectionData.connected) {
-          await loadMlOverviewCards()
-        }
-      } catch (error) {
-        setMlError(
-          error instanceof Error ? error.message : "Erro ao consultar conta Mercado Livre.",
-        )
-      } finally {
-        setMlLoading(false)
-      }
-    }
-
-    void load()
-  }, [activeModule])
+  }, [loadMlConnectionStatus, syncAllExternalData])
 
   useEffect(() => {
     if ((activeModule !== "finance" && activeModule !== "home") || !userId) return
@@ -4983,20 +4969,13 @@ export function FinancialDashboard() {
     let cancelled = false
 
     const bootstrapConnectedMlData = async () => {
-      setMlLoading(true)
       try {
-        const response = await fetch("/api/ml/account", { cache: "no-store" })
-        const payload = await response.json()
-        if (!response.ok || !payload.ok) {
-          throw new Error(payload.error ?? "Falha ao carregar status do Mercado Livre.")
-        }
-
+        const connectionData = await loadMlConnectionStatus()
         if (cancelled) return
-        const connectionData = payload.data as MlConnectionStatus
-        setMlConnectionStatus(connectionData)
-        if (!connectionData.connected) return
+        if (!connectionData?.connected) return
 
         await Promise.allSettled([
+          syncAllExternalData(false),
           loadMlOverviewCards(),
           loadMlOrders(),
           fetchMpData(),
@@ -5008,8 +4987,6 @@ export function FinancialDashboard() {
             error instanceof Error ? error.message : "Erro ao atualizar dados do Mercado Livre.",
           )
         }
-      } finally {
-        if (!cancelled) setMlLoading(false)
       }
     }
 
@@ -5018,7 +4995,14 @@ export function FinancialDashboard() {
       cancelled = true
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps -- bootstraps once per authenticated user; loaders are invoked as a single startup refresh batch.
-  }, [fetchFutureReleases, fetchMpData, isLoaded, userId])
+  }, [
+    fetchFutureReleases,
+    fetchMpData,
+    isLoaded,
+    loadMlConnectionStatus,
+    syncAllExternalData,
+    userId,
+  ])
 
   useEffect(() => {
     if (!mlConnectionStatus?.connected) {
@@ -5848,6 +5832,64 @@ export function FinancialDashboard() {
                 {globalSyncStatus}
               </div>
             )}
+
+            <Card className="border-border/70 shadow-sm">
+              <CardHeader className="pb-2">
+                <CardTitle className="inline-flex items-center gap-2 text-base">
+                  <Store className="size-4 text-warning" />
+                  Mercado Livre
+                </CardTitle>
+                <CardDescription>
+                  Conexão da conta, validade do token e sincronização centralizada pelo TI.
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                <div className="space-y-1 text-sm">
+                  {mlLoading ? (
+                    <p className="text-muted-foreground">Carregando status da conexão...</p>
+                  ) : mlConnectionStatus?.connected ? (
+                    <>
+                      <p className="font-medium">
+                        {mlConnectionStatus.mlNickname ?? mlConnectionStatus.mlUserId}
+                      </p>
+                      <p className="text-muted-foreground">
+                        Token expira em{" "}
+                        {new Date(mlConnectionStatus.expiresAt).toLocaleString("pt-BR")}
+                      </p>
+                    </>
+                  ) : (
+                    <p className="text-muted-foreground">
+                      Nenhuma conta conectada ao Mercado Livre.
+                    </p>
+                  )}
+                  {mlError && <p className="text-destructive">{mlError}</p>}
+                  {mlInfo && <p className="text-emerald-700 dark:text-emerald-400">{mlInfo}</p>}
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  {mlConnectionStatus?.connected ? (
+                    <Button
+                      variant="destructive"
+                      size="sm"
+                      onClick={() => void disconnectMlAccount()}
+                      disabled={mlDisconnecting}
+                    >
+                      {mlDisconnecting ? "Desconectando..." : "Desconectar Mercado Livre"}
+                    </Button>
+                  ) : (
+                    <Button
+                      size="sm"
+                      className="bg-warning text-warning-foreground hover:bg-warning/90"
+                      onClick={() => {
+                        window.location.href = "/api/ml/connect"
+                      }}
+                    >
+                      <Store className="mr-2 size-4" />
+                      Conectar Mercado Livre
+                    </Button>
+                  )}
+                </div>
+              </CardContent>
+            </Card>
 
             <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
               <HomeExecutiveCard
@@ -9769,70 +9811,6 @@ export function FinancialDashboard() {
 
         {activeModule === "mercadolivre" && (
           <section className="space-y-4">
-            <Card>
-              <CardHeader>
-                <CardTitle className="flex items-center gap-2 text-warning">
-                  <Store className="size-5" />
-                  Mercado Livre
-                </CardTitle>
-                <CardDescription>
-                  Conecte sua conta e consulte anuncios, pedidos e metricas.
-                </CardDescription>
-              </CardHeader>
-              <CardContent className="space-y-3">
-                {mlLoading ? (
-                  <p className="text-sm text-muted-foreground">Carregando status da conexao...</p>
-                ) : mlConnectionStatus?.connected ? (
-                  <div className="space-y-2 text-sm">
-                    <p>
-                      <span className="font-medium">Status:</span>{" "}
-                      <Badge variant="default" className="inline-flex items-center gap-1">
-                        <CheckCircle2 className="size-3.5" />
-                        Conectado
-                      </Badge>
-                    </p>
-                    <p>
-                      <span className="font-medium">Conta ML:</span>{" "}
-                      {mlConnectionStatus.mlNickname ?? mlConnectionStatus.mlUserId}
-                    </p>
-                    <p className="text-muted-foreground">
-                      Token expira em:{" "}
-                      {new Date(mlConnectionStatus.expiresAt).toLocaleString("pt-BR")}
-                    </p>
-                    <div className="pt-1">
-                      <Button
-                        variant="destructive"
-                        size="sm"
-                        onClick={() => void disconnectMlAccount()}
-                        disabled={mlDisconnecting}
-                      >
-                        {mlDisconnecting ? "Desconectando..." : "Desconectar Mercado Livre"}
-                      </Button>
-                    </div>
-                  </div>
-                ) : (
-                  <div className="space-y-2">
-                    <p className="text-sm text-muted-foreground">
-                      Nenhuma conta conectada ao Mercado Livre.
-                    </p>
-                    <Button
-                      className="bg-warning text-warning-foreground hover:bg-warning/90"
-                      onClick={() => {
-                        window.location.href = "/api/ml/connect"
-                      }}
-                    >
-                      <Store className="size-4" />
-                      Conectar Mercado Livre
-                    </Button>
-                  </div>
-                )}
-                {mlError && <p className="text-sm text-destructive">{mlError}</p>}
-                {mlInfo && (
-                  <p className="text-sm text-emerald-700 dark:text-emerald-400">{mlInfo}</p>
-                )}
-              </CardContent>
-            </Card>
-
             {mlConnectionStatus?.connected && (
               <>
                 <Card>
@@ -10742,6 +10720,28 @@ export function FinancialDashboard() {
                   </Card>
                 )}
               </>
+            )}
+            {!mlConnectionStatus?.connected && (
+              <Card>
+                <CardHeader>
+                  <CardTitle>Mercado Livre</CardTitle>
+                  <CardDescription>
+                    A conexão e a sincronização desta integração ficam centralizadas em TI &
+                    Integrações.
+                  </CardDescription>
+                </CardHeader>
+                <CardContent>
+                  <Button
+                    variant="outline"
+                    onClick={() => {
+                      setActiveModule("connections")
+                    }}
+                  >
+                    <Settings className="mr-2 size-4" />
+                    Abrir TI & Integrações
+                  </Button>
+                </CardContent>
+              </Card>
             )}
           </section>
         )}

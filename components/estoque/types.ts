@@ -79,7 +79,7 @@ export function getEffectiveKanbanStatusForUi(product: KanbanProduct): KanbanSta
 }
 
 export function getKanbanColumnId(product: KanbanProduct): KanbanColumnId {
-  if (product.quantity === 0 && product.kanbanStatus === "in_stock") {
+  if (product.quantity === 0) {
     return "em_falta"
   }
   if (product.kanbanStatus === "fulfillment") {

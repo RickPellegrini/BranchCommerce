@@ -102,7 +102,7 @@ export function ProductCard({
                 <p title={product.name} className="truncate text-sm font-medium leading-tight">
                   {product.name}
                 </p>
-                {product.quantity === 0 && product.kanbanStatus === "in_stock" && (
+                {product.quantity === 0 && (
                   <span className="shrink-0 rounded bg-red-500/20 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-red-400">
                     Em falta
                   </span>

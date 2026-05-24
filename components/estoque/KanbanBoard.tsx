@@ -40,7 +40,6 @@ import {
   getKanbanColumnId,
   getUrgency,
   formatCurrencyBRL,
-  isCompradoKanbanStatus,
 } from "./types"
 import { KanbanStageIcon } from "./column-icons"
 import { KanbanColumn } from "./KanbanColumn"
@@ -363,9 +362,11 @@ export function KanbanBoard({
   }, [displayProducts, search, urgencyFilter, categoryFilter, showHidden])
 
   const activeProduct = activeId ? displayProducts.find((p) => p.id === activeId) : null
-  const inTransitCount = displayProducts.filter((p) => p.kanbanStatus === "in_transit").length
-  const compradoCount = displayProducts.filter((p) => isCompradoKanbanStatus(p.kanbanStatus)).length
-  const fulfillmentCount = displayProducts.filter((p) => p.kanbanStatus === "fulfillment").length
+  const inTransitCount = displayProducts.filter((p) => getKanbanColumnId(p) === "in_transit").length
+  const compradoCount = displayProducts.filter((p) => getKanbanColumnId(p) === "purchased").length
+  const fulfillmentCount = displayProducts.filter(
+    (p) => getKanbanColumnId(p) === "fulfillment",
+  ).length
 
   const visibleColumnIds = useMemo(
     () => columnOrder.filter((id) => !hiddenColumns[id]),
@@ -428,18 +429,18 @@ export function KanbanBoard({
   const getColumnProducts = useCallback(
     (colId: string) => {
       if (colId === EM_FALTA_COLUMN.id) {
-        return filteredProducts.filter((p) => p.quantity === 0 && p.kanbanStatus === "in_stock")
+        return filteredProducts.filter((p) => getKanbanColumnId(p) === EM_FALTA_COLUMN.id)
       }
       if (colId === "in_stock") {
-        return filteredProducts.filter((p) => p.kanbanStatus === "in_stock" && p.quantity > 0)
+        return filteredProducts.filter((p) => getKanbanColumnId(p) === "in_stock")
       }
       if (colId === "purchased") {
-        return filteredProducts.filter((p) => isCompradoKanbanStatus(p.kanbanStatus))
+        return filteredProducts.filter((p) => getKanbanColumnId(p) === "purchased")
       }
       if (colId === "fulfillment") {
-        return filteredProducts.filter((p) => p.kanbanStatus === "fulfillment")
+        return filteredProducts.filter((p) => getKanbanColumnId(p) === "fulfillment")
       }
-      return filteredProducts.filter((p) => p.kanbanStatus === colId)
+      return filteredProducts.filter((p) => getKanbanColumnId(p) === colId)
     },
     [filteredProducts],
   )
