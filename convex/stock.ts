@@ -1619,17 +1619,26 @@ export const reconcileSalesFromMercadoLivre = mutation({
 
         const previousQuantity = match.product.quantity
         const nextQuantity = Math.max(0, previousQuantity - quantity)
+        const previousKanban = match.product.kanbanStatus ?? "in_stock"
+        const nextKanban = nextQuantity === 0 ? "in_stock" : match.product.kanbanStatus
         if (quantity > previousQuantity) stockShortages += 1
 
         await ctx.db.patch(match.product._id, {
           quantity: nextQuantity,
-          kanbanStatus:
-            nextQuantity === 0 && (match.product.kanbanStatus ?? "in_stock") === "in_stock"
-              ? "in_stock"
-              : match.product.kanbanStatus,
+          kanbanStatus: nextKanban,
           updatedAt: now,
         })
+        if (nextQuantity === 0 && previousKanban !== "in_stock") {
+          await logKanbanTransition(ctx, {
+            userId: args.userId,
+            productId: match.product._id,
+            fromStatus: previousKanban,
+            toStatus: "em_falta",
+            note: `Venda Mercado Livre #${order.orderId} zerou o estoque`,
+          })
+        }
         match.product.quantity = nextQuantity
+        match.product.kanbanStatus = nextKanban
 
         await ctx.db.insert("stockMovements", {
           userId: args.userId,
@@ -1732,10 +1741,28 @@ export const addMovement = mutation({
       throw new Error("Movimentacao invalida: estoque nao pode ficar negativo.")
     }
 
+    const previousKanban = product.kanbanStatus ?? "in_stock"
+    const nextKanban =
+      nextQuantity === 0 && (args.type === "out" || args.type === "sale")
+        ? "in_stock"
+        : product.kanbanStatus
+    const now = Date.now()
+
     await ctx.db.patch(args.productId, {
       quantity: nextQuantity,
-      updatedAt: Date.now(),
+      kanbanStatus: nextKanban,
+      updatedAt: now,
     })
+
+    if (nextQuantity === 0 && previousKanban !== "in_stock") {
+      await logKanbanTransition(ctx, {
+        userId: args.userId,
+        productId: args.productId,
+        fromStatus: previousKanban,
+        toStatus: "em_falta",
+        note: "Movimentacao zerou o estoque",
+      })
+    }
 
     const movementId = await ctx.db.insert("stockMovements", {
       userId: args.userId,
@@ -1745,7 +1772,7 @@ export const addMovement = mutation({
       date: args.date,
       unitPrice: args.unitPrice,
       note: args.note,
-      createdAt: Date.now(),
+      createdAt: now,
     })
 
     if (args.type === "sale") {

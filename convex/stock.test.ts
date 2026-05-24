@@ -370,6 +370,35 @@ describe("stock", () => {
       expect(data.products[0].quantity).toBe(7)
     })
 
+    it("moves product to missing column when out movement zeroes stock", async () => {
+      const t = convexTest(schema, modules)
+      const id = await setupProduct(t)
+      await t.mutation(api.stock.updateProduct, {
+        userId: "user1",
+        productId: id,
+        name: "Widget A",
+        sku: "MLB000001",
+        category: "Gadgets",
+        quantity: 10,
+        minStock: 2,
+        unitCost: 15,
+        sellingPrice: 50,
+        kanbanStatus: "fulfillment",
+      })
+
+      await t.mutation(api.stock.addMovement, {
+        userId: "user1",
+        productId: id,
+        type: "out",
+        quantity: 10,
+        date: "2025-06-15",
+      })
+
+      const data = await t.query(api.stock.getDashboardData, { userId: "user1" })
+      expect(data.products[0].quantity).toBe(0)
+      expect(data.products[0].kanbanStatus).toBe("in_stock")
+    })
+
     it("sets absolute quantity with 'adjustment'", async () => {
       const t = convexTest(schema, modules)
       const id = await setupProduct(t)
@@ -594,6 +623,7 @@ describe("stock", () => {
       expect(result.transactionsCreated).toBe(1)
       const stockData = await t.query(api.stock.getDashboardData, { userId: "user1" })
       expect(stockData.products[0].quantity).toBe(0)
+      expect(stockData.products[0].kanbanStatus).toBe("in_stock")
       expect(stockData.movements.some((movement) => movement.type === "sale")).toBe(true)
       const financeData = await t.query(api.finance.getDashboardData, { userId: "user1" })
       expect(financeData.transactions).toEqual(
@@ -648,6 +678,55 @@ describe("stock", () => {
       const stockData = await t.query(api.stock.getDashboardData, { userId: "user1" })
       expect(stockData.products[0].quantity).toBe(2)
       expect(stockData.movements.filter((movement) => movement.type === "sale")).toHaveLength(1)
+    })
+
+    it("moves fulfillment product to missing column when ML sale zeroes stock", async () => {
+      const t = convexTest(schema, modules)
+      const productId = await t.mutation(api.stock.addProduct, {
+        userId: "user1",
+        name: "Ferro",
+        mlItemId: "MLB777",
+        category: "Eletro",
+        quantity: 1,
+        minStock: 0,
+        unitCost: 80,
+      })
+      await t.mutation(api.stock.updateProduct, {
+        userId: "user1",
+        productId,
+        name: "Ferro",
+        sku: "MLB777",
+        category: "Eletro",
+        quantity: 1,
+        minStock: 0,
+        unitCost: 80,
+        kanbanStatus: "fulfillment",
+      })
+
+      await t.mutation(api.stock.reconcileSalesFromMercadoLivre, {
+        userId: "user1",
+        orders: [
+          {
+            orderId: "2003",
+            status: "paid",
+            paymentStatus: "approved",
+            date: "2026-05-20T12:00:00.000Z",
+            items: [
+              {
+                itemKey: "MLB777:0",
+                mlItemId: "MLB777",
+                title: "Ferro",
+                quantity: 1,
+                unitPrice: 120,
+              },
+            ],
+          },
+        ],
+      })
+
+      const stockData = await t.query(api.stock.getDashboardData, { userId: "user1" })
+      expect(stockData.products[0].quantity).toBe(0)
+      expect(stockData.products[0].kanbanStatus).toBe("in_stock")
     })
   })
 
