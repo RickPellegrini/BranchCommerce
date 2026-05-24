@@ -189,6 +189,26 @@ export default defineSchema({
     .index("by_transaction", ["transactionId"])
     .index("by_dedupe_key", ["dedupeKey"]),
 
+  administrativeDocuments: defineTable({
+    userId: v.string(),
+    title: v.string(),
+    description: v.optional(v.string()),
+    category: v.string(),
+    fileName: v.string(),
+    fileType: v.string(),
+    fileSize: v.number(),
+    storageId: v.id("_storage"),
+    storagePath: v.optional(v.string()),
+    uploadedBy: v.optional(v.string()),
+    tags: v.optional(v.array(v.string())),
+    createdAt: v.number(),
+    updatedAt: v.optional(v.number()),
+    status: v.optional(v.union(v.literal("active"), v.literal("archived"))),
+  })
+    .index("by_user", ["userId"])
+    .index("by_user_status", ["userId", "status"])
+    .index("by_user_category", ["userId", "category"]),
+
   /** Devolução iniciada a partir de um lançamento (uma por lançamento origem) */
   transactionReturns: defineTable({
     userId: v.string(),

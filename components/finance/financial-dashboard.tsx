@@ -52,6 +52,7 @@ import {
   Paperclip,
 } from "lucide-react"
 import Image from "next/image"
+import Link from "next/link"
 import { ThemeToggle } from "@/components/theme-toggle"
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 
@@ -5160,6 +5161,12 @@ export function FinancialDashboard() {
             <Settings className="size-4" />
             TI
           </Button>
+          <Button asChild size="sm" variant="outline">
+            <Link href="/administrativo">
+              <FileText className="size-4" />
+              Administrativo
+            </Link>
+          </Button>
         </div>
         <Separator />
         {activeModule === "finance" && (
@@ -5347,6 +5354,12 @@ export function FinancialDashboard() {
                 </Button>
               )
             })}
+            <Button asChild type="button" size="sm" variant="outline" className="h-9 shrink-0 px-3">
+              <Link href="/administrativo">
+                <FileText className="size-4" />
+                Administrativo
+              </Link>
+            </Button>
           </nav>
 
           {activeModule === "finance" && (

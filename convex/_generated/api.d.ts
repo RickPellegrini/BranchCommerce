@@ -9,6 +9,7 @@
  */
 
 import type * as crons from "../crons.js";
+import type * as administrativeDocuments from "../administrativeDocuments.js";
 import type * as dedupeHelpers from "../dedupeHelpers.js";
 import type * as finance from "../finance.js";
 import type * as mercadolivre from "../mercadolivre.js";
@@ -24,6 +25,7 @@ import type {
 
 declare const fullApi: ApiFromModules<{
   crons: typeof crons;
+  administrativeDocuments: typeof administrativeDocuments;
   dedupeHelpers: typeof dedupeHelpers;
   finance: typeof finance;
   mercadolivre: typeof mercadolivre;
