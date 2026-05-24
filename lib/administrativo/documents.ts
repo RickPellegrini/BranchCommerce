@@ -5,6 +5,7 @@ export const ADMIN_DOCUMENT_CATEGORIES = [
   "Certificados",
   "Compliance",
   "Financeiro",
+  "Comprovantes",
   "Fornecedores",
   "Políticas",
   "Outros",

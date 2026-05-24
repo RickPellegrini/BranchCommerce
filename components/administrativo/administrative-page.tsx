@@ -139,9 +139,19 @@ export function AdministrativePage() {
 
   async function loadDocumentUrl(document: AdministrativeDocument) {
     if (!userId) throw new Error("Usuario nao autenticado.")
+    if (document.source === "payment_proof") {
+      if (!document.attachmentId) throw new Error("Comprovante sem referencia de anexo.")
+      const url = await convex.query(api.finance.getAttachmentUrl, {
+        userId,
+        attachmentId: document.attachmentId,
+      })
+      if (!url) throw new Error("URL do comprovante indisponivel.")
+      return url
+    }
+
     const url = await convex.query(api.administrativeDocuments.getDocumentUrl, {
       userId,
-      documentId: document._id,
+      documentId: document._id as Id<"administrativeDocuments">,
     })
     if (!url) throw new Error("URL do arquivo indisponivel.")
     return url
@@ -170,6 +180,10 @@ export function AdministrativePage() {
   }
 
   function startEdit(document: AdministrativeDocument) {
+    if (document.source === "payment_proof") {
+      setFeedback("Comprovantes de pagamento sao gerenciados pelo Financeiro.")
+      return
+    }
     setEditingDocument(document)
     setEditTitle(document.title)
     setEditDescription(document.description ?? "")
@@ -179,9 +193,10 @@ export function AdministrativePage() {
 
   async function saveEdit() {
     if (!userId || !editingDocument) return
+    if (editingDocument.source === "payment_proof") return
     await updateDocumentMetadata({
       userId,
-      documentId: editingDocument._id,
+      documentId: editingDocument._id as Id<"administrativeDocuments">,
       title: editTitle,
       description: editDescription.trim() || undefined,
       category: editCategory,
@@ -196,8 +211,12 @@ export function AdministrativePage() {
 
   async function handleArchive(document: AdministrativeDocument) {
     if (!userId) return
+    if (document.source === "payment_proof") {
+      setFeedback("Comprovantes de pagamento devem ser removidos pelo Financeiro.")
+      return
+    }
     if (!window.confirm(`Arquivar "${document.title}"?`)) return
-    await archiveDocument({ userId, documentId: document._id })
+    await archiveDocument({ userId, documentId: document._id as Id<"administrativeDocuments"> })
     setFeedback("Documento arquivado.")
   }
 

@@ -12,6 +12,7 @@ const categoryValidator = v.union(
   v.literal("Certificados"),
   v.literal("Compliance"),
   v.literal("Financeiro"),
+  v.literal("Comprovantes"),
   v.literal("Fornecedores"),
   v.literal("Políticas"),
   v.literal("Outros"),
@@ -61,7 +62,54 @@ export const listDocuments = query({
       .withIndex("by_user_status", (q) => q.eq("userId", args.userId).eq("status", status))
       .collect()
 
-    return documents.sort((a, b) => b.createdAt - a.createdAt)
+    const administrativeDocuments = documents.map((document) => ({
+      ...document,
+      source: "administrative" as const,
+    }))
+
+    if (status === "archived") {
+      return administrativeDocuments.sort((a, b) => b.createdAt - a.createdAt)
+    }
+
+    const paymentProofs = await ctx.db
+      .query("transactionAttachments")
+      .withIndex("by_user", (q) => q.eq("userId", args.userId))
+      .collect()
+
+    const proofDocuments = await Promise.all(
+      paymentProofs.map(async (attachment) => {
+        const transaction = await ctx.db.get(attachment.transactionId)
+        const description = transaction?.description
+          ? `Comprovante do lancamento: ${transaction.description}`
+          : "Comprovante anexado no Financeiro."
+
+        return {
+          _id: attachment._id,
+          _creationTime: attachment._creationTime,
+          userId: attachment.userId,
+          title: transaction?.description
+            ? `Comprovante - ${transaction.description}`
+            : attachment.fileName,
+          description,
+          category: "Comprovantes",
+          fileName: attachment.fileName,
+          fileType: attachment.mimeType,
+          fileSize: attachment.byteSize,
+          storageId: attachment.storageId as Id<"_storage">,
+          uploadedBy: "Financeiro",
+          tags: ["pagamento", "comprovante", "financeiro"],
+          createdAt: attachment.createdAt,
+          updatedAt: undefined,
+          status: "active" as const,
+          source: "payment_proof" as const,
+          attachmentId: attachment._id,
+          transactionId: attachment.transactionId,
+          transactionDate: transaction?.date,
+        }
+      }),
+    )
+
+    return [...administrativeDocuments, ...proofDocuments].sort((a, b) => b.createdAt - a.createdAt)
   },
 })
 

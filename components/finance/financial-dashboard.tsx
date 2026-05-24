@@ -7,6 +7,7 @@ import { useMutation, useQuery } from "convex/react"
 import {
   AlertCircle,
   BarChart3,
+  Briefcase,
   CalendarDays,
   CheckCircle2,
   ClipboardList,
@@ -108,6 +109,7 @@ import {
 import { cn } from "@/lib/utils"
 import { AnalysisModal } from "@/features/product-analysis/components/AnalysisModal"
 import { HunterAnalysisPage } from "@/features/product-analysis/components/HunterAnalysisPage"
+import { AdministrativePage } from "@/components/administrativo/administrative-page"
 import { KanbanBoard } from "@/components/estoque/KanbanBoard"
 import { ProductNameInputWithSuggestions } from "@/components/estoque/ProductNameInputWithSuggestions"
 import type { ProductKanbanEventRow } from "@/components/estoque/ProductDetailModal"
@@ -117,7 +119,14 @@ import type { ProductSuggestionCandidate } from "@/lib/stock/product-name-sugges
 import { normalizeMercadoLibreItemId } from "@/lib/mercadolivre/item-id"
 import { suggestUnitCostFromInventory, type ProductCostLookup } from "@/lib/stock/suggest-unit-cost"
 
-type ModuleKey = "home" | "finance" | "stock" | "mercadolivre" | "branchhunter" | "connections"
+export type ModuleKey =
+  | "home"
+  | "finance"
+  | "stock"
+  | "mercadolivre"
+  | "branchhunter"
+  | "connections"
+  | "administrative"
 type FinanceSection =
   | "overview"
   | "abc"
@@ -132,8 +141,7 @@ type FinanceTypeFilter = "all" | "income" | "expense"
 type FinanceInsightKey = "profit" | "revenue" | "costs" | "sales" | "margin" | "ticket"
 type HistorySummaryFilter = "entries" | "fixed" | "operational" | "recurring"
 type StockSection = "overview" | "history"
-type MlSection = "catalogo" | "anuncios" | "orders" | "metrics"
-type MlSidebarGroup = "anuncios" | "pedidos" | "metricas"
+type MlSection = "overview" | "anuncios" | "catalogo" | "orders" | "intelligence"
 type HunterSection =
   | "padrao"
   | "analise-anuncio"
@@ -1341,17 +1349,26 @@ function StockLevelLegend() {
   )
 }
 
-export function FinancialDashboard() {
+const moduleRoutes: Record<ModuleKey, string> = {
+  home: "/dashboard",
+  finance: "/financeiro",
+  stock: "/estoque",
+  mercadolivre: "/mercado-livre",
+  branchhunter: "/branch-hunter",
+  connections: "/ti",
+  administrative: "/administrativo",
+}
+
+export function FinancialDashboard({ initialModule = "home" }: { initialModule?: ModuleKey }) {
   const { user, isLoaded } = useUser()
   const userId = user?.id
 
-  const [activeModule, setActiveModule] = useState<ModuleKey>("home")
+  const [activeModule, setActiveModule] = useState<ModuleKey>(initialModule)
   const [activeFinanceInsight, setActiveFinanceInsight] = useState<FinanceInsightKey>("costs")
   const [financeInsightModalOpen, setFinanceInsightModalOpen] = useState(false)
   const [activeFinanceSection, setActiveFinanceSection] = useState<FinanceSection>("overview")
   const [activeStockSection, setActiveStockSection] = useState<StockSection>("overview")
-  const [activeMlSection, setActiveMlSection] = useState<MlSection>("catalogo")
-  const [activeMlSidebarGroup, setActiveMlSidebarGroup] = useState<MlSidebarGroup>("anuncios")
+  const [activeMlSection, setActiveMlSection] = useState<MlSection>("overview")
   const [activeHunterSection, setActiveHunterSection] = useState<HunterSection>("analise-anuncio")
   const [period, setPeriod] = useState<FinancialPeriod>("month")
   const [filters, setFilters] = useState<TransactionFilters>(() => ({
@@ -2023,6 +2040,10 @@ export function FinancialDashboard() {
   const deleteTransactionAttachment = useMutation(api.finance.deleteTransactionAttachment)
   const markInstallmentPaidMutation = useMutation(api.finance.markInstallmentPaid)
   const startReturnForTransactionMutation = useMutation(api.finance.startReturnForTransaction)
+
+  useEffect(() => {
+    setActiveModule(initialModule)
+  }, [initialModule])
 
   useEffect(() => {
     if (!userId || isSetupDone) return
@@ -3184,7 +3205,6 @@ export function FinancialDashboard() {
         icon: ShoppingBag,
         onClick: () => {
           setActiveModule("mercadolivre")
-          setActiveMlSidebarGroup("pedidos")
           setActiveMlSection("orders")
         },
       })
@@ -3274,7 +3294,6 @@ export function FinancialDashboard() {
         tone: ordersWithoutProductLink.length > 0 ? "warning" : "success",
         action: () => {
           setActiveModule("mercadolivre")
-          setActiveMlSidebarGroup("pedidos")
           setActiveMlSection("orders")
         },
       },
@@ -3288,7 +3307,6 @@ export function FinancialDashboard() {
         tone: listingsWithoutSku.length > 0 ? "warning" : "success",
         action: () => {
           setActiveModule("mercadolivre")
-          setActiveMlSidebarGroup("anuncios")
           setActiveMlSection("anuncios")
         },
       },
@@ -3868,6 +3886,139 @@ export function FinancialDashboard() {
     mlOrdersSortBy,
     mlOrdersStatusFilter,
   ])
+
+  const mlIntelligenceAlerts = useMemo(() => {
+    const alerts: Array<{
+      id: string
+      title: string
+      description: string
+      severity: "danger" | "warning" | "info"
+      actionLabel: string
+      action: () => void
+    }> = []
+
+    const classicListings = mlNormalListingsFiltered
+    const listingsWithoutStock = classicListings.filter(
+      (listing) => listing.status === "active" && listing.available_quantity <= 0,
+    )
+    if (listingsWithoutStock.length > 0) {
+      alerts.push({
+        id: "listings-without-stock",
+        title: `${listingsWithoutStock.length} anuncio(s) ativo(s) sem estoque ML`,
+        description: "Revise estoque e pausa para evitar venda sem disponibilidade.",
+        severity: "danger",
+        actionLabel: "Ver anuncios",
+        action: () => setActiveMlSection("anuncios"),
+      })
+    }
+
+    const pausedWithStock = classicListings.filter((listing) => {
+      const product = productMapByMlItemId.get(normalizeMercadoLibreItemId(listing.id))
+      return listing.status === "paused" && (product?.quantity ?? listing.available_quantity) > 0
+    })
+    if (pausedWithStock.length > 0) {
+      alerts.push({
+        id: "paused-with-stock",
+        title: `${pausedWithStock.length} anuncio(s) pausado(s) com estoque`,
+        description: "Pode haver venda parada por anuncio pausado com produto disponivel.",
+        severity: "warning",
+        actionLabel: "Ver anuncios",
+        action: () => setActiveMlSection("anuncios"),
+      })
+    }
+
+    const listingsWithoutCatalog = classicListings.filter((listing) => !listing.catalogProductId)
+    if (listingsWithoutCatalog.length > 0) {
+      alerts.push({
+        id: "without-catalog-product",
+        title: `${listingsWithoutCatalog.length} anuncio(s) sem catalog_product_id`,
+        description: "Priorize vinculo de catalogo onde fizer sentido para ampliar exposicao.",
+        severity: "info",
+        actionLabel: "Ver anuncios",
+        action: () => setActiveMlSection("anuncios"),
+      })
+    }
+
+    const aboveWinner = filteredCatalogCompetitionRows.filter((row) => {
+      if (row.winnerPrice === null || row.winnerPrice <= 0) return false
+      const difference = row.price - row.winnerPrice
+      return difference > 1 || difference / row.winnerPrice > 0.02
+    })
+    if (aboveWinner.length > 0) {
+      alerts.push({
+        id: "above-winner",
+        title: `${aboveWinner.length} item(ns) acima do menor preco encontrado`,
+        description: "Compare margem antes de ajustar preco para recuperar buy box.",
+        severity: "warning",
+        actionLabel: "Ver catalogo",
+        action: () => setActiveMlSection("catalogo"),
+      })
+    }
+
+    const activeCatalogRows = filteredCatalogCompetitionRows.filter((row) => row.price > 0)
+    const averageCatalogPrice =
+      activeCatalogRows.length > 0
+        ? activeCatalogRows.reduce((sum, row) => sum + row.price, 0) / activeCatalogRows.length
+        : 0
+    const farBelowAverage = activeCatalogRows.filter(
+      (row) => averageCatalogPrice > 0 && row.price < averageCatalogPrice * 0.8,
+    )
+    if (farBelowAverage.length > 0) {
+      alerts.push({
+        id: "below-average",
+        title: `${farBelowAverage.length} item(ns) muito abaixo da media`,
+        description: "Valide custo e margem; pode haver preco agressivo demais.",
+        severity: "warning",
+        actionLabel: "Ver catalogo",
+        action: () => setActiveMlSection("catalogo"),
+      })
+    }
+
+    const soldQuantities = classicListings
+      .map((listing) => listing.sold_quantity)
+      .filter((quantity) => quantity > 0)
+      .sort((a, b) => a - b)
+    const highSalesThreshold =
+      soldQuantities.length > 0
+        ? soldQuantities[Math.max(0, Math.floor(soldQuantities.length * 0.75) - 1)]
+        : 0
+    const highSalesLowStock = classicListings.filter((listing) => {
+      if (listing.sold_quantity < highSalesThreshold || highSalesThreshold <= 0) return false
+      const product = productMapByMlItemId.get(normalizeMercadoLibreItemId(listing.id))
+      const stock = product?.quantity ?? listing.available_quantity
+      const minStock = product?.minStock ?? 1
+      return stock <= minStock
+    })
+    if (highSalesLowStock.length > 0) {
+      alerts.push({
+        id: "high-sales-low-stock",
+        title: `${highSalesLowStock.length} campeao(oes) com estoque baixo`,
+        description: "Produtos com venda alta e estoque no minimo merecem reposicao primeiro.",
+        severity: "danger",
+        actionLabel: "Ver anuncios",
+        action: () => setActiveMlSection("anuncios"),
+      })
+    }
+
+    if (alerts.length === 0) {
+      alerts.push({
+        id: "no-alerts",
+        title: "Nenhum alerta acionavel no momento",
+        description:
+          "Os dados carregados nao mostram riscos simples de preco, catalogo ou estoque.",
+        severity: "info",
+        actionLabel: "Ver visao geral",
+        action: () => setActiveMlSection("overview"),
+      })
+    }
+
+    return alerts.sort((a, b) => {
+      const score = { danger: 0, warning: 1, info: 2 }
+      return score[a.severity] - score[b.severity]
+    })
+  }, [filteredCatalogCompetitionRows, mlNormalListingsFiltered, productMapByMlItemId])
+
+  const mlOverviewAlerts = mlIntelligenceAlerts.slice(0, 3)
 
   const saveLaunch = async () => {
     if (!userId || !launchForm.amount || !launchForm.description || !launchForm.categoryId) {
@@ -5047,7 +5198,7 @@ export function FinancialDashboard() {
       }
       return
     }
-    if (activeMlSection === "metrics" && !mlMetrics && !mlMetricsLoading) {
+    if (activeMlSection === "overview" && !mlMetrics && !mlMetricsLoading) {
       void loadMlMetrics()
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps -- bootstrapping is controlled by section flags, not helper identity.
@@ -5061,12 +5212,6 @@ export function FinancialDashboard() {
     mlMetricsLoading,
     mlOrdersLoading,
   ])
-
-  useEffect(() => {
-    if (activeMlSidebarGroup === "anuncios") setActiveMlSection("catalogo")
-    if (activeMlSidebarGroup === "pedidos") setActiveMlSection("orders")
-    if (activeMlSidebarGroup === "metricas") setActiveMlSection("metrics")
-  }, [activeMlSidebarGroup])
 
   if (!isLoaded) {
     return (
@@ -5103,31 +5248,26 @@ export function FinancialDashboard() {
         <Separator />
         <p className="text-xs text-muted-foreground">Modulos</p>
         <div className="grid grid-cols-2 gap-2">
-          <Button
-            variant={activeModule === "home" ? "default" : "outline"}
-            size="sm"
-            onClick={() => setActiveModule("home")}
-          >
-            <Home className="size-4" />
-            Home
+          <Button asChild variant={activeModule === "home" ? "default" : "outline"} size="sm">
+            <Link href={moduleRoutes.home}>
+              <Home className="size-4" />
+              Home
+            </Link>
+          </Button>
+          <Button asChild variant={activeModule === "finance" ? "default" : "outline"} size="sm">
+            <Link href={moduleRoutes.finance}>
+              <Wallet className="size-4" />
+              Financeiro
+            </Link>
+          </Button>
+          <Button asChild variant={activeModule === "stock" ? "default" : "outline"} size="sm">
+            <Link href={moduleRoutes.stock}>
+              <Boxes className="size-4" />
+              Estoque
+            </Link>
           </Button>
           <Button
-            variant={activeModule === "finance" ? "default" : "outline"}
-            size="sm"
-            onClick={() => setActiveModule("finance")}
-          >
-            <Wallet className="size-4" />
-            Financeiro
-          </Button>
-          <Button
-            variant={activeModule === "stock" ? "default" : "outline"}
-            size="sm"
-            onClick={() => setActiveModule("stock")}
-          >
-            <Boxes className="size-4" />
-            Estoque
-          </Button>
-          <Button
+            asChild
             size="sm"
             variant="outline"
             className={cn(
@@ -5135,12 +5275,14 @@ export function FinancialDashboard() {
                 ? "border-warning bg-warning text-warning-foreground hover:bg-warning/90"
                 : "border-warning text-warning hover:bg-warning/10",
             )}
-            onClick={() => setActiveModule("mercadolivre")}
           >
-            <Store className="size-4" />
-            Mercado Livre
+            <Link href={moduleRoutes.mercadolivre}>
+              <Store className="size-4" />
+              Mercado Livre
+            </Link>
           </Button>
           <Button
+            asChild
             size="sm"
             variant="outline"
             className={cn(
@@ -5148,22 +5290,29 @@ export function FinancialDashboard() {
                 ? "border-emerald-600 bg-emerald-600 text-white hover:bg-emerald-700"
                 : "border-emerald-600 text-emerald-700 dark:text-emerald-400 hover:bg-emerald-50 dark:hover:bg-emerald-950/40",
             )}
-            onClick={() => setActiveModule("branchhunter")}
           >
-            <Search className="size-4" />
-            Branch Hunter
+            <Link href={moduleRoutes.branchhunter}>
+              <Search className="size-4" />
+              Branch Hunter
+            </Link>
           </Button>
           <Button
+            asChild
             size="sm"
             variant={activeModule === "connections" ? "default" : "outline"}
-            onClick={() => setActiveModule("connections")}
           >
-            <Settings className="size-4" />
-            TI
+            <Link href={moduleRoutes.connections}>
+              <Settings className="size-4" />
+              TI
+            </Link>
           </Button>
-          <Button asChild size="sm" variant="outline">
-            <Link href="/administrativo">
-              <FileText className="size-4" />
+          <Button
+            asChild
+            size="sm"
+            variant={activeModule === "administrative" ? "default" : "outline"}
+          >
+            <Link href={moduleRoutes.administrative}>
+              <Briefcase className="size-4" />
               Administrativo
             </Link>
           </Button>
@@ -5246,40 +5395,34 @@ export function FinancialDashboard() {
           <>
             <p className="text-xs text-muted-foreground">Mercado Livre</p>
             <SidebarButton
+              icon={LayoutDashboard}
+              label="Visão Geral"
+              isActive={activeMlSection === "overview"}
+              onClick={() => setActiveMlSection("overview")}
+            />
+            <SidebarButton
               icon={PackagePlus}
               label="Anuncios"
-              isActive={activeMlSidebarGroup === "anuncios"}
-              onClick={() => setActiveMlSidebarGroup("anuncios")}
+              isActive={activeMlSection === "anuncios"}
+              onClick={() => setActiveMlSection("anuncios")}
             />
-            {activeMlSidebarGroup === "anuncios" && (
-              <>
-                <Button
-                  variant={activeMlSection === "catalogo" ? "secondary" : "ghost"}
-                  className="ml-7 justify-start"
-                  onClick={() => setActiveMlSection("catalogo")}
-                >
-                  Catalogo
-                </Button>
-                <Button
-                  variant={activeMlSection === "anuncios" ? "secondary" : "ghost"}
-                  className="ml-7 justify-start"
-                  onClick={() => setActiveMlSection("anuncios")}
-                >
-                  Anuncios
-                </Button>
-              </>
-            )}
+            <SidebarButton
+              icon={Tag}
+              label="Catalogo"
+              isActive={activeMlSection === "catalogo"}
+              onClick={() => setActiveMlSection("catalogo")}
+            />
             <SidebarButton
               icon={ReceiptText}
               label="Pedidos"
-              isActive={activeMlSidebarGroup === "pedidos"}
-              onClick={() => setActiveMlSidebarGroup("pedidos")}
+              isActive={activeMlSection === "orders"}
+              onClick={() => setActiveMlSection("orders")}
             />
             <SidebarButton
               icon={BarChart3}
-              label="Metricas"
-              isActive={activeMlSidebarGroup === "metricas"}
-              onClick={() => setActiveMlSidebarGroup("metricas")}
+              label="Intelligence"
+              isActive={activeMlSection === "intelligence"}
+              onClick={() => setActiveMlSection("intelligence")}
             />
           </>
         )}
@@ -5320,7 +5463,9 @@ export function FinancialDashboard() {
                           ? "Branch Hunter"
                           : activeModule === "connections"
                             ? "TI & Integrações"
-                            : "Home"}
+                            : activeModule === "administrative"
+                              ? "Administrativo"
+                              : "Home"}
                 </p>
               </div>
             </div>
@@ -5338,28 +5483,25 @@ export function FinancialDashboard() {
               { key: "mercadolivre" as const, label: "ML", icon: Store },
               { key: "branchhunter" as const, label: "Hunter", icon: Search },
               { key: "connections" as const, label: "TI", icon: Settings },
+              { key: "administrative" as const, label: "Adm", icon: Briefcase },
             ].map((item) => {
               const Icon = item.icon
               return (
                 <Button
+                  asChild
                   key={item.key}
                   type="button"
                   size="sm"
                   variant={activeModule === item.key ? "default" : "outline"}
                   className="h-9 shrink-0 px-3"
-                  onClick={() => setActiveModule(item.key)}
                 >
-                  <Icon className="size-4" />
-                  {item.label}
+                  <Link href={moduleRoutes[item.key]}>
+                    <Icon className="size-4" />
+                    {item.label}
+                  </Link>
                 </Button>
               )
             })}
-            <Button asChild type="button" size="sm" variant="outline" className="h-9 shrink-0 px-3">
-              <Link href="/administrativo">
-                <FileText className="size-4" />
-                Administrativo
-              </Link>
-            </Button>
           </nav>
 
           {activeModule === "finance" && (
@@ -5410,17 +5552,19 @@ export function FinancialDashboard() {
           {activeModule === "mercadolivre" && (
             <nav className="flex gap-2 overflow-x-auto pb-1">
               {[
+                { key: "overview" as const, label: "Visão" },
                 { key: "anuncios" as const, label: "Anúncios" },
-                { key: "pedidos" as const, label: "Pedidos" },
-                { key: "metricas" as const, label: "Métricas" },
+                { key: "catalogo" as const, label: "Catálogo" },
+                { key: "orders" as const, label: "Pedidos" },
+                { key: "intelligence" as const, label: "Intelligence" },
               ].map((item) => (
                 <Button
                   key={item.key}
                   type="button"
                   size="sm"
-                  variant={activeMlSidebarGroup === item.key ? "secondary" : "ghost"}
+                  variant={activeMlSection === item.key ? "secondary" : "ghost"}
                   className="h-8 shrink-0 px-3 text-xs"
-                  onClick={() => setActiveMlSidebarGroup(item.key)}
+                  onClick={() => setActiveMlSection(item.key)}
                 >
                   {item.label}
                 </Button>
@@ -5482,7 +5626,6 @@ export function FinancialDashboard() {
                     className="gap-1.5 rounded-full"
                     onClick={() => {
                       setActiveModule("mercadolivre")
-                      setActiveMlSidebarGroup("pedidos")
                     }}
                   >
                     Comercial
@@ -5657,7 +5800,6 @@ export function FinancialDashboard() {
                 detail={`${mlListingsCount ?? 0} anuncios · ticket ${formatCurrency(ticketMedioFinal)}`}
                 onClick={() => {
                   setActiveModule("mercadolivre")
-                  setActiveMlSidebarGroup("pedidos")
                 }}
               />
               <HomeAreaCard
@@ -5846,64 +5988,6 @@ export function FinancialDashboard() {
               </div>
             )}
 
-            <Card className="border-border/70 shadow-sm">
-              <CardHeader className="pb-2">
-                <CardTitle className="inline-flex items-center gap-2 text-base">
-                  <Store className="size-4 text-warning" />
-                  Mercado Livre
-                </CardTitle>
-                <CardDescription>
-                  Conexão da conta, validade do token e sincronização centralizada pelo TI.
-                </CardDescription>
-              </CardHeader>
-              <CardContent className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-                <div className="space-y-1 text-sm">
-                  {mlLoading ? (
-                    <p className="text-muted-foreground">Carregando status da conexão...</p>
-                  ) : mlConnectionStatus?.connected ? (
-                    <>
-                      <p className="font-medium">
-                        {mlConnectionStatus.mlNickname ?? mlConnectionStatus.mlUserId}
-                      </p>
-                      <p className="text-muted-foreground">
-                        Token expira em{" "}
-                        {new Date(mlConnectionStatus.expiresAt).toLocaleString("pt-BR")}
-                      </p>
-                    </>
-                  ) : (
-                    <p className="text-muted-foreground">
-                      Nenhuma conta conectada ao Mercado Livre.
-                    </p>
-                  )}
-                  {mlError && <p className="text-destructive">{mlError}</p>}
-                  {mlInfo && <p className="text-emerald-700 dark:text-emerald-400">{mlInfo}</p>}
-                </div>
-                <div className="flex flex-wrap gap-2">
-                  {mlConnectionStatus?.connected ? (
-                    <Button
-                      variant="destructive"
-                      size="sm"
-                      onClick={() => void disconnectMlAccount()}
-                      disabled={mlDisconnecting}
-                    >
-                      {mlDisconnecting ? "Desconectando..." : "Desconectar Mercado Livre"}
-                    </Button>
-                  ) : (
-                    <Button
-                      size="sm"
-                      className="bg-warning text-warning-foreground hover:bg-warning/90"
-                      onClick={() => {
-                        window.location.href = "/api/ml/connect"
-                      }}
-                    >
-                      <Store className="mr-2 size-4" />
-                      Conectar Mercado Livre
-                    </Button>
-                  )}
-                </div>
-              </CardContent>
-            </Card>
-
             <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
               <HomeExecutiveCard
                 icon={ShieldCheck}
@@ -5924,21 +6008,75 @@ export function FinancialDashboard() {
               <HomeExecutiveCard
                 icon={Store}
                 label="Mercado Livre"
-                value={mlConnectionStatus?.connected ? "Conectado" : "Pendente"}
-                detail={`${mlListingsCount ?? 0} anúncios · ${mlOrdersCount ?? 0} pedidos`}
+                value={
+                  mlLoading
+                    ? "Carregando"
+                    : mlConnectionStatus?.connected
+                      ? "Conectado"
+                      : "Pendente"
+                }
+                detail={
+                  mlError ??
+                  mlInfo ??
+                  (mlConnectionStatus?.connected
+                    ? `${mlListingsCount ?? 0} anúncios · ${mlOrdersCount ?? 0} pedidos`
+                    : "Conecte a conta para sincronizar anúncios e pedidos")
+                }
                 tone={mlConnectionStatus?.connected ? "income" : "danger"}
                 onClick={() => setActiveModule("mercadolivre")}
+                action={
+                  mlConnectionStatus?.connected ? (
+                    <Button
+                      type="button"
+                      size="xs"
+                      variant="outline"
+                      disabled={mlDisconnecting}
+                      onClick={() => void disconnectMlAccount()}
+                    >
+                      Desconectar
+                    </Button>
+                  ) : (
+                    <Button
+                      type="button"
+                      size="xs"
+                      className="bg-warning text-warning-foreground hover:bg-warning/90"
+                      onClick={() => {
+                        window.location.href = "/api/ml/connect"
+                      }}
+                    >
+                      Conectar
+                    </Button>
+                  )
+                }
               />
               <HomeExecutiveCard
                 icon={Wallet}
                 label="Mercado Pago"
                 value={mpConnectionStatus?.connected ? "Conectado" : "Pendente"}
-                detail={`Último report: ${formatSyncTimestamp(mpSyncProviderStatus?.lastSuccessAt)}`}
+                detail={
+                  mpConnectionStatus?.connected
+                    ? `Último report: ${formatSyncTimestamp(mpSyncProviderStatus?.lastSuccessAt)}`
+                    : "Conecte a conta para sincronizar reports"
+                }
                 tone={mpConnectionStatus?.connected ? "income" : "danger"}
                 onClick={() => {
                   setActiveModule("finance")
                   setActiveFinanceSection("cashflow")
                 }}
+                action={
+                  !mpConnectionStatus?.connected ? (
+                    <Button
+                      type="button"
+                      size="xs"
+                      variant="outline"
+                      onClick={() => {
+                        window.location.href = "/api/mp/connect"
+                      }}
+                    >
+                      Conectar
+                    </Button>
+                  ) : undefined
+                }
               />
             </div>
 
@@ -6112,7 +6250,6 @@ export function FinancialDashboard() {
                     className="justify-start"
                     onClick={() => {
                       setActiveModule("mercadolivre")
-                      setActiveMlSidebarGroup("pedidos")
                       setActiveMlSection("orders")
                       setMlOrdersOnlyNoSku(true)
                     }}
@@ -6156,6 +6293,8 @@ export function FinancialDashboard() {
             </div>
           </section>
         )}
+
+        {activeModule === "administrative" && <AdministrativePage />}
 
         {activeModule === "finance" && (
           <>
@@ -6587,7 +6726,6 @@ export function FinancialDashboard() {
                               setFinanceInsightModalOpen(false)
                               if (target === "orders") {
                                 setActiveModule("mercadolivre")
-                                setActiveMlSidebarGroup("pedidos")
                                 setActiveMlSection("orders")
                                 return
                               }
@@ -9826,61 +9964,172 @@ export function FinancialDashboard() {
           <section className="space-y-4">
             {mlConnectionStatus?.connected && (
               <>
-                <Card>
-                  <CardHeader>
-                    <CardTitle className="flex items-center gap-2">
-                      <LayoutDashboard className="size-5" />
-                      Mini hub Mercado Livre
-                    </CardTitle>
-                    <CardDescription>
-                      Consulte indicadores e gerencie seus anuncios sem sair do BranchHub.
-                    </CardDescription>
-                  </CardHeader>
-                  <CardContent className="space-y-3">
-                    <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+                {activeMlSection === "overview" && (
+                  <Card>
+                    <CardHeader>
+                      <CardTitle className="flex items-center gap-2">
+                        <LayoutDashboard className="size-5" />
+                        Visão Geral Mercado Livre
+                      </CardTitle>
+                      <CardDescription>
+                        Status da conexão, resumo operacional e atalhos do módulo Mercado Livre.
+                      </CardDescription>
+                    </CardHeader>
+                    <CardContent className="space-y-3">
+                      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+                        <Card className="rounded-none border-dashed">
+                          <CardHeader className="pb-2">
+                            <CardDescription className="inline-flex items-center gap-1">
+                              <ShoppingBag className="size-3.5" />
+                              Anuncios
+                            </CardDescription>
+                            <CardTitle className="text-lg">{mlListingsCount ?? "-"}</CardTitle>
+                          </CardHeader>
+                        </Card>
+                        <Card className="rounded-none border-dashed">
+                          <CardHeader className="pb-2">
+                            <CardDescription className="inline-flex items-center gap-1">
+                              <ClipboardList className="size-3.5" />
+                              Pedidos
+                            </CardDescription>
+                            <CardTitle className="text-lg">{mlOrdersCount ?? "-"}</CardTitle>
+                          </CardHeader>
+                        </Card>
+                        <Card className="rounded-none border-dashed">
+                          <CardHeader className="pb-2">
+                            <CardDescription className="inline-flex items-center gap-1">
+                              <DollarSign className="size-3.5" />
+                              Faturamento amostral
+                            </CardDescription>
+                            <CardTitle className="text-lg">
+                              {mlMetrics ? formatCurrency(mlMetrics.grossAmountSample) : "-"}
+                            </CardTitle>
+                          </CardHeader>
+                        </Card>
+                        <Card className="rounded-none border-dashed">
+                          <CardHeader className="pb-2">
+                            <CardDescription className="inline-flex items-center gap-1">
+                              <LineChart className="size-3.5" />
+                              Ticket medio
+                            </CardDescription>
+                            <CardTitle className="text-lg">
+                              {mlMetrics ? formatCurrency(mlMetrics.averageTicketSample) : "-"}
+                            </CardTitle>
+                          </CardHeader>
+                        </Card>
+                      </div>
+                      <div className="grid gap-3 lg:grid-cols-[1fr_1fr]">
+                        <Card className="rounded-none border-dashed">
+                          <CardHeader className="pb-2">
+                            <CardTitle className="text-sm">Atalhos</CardTitle>
+                            <CardDescription>
+                              Acesse a operação sem misturar contextos.
+                            </CardDescription>
+                          </CardHeader>
+                          <CardContent className="grid gap-2 sm:grid-cols-2">
+                            {[
+                              { key: "anuncios" as const, label: "Anúncios", icon: PackagePlus },
+                              { key: "catalogo" as const, label: "Catálogo", icon: Tag },
+                              { key: "orders" as const, label: "Pedidos", icon: ReceiptText },
+                              {
+                                key: "intelligence" as const,
+                                label: "Intelligence",
+                                icon: BarChart3,
+                              },
+                            ].map((item) => {
+                              const Icon = item.icon
+                              return (
+                                <Button
+                                  key={item.key}
+                                  type="button"
+                                  variant="outline"
+                                  className="justify-start"
+                                  onClick={() => setActiveMlSection(item.key)}
+                                >
+                                  <Icon className="mr-2 size-4" />
+                                  {item.label}
+                                </Button>
+                              )
+                            })}
+                          </CardContent>
+                        </Card>
+                        <Card className="rounded-none border-dashed">
+                          <CardHeader className="pb-2">
+                            <CardTitle className="text-sm">Alertas principais</CardTitle>
+                            <CardDescription>Resumo acionável do Intelligence.</CardDescription>
+                          </CardHeader>
+                          <CardContent className="space-y-2">
+                            {mlOverviewAlerts.map((alert) => (
+                              <button
+                                key={alert.id}
+                                type="button"
+                                onClick={alert.action}
+                                className="flex w-full items-start justify-between gap-3 rounded-none border px-3 py-2 text-left transition hover:bg-muted/40"
+                              >
+                                <span>
+                                  <span className="block text-sm font-medium">{alert.title}</span>
+                                  <span className="block text-xs text-muted-foreground">
+                                    {alert.description}
+                                  </span>
+                                </span>
+                                <Badge
+                                  variant="outline"
+                                  className={cn(
+                                    "shrink-0",
+                                    alert.severity === "danger" &&
+                                      "border-red-300 text-red-700 dark:text-red-300",
+                                    alert.severity === "warning" &&
+                                      "border-amber-300 text-amber-700 dark:text-amber-300",
+                                  )}
+                                >
+                                  {alert.severity === "danger"
+                                    ? "Crítico"
+                                    : alert.severity === "warning"
+                                      ? "Atenção"
+                                      : "Info"}
+                                </Badge>
+                              </button>
+                            ))}
+                          </CardContent>
+                        </Card>
+                      </div>
                       <Card className="rounded-none border-dashed">
                         <CardHeader className="pb-2">
-                          <CardDescription className="inline-flex items-center gap-1">
-                            <ShoppingBag className="size-3.5" />
-                            Anuncios
+                          <CardTitle className="text-sm">Pedidos recentes</CardTitle>
+                          <CardDescription>
+                            Últimos pedidos carregados da integração.
                           </CardDescription>
-                          <CardTitle className="text-lg">{mlListingsCount ?? "-"}</CardTitle>
                         </CardHeader>
+                        <CardContent className="space-y-2">
+                          {mlOrders.slice(0, 4).length === 0 ? (
+                            <p className="text-sm text-muted-foreground">
+                              Nenhum pedido carregado ainda.
+                            </p>
+                          ) : (
+                            mlOrders.slice(0, 4).map((order) => (
+                              <button
+                                key={order.id}
+                                type="button"
+                                onClick={() => setActiveMlSection("orders")}
+                                className="flex w-full items-center justify-between gap-3 rounded-none border px-3 py-2 text-left text-sm transition hover:bg-muted/40"
+                              >
+                                <span className="min-w-0">
+                                  <span className="block truncate font-medium">#{order.id}</span>
+                                  <span className="block truncate text-xs text-muted-foreground">
+                                    {order.items[0]?.title ?? "Pedido sem item"}
+                                  </span>
+                                </span>
+                                <span className="shrink-0 font-medium">
+                                  {formatCurrency(order.totalAmount)}
+                                </span>
+                              </button>
+                            ))
+                          )}
+                        </CardContent>
                       </Card>
-                      <Card className="rounded-none border-dashed">
-                        <CardHeader className="pb-2">
-                          <CardDescription className="inline-flex items-center gap-1">
-                            <ClipboardList className="size-3.5" />
-                            Pedidos
-                          </CardDescription>
-                          <CardTitle className="text-lg">{mlOrdersCount ?? "-"}</CardTitle>
-                        </CardHeader>
-                      </Card>
-                      <Card className="rounded-none border-dashed">
-                        <CardHeader className="pb-2">
-                          <CardDescription className="inline-flex items-center gap-1">
-                            <DollarSign className="size-3.5" />
-                            Faturamento amostral
-                          </CardDescription>
-                          <CardTitle className="text-lg">
-                            {mlMetrics ? formatCurrency(mlMetrics.grossAmountSample) : "-"}
-                          </CardTitle>
-                        </CardHeader>
-                      </Card>
-                      <Card className="rounded-none border-dashed">
-                        <CardHeader className="pb-2">
-                          <CardDescription className="inline-flex items-center gap-1">
-                            <LineChart className="size-3.5" />
-                            Ticket medio
-                          </CardDescription>
-                          <CardTitle className="text-lg">
-                            {mlMetrics ? formatCurrency(mlMetrics.averageTicketSample) : "-"}
-                          </CardTitle>
-                        </CardHeader>
-                      </Card>
-                    </div>
-                  </CardContent>
-                </Card>
+                    </CardContent>
+                  </Card>
+                )}
 
                 {activeMlSection === "catalogo" && (
                   <Card>
@@ -10657,78 +10906,89 @@ export function FinancialDashboard() {
                   </section>
                 )}
 
-                {activeMlSection === "metrics" && (
+                {activeMlSection === "intelligence" && (
                   <Card>
                     <CardHeader>
-                      <CardTitle>Metricas</CardTitle>
+                      <CardTitle>Intelligence</CardTitle>
                       <CardDescription>
-                        Resumo de desempenho baseado na amostra atual.
+                        Alertas acionáveis gerados a partir de anúncios, catálogo, pedidos e
+                        estoque.
                       </CardDescription>
                     </CardHeader>
                     <CardContent className="space-y-3">
-                      {mlMetricsLoading ? (
-                        <p className="text-sm text-muted-foreground">Carregando metricas...</p>
-                      ) : !mlMetrics ? (
-                        <div className="space-y-2">
-                          <p className="text-sm text-muted-foreground">
-                            Nenhuma metrica carregada no momento.
-                          </p>
-                          <Button variant="outline" onClick={() => void loadMlMetrics()}>
-                            Carregar metricas
-                          </Button>
-                        </div>
-                      ) : (
-                        <>
-                          <div className="grid gap-3 sm:grid-cols-2">
-                            <Card className="rounded-none border-dashed">
-                              <CardHeader className="pb-2">
-                                <CardDescription>Pedidos na amostra</CardDescription>
-                                <CardTitle className="text-lg">{mlMetrics.sampleSize}</CardTitle>
-                              </CardHeader>
-                            </Card>
-                            <Card className="rounded-none border-dashed">
-                              <CardHeader className="pb-2">
-                                <CardDescription>Pedidos concluidos</CardDescription>
-                                <CardTitle className="text-lg">
-                                  {mlMetrics.completedOrdersSample}
-                                </CardTitle>
-                              </CardHeader>
-                            </Card>
-                            <Card className="rounded-none border-dashed">
-                              <CardHeader className="pb-2">
-                                <CardDescription>Pedidos cancelados</CardDescription>
-                                <CardTitle className="text-lg">
-                                  {mlMetrics.cancelledOrdersSample}
-                                </CardTitle>
-                              </CardHeader>
-                            </Card>
-                            <Card className="rounded-none border-dashed">
-                              <CardHeader className="pb-2">
-                                <CardDescription>Ultimo pedido</CardDescription>
-                                <CardTitle className="text-sm">
-                                  {mlMetrics.lastOrderDate
-                                    ? new Date(mlMetrics.lastOrderDate).toLocaleString("pt-BR")
-                                    : "-"}
-                                </CardTitle>
-                              </CardHeader>
-                            </Card>
-                          </div>
-                          <div className="space-y-1 text-sm">
-                            <p>
-                              <span className="text-muted-foreground">Faturamento amostral:</span>{" "}
-                              <span className="font-medium">
-                                {formatCurrency(mlMetrics.grossAmountSample)}
-                              </span>
-                            </p>
-                            <p>
-                              <span className="text-muted-foreground">Ticket medio:</span>{" "}
-                              <span className="font-medium">
-                                {formatCurrency(mlMetrics.averageTicketSample)}
-                              </span>
-                            </p>
-                          </div>
-                        </>
-                      )}
+                      <div className="grid gap-3 md:grid-cols-3">
+                        <Card className="rounded-none border-dashed">
+                          <CardHeader className="pb-2">
+                            <CardDescription>Alertas críticos</CardDescription>
+                            <CardTitle className="text-lg">
+                              {
+                                mlIntelligenceAlerts.filter((alert) => alert.severity === "danger")
+                                  .length
+                              }
+                            </CardTitle>
+                          </CardHeader>
+                        </Card>
+                        <Card className="rounded-none border-dashed">
+                          <CardHeader className="pb-2">
+                            <CardDescription>Oportunidades</CardDescription>
+                            <CardTitle className="text-lg">
+                              {
+                                mlIntelligenceAlerts.filter((alert) => alert.severity === "warning")
+                                  .length
+                              }
+                            </CardTitle>
+                          </CardHeader>
+                        </Card>
+                        <Card className="rounded-none border-dashed">
+                          <CardHeader className="pb-2">
+                            <CardDescription>Dados analisados</CardDescription>
+                            <CardTitle className="text-lg">
+                              {mlNormalListingsFiltered.length +
+                                filteredCatalogCompetitionRows.length}
+                            </CardTitle>
+                          </CardHeader>
+                        </Card>
+                      </div>
+                      <div className="space-y-2">
+                        {mlIntelligenceAlerts.map((alert) => (
+                          <Card key={alert.id} className="rounded-none border">
+                            <CardContent className="flex flex-col gap-3 pt-4 sm:flex-row sm:items-start sm:justify-between">
+                              <div className="min-w-0">
+                                <div className="flex flex-wrap items-center gap-2">
+                                  <Badge
+                                    variant="outline"
+                                    className={cn(
+                                      alert.severity === "danger" &&
+                                        "border-red-300 text-red-700 dark:text-red-300",
+                                      alert.severity === "warning" &&
+                                        "border-amber-300 text-amber-700 dark:text-amber-300",
+                                    )}
+                                  >
+                                    {alert.severity === "danger"
+                                      ? "Crítico"
+                                      : alert.severity === "warning"
+                                        ? "Oportunidade"
+                                        : "Info"}
+                                  </Badge>
+                                  <p className="font-medium">{alert.title}</p>
+                                </div>
+                                <p className="mt-1 text-sm text-muted-foreground">
+                                  {alert.description}
+                                </p>
+                              </div>
+                              <Button
+                                type="button"
+                                variant="outline"
+                                size="sm"
+                                className="shrink-0"
+                                onClick={alert.action}
+                              >
+                                {alert.actionLabel}
+                              </Button>
+                            </CardContent>
+                          </Card>
+                        ))}
+                      </div>
                     </CardContent>
                   </Card>
                 )}
@@ -11709,6 +11969,7 @@ function HomeExecutiveCard({
   detail,
   tone,
   onClick,
+  action,
 }: {
   icon: React.ComponentType<{ className?: string }>
   label: string
@@ -11716,6 +11977,7 @@ function HomeExecutiveCard({
   detail: string
   tone: "income" | "warning" | "danger" | "neutral"
   onClick: () => void
+  action?: React.ReactNode
 }) {
   const accentClass =
     tone === "income"
@@ -11757,7 +12019,18 @@ function HomeExecutiveCard({
         >
           {value}
         </p>
-        <p className="mt-1 text-xs text-muted-foreground">{detail}</p>
+        <div className="mt-1 flex items-end justify-between gap-2">
+          <p className="text-xs text-muted-foreground">{detail}</p>
+          {action && (
+            <div
+              className="shrink-0"
+              onClick={(event) => event.stopPropagation()}
+              onKeyDown={(event) => event.stopPropagation()}
+            >
+              {action}
+            </div>
+          )}
+        </div>
       </CardContent>
     </Card>
   )
