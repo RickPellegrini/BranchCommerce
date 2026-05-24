@@ -95,11 +95,15 @@ export async function POST(request: Request) {
     try {
       await markSync(client, appUserId, "stock", "running", { startedAt })
       results.stock = await callInternal(request, "/api/stock/sync-ml")
+      results.stockSales = await callInternal(request, "/api/stock/reconcile-sales")
       await markSync(client, appUserId, "stock", "success", {
         startedAt,
         finishedAt: Date.now(),
-        message: "Estoque sincronizado com Mercado Livre.",
-        stats: results.stock,
+        message: "Estoque e vendas sincronizados com Mercado Livre.",
+        stats: {
+          stock: results.stock,
+          sales: results.stockSales,
+        },
       })
     } catch (error) {
       await markSync(client, appUserId, "stock", "failed", {

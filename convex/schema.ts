@@ -46,11 +46,15 @@ export default defineSchema({
     payStatus: v.optional(payStatusValidator),
     /** Vincula estorno/devolução ao lançamento de despesa original */
     linkedSourceTransactionId: v.optional(v.id("transactions")),
+    externalSource: v.optional(v.string()),
+    externalOrderId: v.optional(v.string()),
+    externalItemId: v.optional(v.string()),
   })
     .index("by_user", ["userId"])
     .index("by_user_date", ["userId", "date"])
     .index("by_user_category", ["userId", "categoryId"])
     .index("by_user_plan_index", ["userId", "installmentPlanId", "installmentIndex"])
+    .index("by_user_external_order_item", ["userId", "externalOrderId", "externalItemId"])
     .index("by_linked_source", ["linkedSourceTransactionId"]),
 
   bills: defineTable({
@@ -119,10 +123,14 @@ export default defineSchema({
     date: v.string(),
     unitPrice: v.optional(v.number()),
     note: v.optional(v.string()),
+    externalSource: v.optional(v.string()),
+    externalOrderId: v.optional(v.string()),
+    externalItemId: v.optional(v.string()),
     createdAt: v.number(),
   })
     .index("by_user", ["userId"])
-    .index("by_user_product", ["userId", "productId"]),
+    .index("by_user_product", ["userId", "productId"])
+    .index("by_user_external_order_item", ["userId", "externalOrderId", "externalItemId"]),
 
   stockKanbanCards: defineTable({
     userId: v.string(),

@@ -554,6 +554,103 @@ describe("stock", () => {
     })
   })
 
+  // ── reconcileSalesFromMercadoLivre ───────────────────────────────
+
+  describe("reconcileSalesFromMercadoLivre", () => {
+    it("creates stock sale movement and finance transaction for ML orders", async () => {
+      const t = convexTest(schema, modules)
+      await t.mutation(api.stock.addProduct, {
+        userId: "user1",
+        name: "Multiprocessador",
+        mlItemId: "MLB123",
+        category: "Eletro",
+        quantity: 2,
+        minStock: 0,
+        unitCost: 100,
+      })
+
+      const result = await t.mutation(api.stock.reconcileSalesFromMercadoLivre, {
+        userId: "user1",
+        orders: [
+          {
+            orderId: "2001",
+            status: "paid",
+            paymentStatus: "approved",
+            date: "2026-05-20T12:00:00.000Z",
+            items: [
+              {
+                itemKey: "MLB123:0",
+                mlItemId: "MLB123",
+                title: "Multiprocessador",
+                quantity: 2,
+                unitPrice: 350,
+              },
+            ],
+          },
+        ],
+      })
+
+      expect(result.movementsCreated).toBe(1)
+      expect(result.transactionsCreated).toBe(1)
+      const stockData = await t.query(api.stock.getDashboardData, { userId: "user1" })
+      expect(stockData.products[0].quantity).toBe(0)
+      expect(stockData.movements.some((movement) => movement.type === "sale")).toBe(true)
+      const financeData = await t.query(api.finance.getDashboardData, { userId: "user1" })
+      expect(financeData.transactions).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            origin: "Venda online",
+            amount: 700,
+            externalOrderId: "2001",
+            externalItemId: "MLB123:0",
+          }),
+        ]),
+      )
+    })
+
+    it("is idempotent by ML order and item", async () => {
+      const t = convexTest(schema, modules)
+      await t.mutation(api.stock.addProduct, {
+        userId: "user1",
+        name: "Ferro",
+        mlItemId: "MLB999",
+        category: "Eletro",
+        quantity: 3,
+        minStock: 0,
+        unitCost: 80,
+      })
+
+      const args = {
+        userId: "user1",
+        orders: [
+          {
+            orderId: "2002",
+            status: "paid",
+            paymentStatus: "approved",
+            date: "2026-05-20",
+            items: [
+              {
+                itemKey: "MLB999:0",
+                mlItemId: "MLB999",
+                title: "Ferro",
+                quantity: 1,
+                unitPrice: 120,
+              },
+            ],
+          },
+        ],
+      }
+
+      await t.mutation(api.stock.reconcileSalesFromMercadoLivre, args)
+      const second = await t.mutation(api.stock.reconcileSalesFromMercadoLivre, args)
+
+      expect(second.skippedAlreadyProcessed).toBe(1)
+      const stockData = await t.query(api.stock.getDashboardData, { userId: "user1" })
+      expect(stockData.products[0].quantity).toBe(2)
+      expect(stockData.movements.filter((movement) => movement.type === "sale")).toHaveLength(1)
+    })
+  })
+
   // ── syncFromMercadoLivre ──────────────────────────────────────────
 
   describe("syncFromMercadoLivre", () => {

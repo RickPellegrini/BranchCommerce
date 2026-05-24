@@ -130,7 +130,7 @@ type FinanceSourceFilter = "all" | "mercado_livre" | "mercado_pago" | "manual"
 type FinanceTypeFilter = "all" | "income" | "expense"
 type FinanceInsightKey = "profit" | "revenue" | "costs" | "sales" | "margin" | "ticket"
 type HistorySummaryFilter = "entries" | "fixed" | "operational" | "recurring"
-type StockSection = "overview" | "products" | "history"
+type StockSection = "overview" | "history"
 type MlSection = "catalogo" | "anuncios" | "orders" | "metrics"
 type MlSidebarGroup = "anuncios" | "pedidos" | "metricas"
 type HunterSection =
@@ -282,6 +282,31 @@ type MlOrder = {
     sku: string
     quantity: number
     unitPrice: number
+  }>
+}
+
+type StockSalesReconcileReport = {
+  totalMlOrdersFetched?: number
+  totalOrders?: number
+  processedItems?: number
+  skippedAlreadyProcessed?: number
+  unmatchedItems?: number
+  movementsCreated?: number
+  transactionsCreated?: number
+  stockShortages?: number
+  adjusted?: Array<{
+    orderId: string
+    productName: string
+    soldQuantity: number
+    previousQuantity: number
+    nextQuantity: number
+    matchMethod: string
+  }>
+  unmatched?: Array<{
+    orderId: string
+    mlItemId: string
+    title: string
+    quantity: number
   }>
 }
 
@@ -1411,6 +1436,8 @@ export function FinancialDashboard() {
   const [mlSyncingStock, setMlSyncingStock] = useState(false)
   const [mlLastSyncAt, setMlLastSyncAt] = useState<number | null>(null)
   const [mlLastSyncDurationMs, setMlLastSyncDurationMs] = useState<number | null>(null)
+  const [stockSalesReconcileReport, setStockSalesReconcileReport] =
+    useState<StockSalesReconcileReport | null>(null)
   const [mlNowTimestamp, setMlNowTimestamp] = useState<number>(Date.now())
   const [analysisItemId, setAnalysisItemId] = useState<string | null>(null)
   const [mlCatalogCompetitionLoading, setMlCatalogCompetitionLoading] = useState(false)
@@ -2042,9 +2069,19 @@ export function FinancialDashboard() {
         if (!response.ok || !payload.ok) {
           throw new Error(payload.error ?? "Falha ao sincronizar com Mercado Livre.")
         }
+        const reconcileResponse = await fetch("/api/stock/reconcile-sales", {
+          method: "POST",
+          cache: "no-store",
+        })
+        const reconcilePayload = await reconcileResponse.json()
+        if (!reconcileResponse.ok || !reconcilePayload.ok) {
+          throw new Error(reconcilePayload.error ?? "Falha ao reconciliar vendas com estoque.")
+        }
         const d = payload.data ?? {}
+        const reconcileResult = (reconcilePayload.data ?? {}) as StockSalesReconcileReport
+        setStockSalesReconcileReport(reconcileResult)
         setMlInfo(
-          `Sincronização concluída: ${d.totalMlItems ?? 0} anúncios, ${d.updated ?? 0} atualizados, ${d.notFound ?? 0} sem vínculo.`,
+          `Sincronização concluída: ${d.totalMlItems ?? 0} anúncios, ${d.updated ?? 0} atualizados, ${d.notFound ?? 0} sem vínculo. Vendas: ${reconcileResult.movementsCreated ?? 0} baixa(s), ${reconcileResult.unmatchedItems ?? 0} sem vínculo.`,
         )
         setMlLastSyncAt(Date.now())
       } catch (error) {
@@ -2983,7 +3020,7 @@ export function FinancialDashboard() {
         icon: Tag,
         onClick: () => {
           setActiveModule("stock")
-          setActiveStockSection("products")
+          setActiveStockSection("overview")
         },
       })
     }
@@ -3075,7 +3112,7 @@ export function FinancialDashboard() {
         tone: productsWithoutCost.length > 0 ? "danger" : "success",
         action: () => {
           setActiveModule("stock")
-          setActiveStockSection("products")
+          setActiveStockSection("overview")
         },
       },
       {
@@ -4692,8 +4729,19 @@ export function FinancialDashboard() {
       }
 
       const syncResult = payload.data ?? {}
+      const reconcileResponse = await fetch("/api/stock/reconcile-sales", {
+        method: "POST",
+        cache: "no-store",
+      })
+      const reconcilePayload = await reconcileResponse.json()
+      if (!reconcileResponse.ok || !reconcilePayload.ok) {
+        throw new Error(reconcilePayload.error ?? "Falha ao reconciliar vendas com estoque.")
+      }
+
+      const reconcileResult = (reconcilePayload.data ?? {}) as StockSalesReconcileReport
+      setStockSalesReconcileReport(reconcileResult)
       setMlInfo(
-        `Sincronização concluída: ${syncResult.totalMlItems ?? 0} anúncios, ${syncResult.updated ?? 0} atualizados, ${syncResult.created ?? 0} criados.`,
+        `Sincronização concluída: ${syncResult.totalMlItems ?? 0} anúncios, ${syncResult.updated ?? 0} atualizados, ${syncResult.created ?? 0} criados. Vendas: ${reconcileResult.movementsCreated ?? 0} baixa(s), ${reconcileResult.unmatchedItems ?? 0} sem vínculo.`,
       )
       setMlLastSyncAt(Date.now())
       setMlLastSyncDurationMs(Date.now() - startedAt)
@@ -4701,6 +4749,39 @@ export function FinancialDashboard() {
       setMlError(
         error instanceof Error ? error.message : "Erro ao sincronizar estoque com Mercado Livre.",
       )
+    } finally {
+      setMlSyncingStock(false)
+    }
+  }
+
+  const reconcileStockSalesWithMl = async () => {
+    if (!userId || mlSyncingStock) return
+    const startedAt = Date.now()
+    setMlSyncingStock(true)
+    setMlError(null)
+    setMlInfo(null)
+    try {
+      const response = await fetch("/api/stock/reconcile-sales", {
+        method: "POST",
+        cache: "no-store",
+      })
+      const payload = await response.json()
+      if (!response.ok || !payload.ok) {
+        throw new Error(payload.error ?? "Falha ao reconciliar vendas com estoque.")
+      }
+      const result = (payload.data ?? {}) as StockSalesReconcileReport
+      setStockSalesReconcileReport(result)
+      setMlInfo(
+        `Reconciliação de vendas: ${result.movementsCreated ?? 0} baixa(s), ${result.transactionsCreated ?? 0} lançamento(s), ${result.skippedAlreadyProcessed ?? 0} já processado(s), ${result.unmatchedItems ?? 0} sem vínculo.`,
+      )
+      setMlLastSyncAt(Date.now())
+      setMlLastSyncDurationMs(Date.now() - startedAt)
+      await loadMlOrders({
+        startDate: filters.startDate,
+        endDate: filters.endDate,
+      })
+    } catch (error) {
+      setMlError(error instanceof Error ? error.message : "Erro ao reconciliar vendas com estoque.")
     } finally {
       setMlSyncingStock(false)
     }
@@ -5070,12 +5151,6 @@ export function FinancialDashboard() {
               onClick={() => setActiveStockSection("overview")}
             />
             <SidebarButton
-              icon={PackagePlus}
-              label="Produtos"
-              isActive={activeStockSection === "products"}
-              onClick={() => setActiveStockSection("products")}
-            />
-            <SidebarButton
               icon={ReceiptText}
               label="Historico"
               isActive={activeStockSection === "history"}
@@ -5226,7 +5301,6 @@ export function FinancialDashboard() {
             <nav className="flex gap-2 overflow-x-auto pb-1">
               {[
                 { key: "overview" as const, label: "Visão" },
-                { key: "products" as const, label: "Produtos" },
                 { key: "history" as const, label: "Histórico" },
               ].map((item) => (
                 <Button
@@ -5923,7 +5997,7 @@ export function FinancialDashboard() {
                     className="justify-start"
                     onClick={() => {
                       setActiveModule("stock")
-                      setActiveStockSection("products")
+                      setActiveStockSection("overview")
                     }}
                   >
                     <Tag className="mr-2 size-4" />
@@ -8822,8 +8896,8 @@ export function FinancialDashboard() {
               <section className="space-y-4">
                 {productFeedback && (
                   <StockFeedbackAlert
-                    type={productFeedback.type}
-                    message={productFeedback.message}
+                    type={productFeedback!.type}
+                    message={productFeedback!.message}
                   />
                 )}
                 {showManualStockForm ? (
@@ -8996,14 +9070,96 @@ export function FinancialDashboard() {
                   onToggleProductHidden={handleToggleProductHidden}
                   mlSyncing={mlSyncingStock}
                   mlSyncDisabled={!mlConnectionStatus?.connected}
+                  onSyncWithMl={syncStockWithMl}
+                  onReconcileSales={reconcileStockSalesWithMl}
                   kanbanTimelineEvents={kanbanTimelineEvents}
                   onAddProduct={() => setShowManualStockForm((v) => !v)}
                   showAddForm={showManualStockForm}
                 />
+                {stockSalesReconcileReport ? (
+                  <Card className="border-border/80 shadow-sm">
+                    <CardHeader className="pb-2">
+                      <CardTitle className="text-base">Relatorio de integracao</CardTitle>
+                      <CardDescription>
+                        Resultado da reconciliacao entre vendas Mercado Livre, estoque e financeiro.
+                      </CardDescription>
+                    </CardHeader>
+                    <CardContent className="space-y-3 text-sm">
+                      <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-5">
+                        <IntegrationMetric
+                          label="Pedidos lidos"
+                          value={stockSalesReconcileReport.totalMlOrdersFetched ?? 0}
+                        />
+                        <IntegrationMetric
+                          label="Baixas criadas"
+                          value={stockSalesReconcileReport.movementsCreated ?? 0}
+                        />
+                        <IntegrationMetric
+                          label="Lancamentos"
+                          value={stockSalesReconcileReport.transactionsCreated ?? 0}
+                        />
+                        <IntegrationMetric
+                          label="Ja processados"
+                          value={stockSalesReconcileReport.skippedAlreadyProcessed ?? 0}
+                        />
+                        <IntegrationMetric
+                          label="Sem vinculo"
+                          value={stockSalesReconcileReport.unmatchedItems ?? 0}
+                          tone={
+                            (stockSalesReconcileReport.unmatchedItems ?? 0) > 0
+                              ? "warning"
+                              : "neutral"
+                          }
+                        />
+                      </div>
+                      {(stockSalesReconcileReport.adjusted?.length ?? 0) > 0 ? (
+                        <div className="space-y-1">
+                          <p className="text-xs font-medium text-muted-foreground">
+                            Ultimas baixas aplicadas
+                          </p>
+                          <div className="grid gap-1">
+                            {stockSalesReconcileReport.adjusted!.slice(0, 6).map((item) => (
+                              <div
+                                key={`${item.orderId}-${item.productName}-${item.soldQuantity}`}
+                                className="flex flex-wrap items-center justify-between gap-2 rounded-none border px-2 py-1.5 text-xs"
+                              >
+                                <span className="min-w-0 truncate">
+                                  #{item.orderId} · {item.productName}
+                                </span>
+                                <span className="shrink-0 tabular-nums text-muted-foreground">
+                                  {item.previousQuantity} → {item.nextQuantity} ({item.soldQuantity}{" "}
+                                  vend.)
+                                </span>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      ) : null}
+                      {(stockSalesReconcileReport.unmatched?.length ?? 0) > 0 ? (
+                        <div className="space-y-1">
+                          <p className="text-xs font-medium text-amber-700 dark:text-amber-300">
+                            Vendas sem produto vinculado
+                          </p>
+                          <div className="grid gap-1">
+                            {stockSalesReconcileReport.unmatched!.slice(0, 6).map((item) => (
+                              <div
+                                key={`${item.orderId}-${item.mlItemId}-${item.title}`}
+                                className="rounded-none border border-amber-500/30 bg-amber-500/5 px-2 py-1.5 text-xs"
+                              >
+                                #{item.orderId} · {item.mlItemId || "sem MLB"} · {item.title} ·{" "}
+                                {item.quantity} un.
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      ) : null}
+                    </CardContent>
+                  </Card>
+                ) : null}
               </section>
             )}
 
-            {activeStockSection === "products" && (
+            {false && (
               <section className="mx-auto max-w-5xl space-y-6">
                 <div className="flex flex-wrap items-center justify-between gap-3">
                   <div>
@@ -9026,8 +9182,8 @@ export function FinancialDashboard() {
 
                 {productFeedback && (
                   <StockFeedbackAlert
-                    type={productFeedback.type}
-                    message={productFeedback.message}
+                    type={productFeedback?.type ?? "success"}
+                    message={productFeedback?.message ?? ""}
                   />
                 )}
 
@@ -11451,6 +11607,28 @@ function LineItem({
     <div className={cn("flex items-center justify-between", strong && "font-semibold")}>
       <span className="text-muted-foreground">{label}</span>
       <span>{format === "currency" ? formatCurrency(value) : Math.trunc(value)}</span>
+    </div>
+  )
+}
+
+function IntegrationMetric({
+  label,
+  value,
+  tone = "neutral",
+}: {
+  label: string
+  value: number
+  tone?: "neutral" | "warning"
+}) {
+  return (
+    <div
+      className={cn(
+        "rounded-none border border-border/70 bg-muted/20 px-3 py-2",
+        tone === "warning" && "border-amber-500/30 bg-amber-500/10",
+      )}
+    >
+      <p className="text-xs text-muted-foreground">{label}</p>
+      <p className="mt-1 text-lg font-semibold tabular-nums">{value}</p>
     </div>
   )
 }

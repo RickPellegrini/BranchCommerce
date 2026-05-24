@@ -125,6 +125,7 @@ interface KanbanBoardProps {
     estimatedArrival?: string,
   ) => Promise<void>
   onSyncWithMl?: () => Promise<void>
+  onReconcileSales?: () => Promise<void>
   mlSyncing?: boolean
   mlSyncDisabled?: boolean
   kanbanTimelineEvents?: ProductKanbanEventRow[]
@@ -142,6 +143,7 @@ export function KanbanBoard({
   onToggleProductHidden,
   onAddKanbanCard,
   onSyncWithMl,
+  onReconcileSales,
   mlSyncing = false,
   mlSyncDisabled = false,
   kanbanTimelineEvents = [],
@@ -456,6 +458,19 @@ export function KanbanBoard({
           >
             <RefreshCw className={cn("mr-1.5 h-3.5 w-3.5", mlSyncing && "animate-spin")} />
             {mlSyncing ? "Sincronizando…" : "Sync ML"}
+          </Button>
+        )}
+        {onReconcileSales && (
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            className="shrink-0"
+            disabled={mlSyncing || mlSyncDisabled}
+            onClick={() => void onReconcileSales()}
+          >
+            <RefreshCw className={cn("mr-1.5 h-3.5 w-3.5", mlSyncing && "animate-spin")} />
+            Reconciliar vendas
           </Button>
         )}
         <div className="ml-auto flex items-center gap-2">

@@ -1,6 +1,6 @@
 import { v } from "convex/values"
 
-import type { Id } from "./_generated/dataModel"
+import type { Doc, Id } from "./_generated/dataModel"
 import { mutation, query, type MutationCtx } from "./_generated/server"
 
 import { manualStockDedupeKey, normalizeMlItemIdForStock } from "./dedupeHelpers"
@@ -69,6 +69,14 @@ export const addProduct = mutation({
     }
     if (args.quantity < 0 || args.minStock < 0 || args.unitCost < 0) {
       throw new Error("Quantidade, estoque minimo e custo devem ser maiores ou iguais a zero.")
+    }
+
+    const duplicate = await ctx.db
+      .query("stockProducts")
+      .withIndex("by_user_ml_item", (q) => q.eq("userId", args.userId).eq("mlItemId", normalizedMl))
+      .first()
+    if (duplicate) {
+      throw new Error("MLB ID ja cadastrado em outro produto.")
     }
 
     const now = Date.now()
@@ -428,6 +436,68 @@ function buildMlAliasOwnerMap<T extends { mlItemAliases?: string[] }>(products: 
   return aliasOwner
 }
 
+function normalizeStockTokenText(text: string): string[] {
+  return text
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-z0-9\s]/g, " ")
+    .split(/\s+/)
+    .filter((token) => token.length > 2)
+}
+
+function titleSimilarity(a: string, b: string): number {
+  const left = normalizeStockTokenText(a)
+  const right = normalizeStockTokenText(b)
+  if (left.length === 0 || right.length === 0) return 0
+  const rightSet = new Set(right)
+  const matches = left.filter((token) => rightSet.has(token)).length
+  return matches / Math.min(left.length, right.length)
+}
+
+function findProductForSaleItem(
+  products: Doc<"stockProducts">[],
+  item: { mlItemId: string; sku?: string; title: string },
+): { product: Doc<"stockProducts"> | null; matchMethod: string; score: number } {
+  const normalizedItemId = normalizeMlItemIdForStock(item.mlItemId)
+  const normalizedSku = normalizeMlItemIdForStock(item.sku ?? "")
+
+  const byMlId = new Map<string, Doc<"stockProducts">>()
+  const bySku = new Map<string, Doc<"stockProducts">>()
+  const aliasOwner = buildMlAliasOwnerMap(products)
+
+  for (const product of products) {
+    if (product.mlItemId) byMlId.set(normalizeMlItemIdForStock(product.mlItemId), product)
+    if (product.sku) bySku.set(normalizeMlItemIdForStock(product.sku), product)
+  }
+
+  if (normalizedItemId && byMlId.has(normalizedItemId)) {
+    return { product: byMlId.get(normalizedItemId) ?? null, matchMethod: "mlItemId", score: 1 }
+  }
+  if (normalizedItemId && aliasOwner.has(normalizedItemId)) {
+    return { product: aliasOwner.get(normalizedItemId) ?? null, matchMethod: "alias", score: 1 }
+  }
+  if (normalizedSku && bySku.has(normalizedSku)) {
+    return { product: bySku.get(normalizedSku) ?? null, matchMethod: "sku", score: 1 }
+  }
+
+  let bestProduct: Doc<"stockProducts"> | null = null
+  let bestScore = 0
+  for (const product of products) {
+    const score = titleSimilarity(product.name, item.title)
+    if (score > bestScore) {
+      bestScore = score
+      bestProduct = product
+    }
+  }
+
+  if (bestProduct && bestScore >= 0.5) {
+    return { product: bestProduct, matchMethod: "title", score: bestScore }
+  }
+
+  return { product: null, matchMethod: "none", score: bestScore }
+}
+
 /**
  * Move no Kanban com persistência correta: ir para "Em falta" zera quantidade,
  * registra movimento de saída e mantém status coerente com o estoque.
@@ -628,6 +698,14 @@ export const addManualStockEntry = mutation({
       throw new Error("Quantidade e custo devem ser zero ou positivos.")
     }
 
+    const duplicateMl = await ctx.db
+      .query("stockProducts")
+      .withIndex("by_user_ml_item", (q) => q.eq("userId", args.userId).eq("mlItemId", normalizedMl))
+      .first()
+    if (duplicateMl) {
+      throw new Error("MLB ID ja cadastrado em outro produto.")
+    }
+
     const dedupeKey = manualStockDedupeKey(
       args.userId,
       normalizedName,
@@ -799,6 +877,7 @@ export const syncFromMercadoLivre = mutation({
       const isFull = listing.logisticType === "fulfillment"
       const existing = isFull
         ? (byMlItems.find(isMlFullStockProduct) ??
+          byMlItems[0] ??
           (normalizedListingId ? aliasOwner.get(normalizedListingId) : null) ??
           null)
         : (byMlItems[0] ??
@@ -1005,6 +1084,7 @@ export const reconcileWithMlData = mutation({
       const isFull = item.logisticType === "fulfillment"
       const product = isFull
         ? (byMlItems.find(isMlFullStockProduct) ??
+          byMlItems[0] ??
           (normalizedItemId ? aliasOwner.get(normalizedItemId) : null) ??
           null)
         : (byMlItems[0] ?? (normalizedItemId ? aliasOwner.get(normalizedItemId) : null) ?? null)
@@ -1413,6 +1493,212 @@ export const bulkReconcileStock = mutation({
     }
 
     return { updated, total: args.assignments.length }
+  },
+})
+
+export const reconcileSalesFromMercadoLivre = mutation({
+  args: {
+    userId: v.string(),
+    orders: v.array(
+      v.object({
+        orderId: v.string(),
+        status: v.string(),
+        paymentStatus: v.optional(v.string()),
+        date: v.string(),
+        items: v.array(
+          v.object({
+            itemKey: v.string(),
+            mlItemId: v.string(),
+            title: v.string(),
+            sku: v.optional(v.string()),
+            quantity: v.number(),
+            unitPrice: v.number(),
+          }),
+        ),
+      }),
+    ),
+  },
+  handler: async (ctx, args) => {
+    const now = Date.now()
+    const products = await ctx.db
+      .query("stockProducts")
+      .withIndex("by_user", (q) => q.eq("userId", args.userId))
+      .collect()
+
+    const categories = await ctx.db
+      .query("categories")
+      .withIndex("by_user", (q) => q.eq("userId", args.userId))
+      .collect()
+
+    let salesCategoryId = categories.find(
+      (category) =>
+        category.kind === "income" && category.name.toLowerCase() === "vendas de produtos",
+    )?._id
+
+    if (!salesCategoryId) {
+      salesCategoryId = await ctx.db.insert("categories", {
+        userId: args.userId,
+        name: "Vendas de produtos",
+        kind: "income",
+        createdAt: now,
+        updatedAt: now,
+      })
+    }
+
+    let processedItems = 0
+    let skippedAlreadyProcessed = 0
+    let skippedCancelled = 0
+    let unmatchedItems = 0
+    let movementsCreated = 0
+    let transactionsCreated = 0
+    let stockShortages = 0
+    const unmatched: Array<{ orderId: string; mlItemId: string; title: string; quantity: number }> =
+      []
+    const adjusted: Array<{
+      orderId: string
+      productId: Id<"stockProducts">
+      productName: string
+      soldQuantity: number
+      previousQuantity: number
+      nextQuantity: number
+      matchMethod: string
+    }> = []
+
+    for (const order of args.orders) {
+      const status = order.status.toLowerCase()
+      const paymentStatus = order.paymentStatus?.toLowerCase()
+      if (
+        status.includes("cancel") ||
+        status === "invalid" ||
+        paymentStatus === "cancelled" ||
+        paymentStatus === "rejected"
+      ) {
+        skippedCancelled += order.items.length
+        continue
+      }
+
+      const date = order.date ? order.date.slice(0, 10) : new Date().toISOString().slice(0, 10)
+
+      for (const item of order.items) {
+        const quantity = Math.max(0, Math.floor(item.quantity))
+        if (quantity <= 0) continue
+
+        const externalItemId =
+          item.itemKey.trim() || `${normalizeMlItemIdForStock(item.mlItemId)}:${item.title}`
+        const existingMovement = await ctx.db
+          .query("stockMovements")
+          .withIndex("by_user_external_order_item", (q) =>
+            q
+              .eq("userId", args.userId)
+              .eq("externalOrderId", order.orderId)
+              .eq("externalItemId", externalItemId),
+          )
+          .first()
+
+        if (existingMovement) {
+          skippedAlreadyProcessed += 1
+          continue
+        }
+
+        const match = findProductForSaleItem(products, {
+          mlItemId: item.mlItemId,
+          sku: item.sku,
+          title: item.title,
+        })
+
+        if (!match.product) {
+          unmatchedItems += 1
+          unmatched.push({
+            orderId: order.orderId,
+            mlItemId: normalizeMlItemIdForStock(item.mlItemId),
+            title: item.title,
+            quantity,
+          })
+          continue
+        }
+
+        const previousQuantity = match.product.quantity
+        const nextQuantity = Math.max(0, previousQuantity - quantity)
+        if (quantity > previousQuantity) stockShortages += 1
+
+        await ctx.db.patch(match.product._id, {
+          quantity: nextQuantity,
+          kanbanStatus:
+            nextQuantity === 0 && (match.product.kanbanStatus ?? "in_stock") === "in_stock"
+              ? "in_stock"
+              : match.product.kanbanStatus,
+          updatedAt: now,
+        })
+        match.product.quantity = nextQuantity
+
+        await ctx.db.insert("stockMovements", {
+          userId: args.userId,
+          productId: match.product._id,
+          type: "sale",
+          quantity,
+          date,
+          unitPrice: item.unitPrice,
+          note: `Venda Mercado Livre #${order.orderId} (${match.matchMethod})`,
+          externalSource: "mercado_livre",
+          externalOrderId: order.orderId,
+          externalItemId,
+          createdAt: now,
+        })
+        movementsCreated += 1
+        processedItems += 1
+
+        const existingTransaction = await ctx.db
+          .query("transactions")
+          .withIndex("by_user_external_order_item", (q) =>
+            q
+              .eq("userId", args.userId)
+              .eq("externalOrderId", order.orderId)
+              .eq("externalItemId", externalItemId),
+          )
+          .first()
+
+        const totalSale = item.unitPrice * quantity
+        if (!existingTransaction && totalSale > 0) {
+          await ctx.db.insert("transactions", {
+            userId: args.userId,
+            kind: "income",
+            amount: totalSale,
+            date,
+            description: `Venda ML #${order.orderId} - ${match.product.name} (${quantity} un.)`,
+            categoryId: salesCategoryId,
+            origin: "Venda online",
+            externalSource: "mercado_livre",
+            externalOrderId: order.orderId,
+            externalItemId,
+            createdAt: now,
+          })
+          transactionsCreated += 1
+        }
+
+        adjusted.push({
+          orderId: order.orderId,
+          productId: match.product._id,
+          productName: match.product.name,
+          soldQuantity: quantity,
+          previousQuantity,
+          nextQuantity,
+          matchMethod: match.matchMethod,
+        })
+      }
+    }
+
+    return {
+      processedItems,
+      skippedAlreadyProcessed,
+      skippedCancelled,
+      unmatchedItems,
+      movementsCreated,
+      transactionsCreated,
+      stockShortages,
+      adjusted,
+      unmatched,
+      totalOrders: args.orders.length,
+    }
   },
 })
 
