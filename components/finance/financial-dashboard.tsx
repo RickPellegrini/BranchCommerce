@@ -857,11 +857,6 @@ function StockQuantityIndicator({ quantity }: { quantity: number }) {
   )
 }
 
-function formatElapsedSeconds(fromTimestamp: number, nowTimestamp: number) {
-  const seconds = Math.max(0, Math.floor((nowTimestamp - fromTimestamp) / 1000))
-  return `${seconds}s`
-}
-
 type SalesEvolutionPoint = {
   key: string
   label: string
@@ -1485,12 +1480,8 @@ export function FinancialDashboard() {
   const [mlMetricsLoading, setMlMetricsLoading] = useState(false)
   const [mlError, setMlError] = useState<string | null>(null)
   const [mlInfo, setMlInfo] = useState<string | null>(null)
-  const [mlSyncingStock, setMlSyncingStock] = useState(false)
-  const [mlLastSyncAt, setMlLastSyncAt] = useState<number | null>(null)
-  const [mlLastSyncDurationMs, setMlLastSyncDurationMs] = useState<number | null>(null)
   const [stockSalesReconcileReport, setStockSalesReconcileReport] =
     useState<StockSalesReconcileReport | null>(null)
-  const [mlNowTimestamp, setMlNowTimestamp] = useState<number>(Date.now())
   const [analysisItemId, setAnalysisItemId] = useState<string | null>(null)
   const [mlCatalogCompetitionLoading, setMlCatalogCompetitionLoading] = useState(false)
   const [mlCatalogCompetitionSummary, setMlCatalogCompetitionSummary] =
@@ -1838,6 +1829,10 @@ export function FinancialDashboard() {
             ? "Dados externos ainda recentes; usando cache salvo."
             : "Sincronizacao geral concluida.",
         )
+        const stockSalesResult = payload.data?.results?.stockSales
+        if (stockSalesResult && typeof stockSalesResult === "object") {
+          setStockSalesReconcileReport(stockSalesResult as StockSalesReconcileReport)
+        }
         await Promise.all([loadExternalSyncStatuses(), fetchMpData()])
       } catch (error) {
         setGlobalSyncStatus(error instanceof Error ? error.message : "Erro ao sincronizar dados.")
@@ -2023,7 +2018,7 @@ export function FinancialDashboard() {
 
     if (!mlErrorCode && !mlConnected && !mpErrorCode && !mpConnected) return
 
-    setActiveModule(mpErrorCode || mpConnected ? "connections" : "mercadolivre")
+    setActiveModule("connections")
 
     if (mlConnected === "1") {
       setMlInfo("Conta do Mercado Livre conectada com sucesso.")
@@ -2099,54 +2094,6 @@ export function FinancialDashboard() {
 
     void load()
   }, [activeModule])
-
-  useEffect(() => {
-    if (activeModule !== "mercadolivre" || !mlConnectionStatus?.connected || !userId) return
-    void syncStockWithMl()
-    void loadMlOverviewCards()
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- re-run when ML module/connection/user gate changes; sync fns omitted from deps intentionally
-  }, [activeModule, mlConnectionStatus?.connected, userId])
-
-  useEffect(() => {
-    if (activeModule !== "stock" || !mlConnectionStatus?.connected || !userId || mlLastSyncAt)
-      return
-    const autoSync = async () => {
-      setMlSyncingStock(true)
-      setMlError(null)
-      try {
-        const response = await fetch("/api/stock/sync-ml", {
-          method: "POST",
-          cache: "no-store",
-        })
-        const payload = await response.json()
-        if (!response.ok || !payload.ok) {
-          throw new Error(payload.error ?? "Falha ao sincronizar com Mercado Livre.")
-        }
-        const reconcileResponse = await fetch("/api/stock/reconcile-sales", {
-          method: "POST",
-          cache: "no-store",
-        })
-        const reconcilePayload = await reconcileResponse.json()
-        if (!reconcileResponse.ok || !reconcilePayload.ok) {
-          throw new Error(reconcilePayload.error ?? "Falha ao reconciliar vendas com estoque.")
-        }
-        const d = payload.data ?? {}
-        const reconcileResult = (reconcilePayload.data ?? {}) as StockSalesReconcileReport
-        setStockSalesReconcileReport(reconcileResult)
-        setMlInfo(
-          `Sincronização concluída: ${d.totalMlItems ?? 0} anúncios, ${d.updated ?? 0} atualizados, ${d.created ?? 0} criados, ${d.linkedManual ?? 0} manual(is) vinculados. Vendas: ${reconcileResult.movementsCreated ?? 0} baixa(s), ${reconcileResult.unmatchedItems ?? 0} sem vínculo.`,
-        )
-        setMlLastSyncAt(Date.now())
-      } catch (error) {
-        setMlError(
-          error instanceof Error ? error.message : "Erro ao reconciliar com Mercado Livre.",
-        )
-      } finally {
-        setMlSyncingStock(false)
-      }
-    }
-    void autoSync()
-  }, [activeModule, mlConnectionStatus?.connected, mlLastSyncAt, userId])
 
   useEffect(() => {
     if ((activeModule !== "finance" && activeModule !== "home") || !userId) return
@@ -4935,82 +4882,6 @@ export function FinancialDashboard() {
     }
   }
 
-  const syncStockWithMl = async () => {
-    if (!userId || mlSyncingStock) return
-    const startedAt = Date.now()
-    setMlSyncingStock(true)
-    setMlError(null)
-    setMlInfo(null)
-
-    try {
-      const response = await fetch("/api/stock/sync-ml", {
-        method: "POST",
-        cache: "no-store",
-      })
-      const payload = await response.json()
-      if (!response.ok || !payload.ok) {
-        throw new Error(payload.error ?? "Falha ao sincronizar com Mercado Livre.")
-      }
-
-      const syncResult = payload.data ?? {}
-      const reconcileResponse = await fetch("/api/stock/reconcile-sales", {
-        method: "POST",
-        cache: "no-store",
-      })
-      const reconcilePayload = await reconcileResponse.json()
-      if (!reconcileResponse.ok || !reconcilePayload.ok) {
-        throw new Error(reconcilePayload.error ?? "Falha ao reconciliar vendas com estoque.")
-      }
-
-      const reconcileResult = (reconcilePayload.data ?? {}) as StockSalesReconcileReport
-      setStockSalesReconcileReport(reconcileResult)
-      setMlInfo(
-        `Sincronização concluída: ${syncResult.totalMlItems ?? 0} anúncios, ${syncResult.updated ?? 0} atualizados, ${syncResult.created ?? 0} criados, ${syncResult.linkedManual ?? 0} manual(is) vinculados. Vendas: ${reconcileResult.movementsCreated ?? 0} baixa(s), ${reconcileResult.unmatchedItems ?? 0} sem vínculo.`,
-      )
-      setMlLastSyncAt(Date.now())
-      setMlLastSyncDurationMs(Date.now() - startedAt)
-    } catch (error) {
-      setMlError(
-        error instanceof Error ? error.message : "Erro ao sincronizar estoque com Mercado Livre.",
-      )
-    } finally {
-      setMlSyncingStock(false)
-    }
-  }
-
-  const reconcileStockSalesWithMl = async () => {
-    if (!userId || mlSyncingStock) return
-    const startedAt = Date.now()
-    setMlSyncingStock(true)
-    setMlError(null)
-    setMlInfo(null)
-    try {
-      const response = await fetch("/api/stock/reconcile-sales", {
-        method: "POST",
-        cache: "no-store",
-      })
-      const payload = await response.json()
-      if (!response.ok || !payload.ok) {
-        throw new Error(payload.error ?? "Falha ao reconciliar vendas com estoque.")
-      }
-      const result = (payload.data ?? {}) as StockSalesReconcileReport
-      setStockSalesReconcileReport(result)
-      setMlInfo(
-        `Reconciliação de vendas: ${result.movementsCreated ?? 0} baixa(s), ${result.transactionsCreated ?? 0} lançamento(s), ${result.skippedAlreadyProcessed ?? 0} já processado(s), ${result.unmatchedItems ?? 0} sem vínculo.`,
-      )
-      setMlLastSyncAt(Date.now())
-      setMlLastSyncDurationMs(Date.now() - startedAt)
-      await loadMlOrders({
-        startDate: filters.startDate,
-        endDate: filters.endDate,
-      })
-    } catch (error) {
-      setMlError(error instanceof Error ? error.message : "Erro ao reconciliar vendas com estoque.")
-    } finally {
-      setMlSyncingStock(false)
-    }
-  }
-
   const openAnalysis = (itemId: string) => setAnalysisItemId(itemId)
 
   const loadMlCatalogCompetition = async () => {
@@ -5126,7 +4997,6 @@ export function FinancialDashboard() {
         if (!connectionData.connected) return
 
         await Promise.allSettled([
-          syncStockWithMl(),
           loadMlOverviewCards(),
           loadMlOrders(),
           fetchMpData(),
@@ -5212,14 +5082,6 @@ export function FinancialDashboard() {
     if (activeMlSidebarGroup === "pedidos") setActiveMlSection("orders")
     if (activeMlSidebarGroup === "metricas") setActiveMlSection("metrics")
   }, [activeMlSidebarGroup])
-
-  useEffect(() => {
-    const intervalId = window.setInterval(() => {
-      setMlNowTimestamp(Date.now())
-    }, 1000)
-
-    return () => window.clearInterval(intervalId)
-  }, [])
 
   if (!isLoaded) {
     return (
@@ -6046,8 +5908,8 @@ export function FinancialDashboard() {
                   <SyncStatusRow
                     label="Estoque Mercado Livre"
                     status={stockSyncStatus?.status ?? "idle"}
-                    lastSuccessAt={stockSyncStatus?.lastSuccessAt ?? mlLastSyncAt ?? undefined}
-                    message={stockSyncStatus?.message ?? mlInfo ?? undefined}
+                    lastSuccessAt={stockSyncStatus?.lastSuccessAt}
+                    message={stockSyncStatus?.message ?? undefined}
                   />
                   <SyncStatusRow
                     label="Mercado Pago reports"
@@ -6056,17 +5918,6 @@ export function FinancialDashboard() {
                     message={mpSyncProviderStatus?.message ?? mpSyncStatus ?? undefined}
                   />
                   <div className="flex flex-wrap gap-2 pt-1">
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      disabled={mlSyncingStock}
-                      onClick={() => void syncStockWithMl()}
-                    >
-                      <RefreshCw
-                        className={cn("mr-2 size-3.5", mlSyncingStock && "animate-spin")}
-                      />
-                      Sync estoque ML
-                    </Button>
                     <Button
                       size="sm"
                       variant="outline"
@@ -6080,15 +5931,6 @@ export function FinancialDashboard() {
                     >
                       <ShoppingBag className="mr-2 size-3.5" />
                       Atualizar pedidos
-                    </Button>
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      disabled={mpSyncLoading}
-                      onClick={() => void syncMpReports({ manual: true })}
-                    >
-                      <Wallet className="mr-2 size-3.5" />
-                      Sync Mercado Pago
                     </Button>
                   </div>
                 </CardContent>
@@ -9298,10 +9140,6 @@ export function FinancialDashboard() {
                   onDeleteProduct={handleKanbanDelete}
                   onAddKanbanCard={handleAddKanbanCard}
                   onToggleProductHidden={handleToggleProductHidden}
-                  mlSyncing={mlSyncingStock}
-                  mlSyncDisabled={!mlConnectionStatus?.connected}
-                  onSyncWithMl={syncStockWithMl}
-                  onReconcileSales={reconcileStockSalesWithMl}
                   initialColumnOrder={stockData?.preferences?.kanbanColumnOrder}
                   onColumnOrderChange={handleKanbanColumnOrderChange}
                   kanbanTimelineEvents={kanbanTimelineEvents}
@@ -10008,25 +9846,6 @@ export function FinancialDashboard() {
                     </CardDescription>
                   </CardHeader>
                   <CardContent className="space-y-3">
-                    <div className="flex flex-wrap gap-2">
-                      {mlSyncingStock && (
-                        <Badge variant="outline" className="border-warning text-warning">
-                          <RefreshCw className="mr-1 size-3.5 animate-spin" />
-                          Sincronizando estoque...
-                        </Badge>
-                      )}
-                      {!mlSyncingStock && mlLastSyncAt && (
-                        <Badge
-                          variant="outline"
-                          className="border-emerald-600/50 text-emerald-700 dark:text-emerald-400"
-                        >
-                          Ultima sync ha {formatElapsedSeconds(mlLastSyncAt, mlNowTimestamp)}
-                          {mlLastSyncDurationMs !== null
-                            ? ` (durou ${(mlLastSyncDurationMs / 1000).toFixed(1)}s)`
-                            : ""}
-                        </Badge>
-                      )}
-                    </div>
                     <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
                       <Card className="rounded-none border-dashed">
                         <CardHeader className="pb-2">

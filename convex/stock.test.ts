@@ -165,6 +165,29 @@ describe("stock", () => {
       ).resolves.not.toThrow()
     })
 
+    it("moves product to missing column when edit zeroes stock", async () => {
+      const t = convexTest(schema, modules)
+      const id = await setupProduct(t)
+      await t.mutation(api.stock.updateProduct, {
+        userId: "user1",
+        productId: id,
+        name: "Widget A",
+        category: "Gadgets",
+        quantity: 0,
+        minStock: 2,
+        unitCost: 15,
+        kanbanStatus: "fulfillment",
+      })
+
+      const data = await t.query(api.stock.getDashboardData, { userId: "user1" })
+      expect(data.products[0].quantity).toBe(0)
+      expect(data.products[0].kanbanStatus).toBe("in_stock")
+      expect(data.kanbanEvents.at(-1)).toMatchObject({
+        fromStatus: "in_stock",
+        toStatus: "em_falta",
+      })
+    })
+
     it("throws for wrong user", async () => {
       const t = convexTest(schema, modules)
       const id = await setupProduct(t)

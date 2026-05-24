@@ -260,12 +260,15 @@ export const updateProduct = mutation({
     }
 
     const prevKanban = product.kanbanStatus ?? "purchased"
-    if (args.kanbanStatus !== undefined && args.kanbanStatus !== prevKanban) {
+    const movedToMissing = product.quantity > 0 && args.quantity === 0
+    const nextKanbanStatus = movedToMissing ? "in_stock" : args.kanbanStatus
+    const transitionTarget = movedToMissing ? "em_falta" : nextKanbanStatus
+    if (transitionTarget !== undefined && transitionTarget !== prevKanban) {
       await logKanbanTransition(ctx, {
         userId: args.userId,
         productId: args.productId,
         fromStatus: prevKanban,
-        toStatus: args.kanbanStatus,
+        toStatus: transitionTarget,
         note: args.kanbanNote,
       })
     }
@@ -310,7 +313,7 @@ export const updateProduct = mutation({
       unitCost: args.unitCost,
       unitCostSource: "manual",
       sellingPrice: args.sellingPrice,
-      ...(args.kanbanStatus !== undefined && { kanbanStatus: args.kanbanStatus }),
+      ...(nextKanbanStatus !== undefined && { kanbanStatus: nextKanbanStatus }),
       ...(args.kanbanNote !== undefined && { kanbanNote: args.kanbanNote }),
       ...(args.estimatedArrival !== undefined && { estimatedArrival: args.estimatedArrival }),
       ...mlSuffix,

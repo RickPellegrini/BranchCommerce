@@ -20,7 +20,6 @@ import {
   Truck,
   ClipboardList,
   Warehouse,
-  RefreshCw,
   SlidersHorizontal,
   Eye,
   EyeOff,
@@ -61,6 +60,7 @@ const LS_COLLAPSED = "branchcommerce.kanban.collapsed"
 const LS_SHOW_HIDDEN = "branchcommerce.kanban.showHidden"
 const LS_HIDDEN_COLS = "branchcommerce.kanban.hiddenCols"
 const LS_COL_ORDER = "branchcommerce.kanban.colOrder"
+const COLUMN_DRAG_PREFIX = "kanban-column:"
 
 const DEFAULT_COL_IDS: KanbanColumnId[] = [EM_FALTA_COLUMN.id, ...KANBAN_COLUMNS.map((c) => c.id)]
 const ALL_COLUMNS_MAP = Object.fromEntries(
@@ -77,6 +77,19 @@ function normalizeColumnOrder(order: string[] | undefined): string[] {
   const saved = [...new Set(order)]
   const missing = DEFAULT_COL_IDS.filter((id) => !saved.includes(id))
   return [...saved.filter(isDefaultColumnId), ...missing]
+}
+
+function getSortableColumnId(columnId: string): string {
+  return `${COLUMN_DRAG_PREFIX}${columnId}`
+}
+
+function parseSortableColumnId(id: string): string | null {
+  return id.startsWith(COLUMN_DRAG_PREFIX) ? id.slice(COLUMN_DRAG_PREFIX.length) : null
+}
+
+function parseColumnDropId(id: string): KanbanColumnId | null {
+  const columnId = parseSortableColumnId(id) ?? id
+  return isDefaultColumnId(columnId) ? columnId : null
 }
 
 function extractMlCodes(product: Pick<KanbanProduct, "mlItemId" | "mlItemAliases">): string[] {
@@ -131,12 +144,8 @@ interface KanbanBoardProps {
     note?: string,
     estimatedArrival?: string,
   ) => Promise<void>
-  onSyncWithMl?: () => Promise<void>
-  onReconcileSales?: () => Promise<void>
   initialColumnOrder?: string[]
   onColumnOrderChange?: (columnOrder: string[]) => Promise<void>
-  mlSyncing?: boolean
-  mlSyncDisabled?: boolean
   kanbanTimelineEvents?: ProductKanbanEventRow[]
   onAddProduct?: () => void
   showAddForm?: boolean
@@ -151,12 +160,8 @@ export function KanbanBoard({
   onDeleteProduct,
   onToggleProductHidden,
   onAddKanbanCard,
-  onSyncWithMl,
-  onReconcileSales,
   initialColumnOrder,
   onColumnOrderChange,
-  mlSyncing = false,
-  mlSyncDisabled = false,
   kanbanTimelineEvents = [],
   onAddProduct,
   showAddForm,
@@ -366,16 +371,48 @@ export function KanbanBoard({
     () => columnOrder.filter((id) => !hiddenColumns[id]),
     [columnOrder, hiddenColumns],
   )
+  const visibleSortableColumnIds = useMemo(
+    () => visibleColumnIds.map(getSortableColumnId),
+    [visibleColumnIds],
+  )
 
   function handleDragStart(event: DragStartEvent) {
     setActiveId(event.active.id as string)
   }
 
+  const persistColumnOrder = useCallback(
+    (nextOrder: string[]) => {
+      setColumnOrder(nextOrder)
+      try {
+        localStorage.setItem(LS_COL_ORDER, JSON.stringify(nextOrder))
+      } catch {
+        /* ignore */
+      }
+      if (onColumnOrderChange) {
+        void onColumnOrderChange(nextOrder)
+      }
+    },
+    [onColumnOrderChange],
+  )
+
   function handleDragEnd(event: DragEndEvent) {
     const { active, over } = event
     setActiveId(null)
     if (!over) return
-    const target = over.id as KanbanColumnId
+
+    const activeColumnId = parseSortableColumnId(String(active.id))
+    if (activeColumnId) {
+      const overColumnId = parseColumnDropId(String(over.id))
+      if (!overColumnId || activeColumnId === overColumnId) return
+      const oldIdx = columnOrder.indexOf(activeColumnId)
+      const newIdx = columnOrder.indexOf(overColumnId)
+      if (oldIdx === -1 || newIdx === -1) return
+      persistColumnOrder(arrayMove(columnOrder, oldIdx, newIdx))
+      return
+    }
+
+    const target = parseColumnDropId(String(over.id))
+    if (!target) return
     const product = displayProducts.find((p) => p.id === active.id)
     if (!product) return
     if (getKanbanColumnId(product) === target) return
@@ -387,31 +424,6 @@ export function KanbanBoard({
       product.kanbanCardId,
     )
   }
-
-  const handleColumnDragEnd = useCallback(
-    (event: DragEndEvent) => {
-      const { active, over } = event
-      if (!over || active.id === over.id) return
-      const oldIdx = columnOrder.indexOf(active.id as string)
-      const newIdx = columnOrder.indexOf(over.id as string)
-      if (oldIdx === -1 || newIdx === -1) return
-      const nextOrder = arrayMove(columnOrder, oldIdx, newIdx)
-      setColumnOrder(nextOrder)
-      try {
-        localStorage.setItem(LS_COL_ORDER, JSON.stringify(nextOrder))
-      } catch {
-        /* ignore */
-      }
-      if (onColumnOrderChange) {
-        void onColumnOrderChange(nextOrder)
-      }
-    },
-    [columnOrder, onColumnOrderChange],
-  )
-
-  const columnSensors = useSensors(
-    useSensor(PointerSensor, { activationConstraint: { distance: 12 } }),
-  )
 
   const getColumnProducts = useCallback(
     (colId: string) => {
@@ -478,32 +490,6 @@ export function KanbanBoard({
             Adicionar
           </Button>
         )}
-        {onSyncWithMl && (
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            className="shrink-0"
-            disabled={mlSyncing || mlSyncDisabled}
-            onClick={() => void onSyncWithMl()}
-          >
-            <RefreshCw className={cn("mr-1.5 h-3.5 w-3.5", mlSyncing && "animate-spin")} />
-            {mlSyncing ? "Sincronizando…" : "Sync ML"}
-          </Button>
-        )}
-        {onReconcileSales && (
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            className="shrink-0"
-            disabled={mlSyncing || mlSyncDisabled}
-            onClick={() => void onReconcileSales()}
-          >
-            <RefreshCw className={cn("mr-1.5 h-3.5 w-3.5", mlSyncing && "animate-spin")} />
-            Reconciliar vendas
-          </Button>
-        )}
         <div className="ml-auto flex items-center gap-2">
           <Popover>
             <PopoverTrigger asChild>
@@ -563,78 +549,76 @@ export function KanbanBoard({
         </div>
       </div>
 
-      {/* Column reorder layer */}
+      {/* Cards and columns share one drag context so column sorting is registered correctly. */}
       <DndContext
-        sensors={columnSensors}
+        sensors={sensors}
         collisionDetection={closestCenter}
-        onDragEnd={handleColumnDragEnd}
+        onDragStart={handleDragStart}
+        onDragEnd={handleDragEnd}
       >
-        <SortableContext items={visibleColumnIds} strategy={horizontalListSortingStrategy}>
-          {/* Card drag layer (nested inside column layout) */}
-          <DndContext sensors={sensors} onDragStart={handleDragStart} onDragEnd={handleDragEnd}>
-            <div className="-mx-1 overflow-x-auto rounded-xl">
-              <div className="flex min-w-max gap-4 px-1 pb-4 pt-1">
-                {visibleColumnIds.map((colId) => {
-                  const col = ALL_COLUMNS_MAP[colId]
-                  if (!col) return null
-                  return (
-                    <SortableColumn key={colId} id={colId}>
-                      <KanbanColumn
-                        id={colId}
-                        label={col.label}
-                        droppable={col.droppable}
-                        collapsed={!!collapsedByColumn[colId]}
-                        onToggleCollapsed={() =>
-                          setCollapsedByColumn((prev) => ({
-                            ...prev,
-                            [colId]: !prev[colId],
-                          }))
-                        }
-                        onHideColumn={() =>
-                          setHiddenColumns((prev) => ({ ...prev, [colId]: true }))
-                        }
-                        products={getColumnProducts(colId)}
-                        onCardDetails={setSelectedProduct}
-                        onCardMoveTo={(product, columnTarget) =>
-                          void onUpdateKanbanStatus(
-                            product.stockProductId,
-                            columnTarget,
-                            undefined,
-                            undefined,
-                            product.kanbanCardId,
-                          )
-                        }
-                        onCardDelete={(product) =>
-                          void onDeleteProduct(product.stockProductId, product.kanbanCardId)
-                        }
-                        onToggleCardHidden={
-                          onToggleProductHidden
-                            ? (product) =>
-                                void onToggleProductHidden(
-                                  product.stockProductId,
-                                  !product.kanbanHidden,
-                                )
-                            : undefined
-                        }
-                      />
-                    </SortableColumn>
-                  )
-                })}
-              </div>
+        <SortableContext items={visibleSortableColumnIds} strategy={horizontalListSortingStrategy}>
+          <div className="-mx-1 overflow-x-auto rounded-xl">
+            <div className="flex min-w-max gap-4 px-1 pb-4 pt-1">
+              {visibleColumnIds.map((colId) => {
+                const col = ALL_COLUMNS_MAP[colId]
+                if (!col) return null
+                return (
+                  <SortableColumn key={colId} id={getSortableColumnId(colId)}>
+                    <KanbanColumn
+                      id={colId}
+                      label={col.label}
+                      droppable={col.droppable}
+                      collapsed={!!collapsedByColumn[colId]}
+                      onToggleCollapsed={() =>
+                        setCollapsedByColumn((prev) => ({
+                          ...prev,
+                          [colId]: !prev[colId],
+                        }))
+                      }
+                      onHideColumn={() =>
+                        setHiddenColumns((prev) => ({ ...prev, [colId]: true }))
+                      }
+                      products={getColumnProducts(colId)}
+                      onCardDetails={setSelectedProduct}
+                      onCardMoveTo={(product, columnTarget) =>
+                        void onUpdateKanbanStatus(
+                          product.stockProductId,
+                          columnTarget,
+                          undefined,
+                          undefined,
+                          product.kanbanCardId,
+                        )
+                      }
+                      onCardDelete={(product) =>
+                        void onDeleteProduct(product.stockProductId, product.kanbanCardId)
+                      }
+                      onToggleCardHidden={
+                        onToggleProductHidden
+                          ? (product) =>
+                              void onToggleProductHidden(
+                                product.stockProductId,
+                                !product.kanbanHidden,
+                              )
+                          : undefined
+                      }
+                    />
+                  </SortableColumn>
+                )
+              })}
             </div>
+          </div>
 
-            <DragOverlay>
-              {activeProduct ? (
-                <ProductCard
-                  product={activeProduct}
-                  isDragging
-                  onDetails={() => {}}
-                  onMoveTo={() => {}}
-                  onDelete={() => {}}
-                />
-              ) : null}
-            </DragOverlay>
-          </DndContext>
+          <DragOverlay>
+            {activeProduct ? (
+              <ProductCard
+                product={activeProduct}
+                isDragging
+                onDetails={() => {}}
+                onMoveTo={() => {}}
+                onDelete={() => {}}
+              />
+            ) : null}
+          </DragOverlay>
         </SortableContext>
       </DndContext>
 
