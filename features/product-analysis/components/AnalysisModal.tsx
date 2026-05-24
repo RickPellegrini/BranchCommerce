@@ -10,6 +10,7 @@ import { AnalysisError } from "./AnalysisError"
 import { CatalogOverview } from "./CatalogOverview"
 import { CompetitorSummaryCards } from "./CompetitorSummary"
 import { CompetitorTable } from "./CompetitorTable"
+import { AnalysisDiagnostics } from "./AnalysisDiagnostics"
 
 const strategyLabels: Record<string, string> = {
   catalog_product_items: "Catalogo (oficial)",
@@ -62,79 +63,110 @@ export function AnalysisModal({ itemId, onClose }: { itemId: string; onClose: ()
             <AnalysisError message={error ?? "Erro desconhecido"} onRetry={refresh} />
           )}
 
-          {(phase === "success" || phase === "partial") && data && (
-            <>
-              {/* Info bar */}
-              <div className="flex items-center gap-2 mb-5 flex-wrap">
-                <span className="inline-flex items-center gap-1.5 rounded-lg border bg-muted/50 px-2.5 py-1 text-[11px] font-medium text-muted-foreground">
-                  <Clock className="h-3 w-3" />
-                  {data.timings.totalMs}ms
-                </span>
-                <span className="inline-flex items-center gap-1.5 rounded-lg border bg-blue-50 dark:bg-blue-950/30 px-2.5 py-1 text-[11px] font-medium text-blue-700 dark:text-blue-300">
-                  {strategyLabels[data.competitors.strategy] ?? data.competitors.strategy}
-                </span>
-                <span className="inline-flex items-center gap-1.5 rounded-lg border bg-emerald-50 dark:bg-emerald-950/30 px-2.5 py-1 text-[11px] font-medium text-emerald-700 dark:text-emerald-300">
-                  {data.competitors.totalCandidatesRaw} brutos &rarr;{" "}
-                  {data.competitors.totalAfterFilters} final
-                </span>
-                <a
-                  href={data.catalog.item.permalink}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="ml-auto inline-flex items-center gap-1 rounded-lg border px-2.5 py-1 text-[11px] font-medium text-blue-600 dark:text-blue-400 hover:bg-blue-50 dark:hover:bg-blue-950/30 transition-colors"
-                >
-                  Ver no ML <ExternalLink className="h-3 w-3" />
-                </a>
-              </div>
-
-              <Tabs defaultValue="competitors">
-                <TabsList className="bg-muted rounded-lg p-1 h-auto">
-                  <TabsTrigger
-                    value="catalog"
-                    className="rounded-md text-xs gap-1.5 data-[state=active]:bg-background data-[state=active]:shadow-sm px-4 py-2"
+          {(phase === "success" ||
+            phase === "partial" ||
+            phase === "no_competitors" ||
+            phase === "not_catalog") &&
+            data && (
+              <>
+                {/* Info bar */}
+                <div className="flex items-center gap-2 mb-5 flex-wrap">
+                  <span className="inline-flex items-center gap-1.5 rounded-lg border bg-muted/50 px-2.5 py-1 text-[11px] font-medium text-muted-foreground">
+                    <Clock className="h-3 w-3" />
+                    {data.timings.totalMs}ms
+                  </span>
+                  <span className="inline-flex items-center gap-1.5 rounded-lg border bg-blue-50 dark:bg-blue-950/30 px-2.5 py-1 text-[11px] font-medium text-blue-700 dark:text-blue-300">
+                    {strategyLabels[data.competitors.strategy] ?? data.competitors.strategy}
+                  </span>
+                  <span className="inline-flex items-center gap-1.5 rounded-lg border bg-emerald-50 dark:bg-emerald-950/30 px-2.5 py-1 text-[11px] font-medium text-emerald-700 dark:text-emerald-300">
+                    {data.competitors.totalCandidatesRaw} brutos &rarr;{" "}
+                    {data.competitors.totalAfterFilters} final
+                  </span>
+                  <a
+                    href={data.catalog.item.permalink}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="ml-auto inline-flex items-center gap-1 rounded-lg border px-2.5 py-1 text-[11px] font-medium text-blue-600 dark:text-blue-400 hover:bg-blue-50 dark:hover:bg-blue-950/30 transition-colors"
                   >
-                    <BarChart3 className="h-3.5 w-3.5" />
-                    Catalogo
-                  </TabsTrigger>
-                  <TabsTrigger
-                    value="competitors"
-                    className="rounded-md text-xs gap-1.5 data-[state=active]:bg-background data-[state=active]:shadow-sm px-4 py-2"
-                  >
-                    <Users className="h-3.5 w-3.5" />
-                    Concorrentes ({data.competitors.competitors.length})
-                  </TabsTrigger>
-                </TabsList>
+                    Ver no ML <ExternalLink className="h-3 w-3" />
+                  </a>
+                </div>
 
-                <TabsContent value="catalog" className="mt-5">
-                  <CatalogOverview data={data.catalog} />
-                </TabsContent>
+                <Tabs defaultValue="competitors">
+                  <TabsList className="bg-muted rounded-lg p-1 h-auto">
+                    <TabsTrigger
+                      value="catalog"
+                      className="rounded-md text-xs gap-1.5 data-[state=active]:bg-background data-[state=active]:shadow-sm px-4 py-2"
+                    >
+                      <BarChart3 className="h-3.5 w-3.5" />
+                      Catalogo
+                    </TabsTrigger>
+                    <TabsTrigger
+                      value="competitors"
+                      className="rounded-md text-xs gap-1.5 data-[state=active]:bg-background data-[state=active]:shadow-sm px-4 py-2"
+                    >
+                      <Users className="h-3.5 w-3.5" />
+                      Concorrentes ({data.competitors.competitors.length})
+                    </TabsTrigger>
+                    <TabsTrigger
+                      value="diagnostics"
+                      className="rounded-md text-xs gap-1.5 data-[state=active]:bg-background data-[state=active]:shadow-sm px-4 py-2"
+                    >
+                      Dados
+                    </TabsTrigger>
+                  </TabsList>
 
-                <TabsContent value="competitors" className="mt-5 space-y-5">
-                  {data.competitors.competitors.length === 0 ? (
-                    <AnalysisEmpty onRetry={refresh} />
-                  ) : (
-                    <>
-                      <CompetitorSummaryCards
-                        summary={data.competitors.summary}
-                        myPrice={data.catalog.item.price}
-                      />
-                      <CompetitorTable
-                        competitors={data.competitors.competitors}
-                        myPrice={data.catalog.item.price}
-                        winnerItemId={data.competitors.buyBoxWinnerItemId}
-                      />
-                    </>
-                  )}
-                  {phase === "partial" && (
-                    <div className="text-xs text-amber-700 dark:text-amber-300 bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800 rounded-lg px-4 py-3">
-                      Dados de catalogo carregados, mas a descoberta de concorrentes falhou
-                      parcialmente.
-                    </div>
-                  )}
-                </TabsContent>
-              </Tabs>
-            </>
-          )}
+                  <TabsContent value="catalog" className="mt-5">
+                    <CatalogOverview
+                      data={data.catalog}
+                      priceToWinSource={data.dataSources.find(
+                        (source) => source.key === "price_to_win",
+                      )}
+                    />
+                  </TabsContent>
+
+                  <TabsContent value="competitors" className="mt-5 space-y-5">
+                    {data.competitors.competitors.length === 0 ? (
+                      <AnalysisEmpty onRetry={refresh} />
+                    ) : (
+                      <>
+                        <CompetitorSummaryCards
+                          summary={data.competitors.summary}
+                          myPrice={data.catalog.item.price}
+                        />
+                        <CompetitorTable
+                          competitors={data.competitors.competitors}
+                          myPrice={data.catalog.item.price}
+                          winnerItemId={data.competitors.buyBoxWinnerItemId}
+                        />
+                      </>
+                    )}
+                    {(phase === "partial" ||
+                      phase === "no_competitors" ||
+                      phase === "not_catalog") && (
+                      <div className="text-xs text-amber-700 dark:text-amber-300 bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800 rounded-lg px-4 py-3">
+                        {phase === "partial"
+                          ? "Analise carregada com algumas fontes indisponiveis."
+                          : phase === "not_catalog"
+                            ? "Este anuncio nao retornou vinculo de catalogo."
+                            : "Catalogo encontrado, mas nenhum concorrente foi retornado."}
+                      </div>
+                    )}
+                  </TabsContent>
+
+                  <TabsContent value="diagnostics" className="mt-5">
+                    <AnalysisDiagnostics
+                      dataSources={data.dataSources}
+                      logs={data.logs}
+                      analysisStatus={data.analysisStatus}
+                      receivedId={data.receivedId}
+                      resolvedInputType={data.resolvedInputType}
+                      primaryItemSource={data.primaryItemSource}
+                    />
+                  </TabsContent>
+                </Tabs>
+              </>
+            )}
         </div>
       </div>
     </div>

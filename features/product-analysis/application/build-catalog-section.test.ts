@@ -72,6 +72,17 @@ describe("buildCatalogSection", () => {
     expect(section.visits["30d"]).toBe(400)
   })
 
+  it("keeps unavailable stock and sold values as null", () => {
+    const section = buildCatalogSection(
+      makeItem({ available_quantity: null, sold_quantity: null }),
+      null,
+      null,
+      null,
+    )
+    expect(section.item.stock).toBeNull()
+    expect(section.item.sold).toBeNull()
+  })
+
   it("extracts identifiers from attributes", () => {
     const item = makeItem({
       attributes: [

@@ -19,7 +19,7 @@ const FIELDS: Array<{ field: string; weight: number; test: (item: MlItemFull) =>
     test: (i) => i.original_price != null && i.original_price > i.price,
   },
   { field: "condition_new", weight: 5, test: (i) => i.condition === "new" },
-  { field: "stock_positive", weight: 15, test: (i) => i.available_quantity > 0 },
+  { field: "stock_positive", weight: 15, test: (i) => (i.available_quantity ?? 0) > 0 },
 ]
 
 export function computeCompleteness(item: MlItemFull): {

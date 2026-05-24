@@ -31,6 +31,7 @@ import { AnalysisError } from "./AnalysisError"
 import { AnalysisEmpty } from "./AnalysisEmpty"
 import { CatalogOverview } from "./CatalogOverview"
 import { CompetitorTable } from "./CompetitorTable"
+import { AnalysisDiagnostics } from "./AnalysisDiagnostics"
 import type { CompetitorEntry } from "@/features/product-analysis/domain/types"
 import { useExtensionScraping } from "@/features/product-analysis/hooks/use-extension-scraping"
 import { getScrapedRowForItem } from "@/features/product-analysis/utils/ml-item-id"
@@ -125,7 +126,12 @@ export function HunterAnalysisPage() {
 
   const isShowingResults =
     activeItemId !== null &&
-    (phase === "loading" || phase === "success" || phase === "partial" || phase === "error")
+    (phase === "loading" ||
+      phase === "success" ||
+      phase === "partial" ||
+      phase === "no_competitors" ||
+      phase === "not_catalog" ||
+      phase === "error")
 
   return (
     <div className="space-y-6">
@@ -238,9 +244,12 @@ export function HunterAnalysisPage() {
       )}
 
       {/* ── Results ── */}
-      {isShowingResults && (phase === "success" || phase === "partial") && data && (
-        <AnalysisResults data={data} refresh={refresh} phase={phase} />
-      )}
+      {isShowingResults &&
+        (phase === "success" ||
+          phase === "partial" ||
+          phase === "no_competitors" ||
+          phase === "not_catalog") &&
+        data && <AnalysisResults data={data} refresh={refresh} phase={phase} />}
     </div>
   )
 }
@@ -312,11 +321,42 @@ function AnalysisResults({
         scrapedStock: s.availableQuantity ?? c.scrapedStock,
         scrapedStockIsMinimum: s.stockIsMinimum ?? c.scrapedStockIsMinimum,
         scrapedStartTime: s.startTime ?? c.scrapedStartTime,
+        stockSource: s.availableQuantity != null ? "extension" : c.stockSource,
       }
     })
   }, [rawCompetitors, scrapeResult])
 
   const effectiveBuyBoxWinner = scrapeResult?.buyBoxWinner ?? data.competitors.buyBoxWinnerItemId
+  const effectiveDataSources = useMemo(() => {
+    return data.dataSources.map((source) => {
+      if (source.key !== "extension_scrape") return source
+      if (scrapeResult) {
+        const stockCount = Object.values(scrapeResult.stockData).filter(
+          (entry) => entry.availableQuantity != null,
+        ).length
+        return {
+          ...source,
+          status: stockCount > 0 ? ("success" as const) : ("unavailable" as const),
+          used: stockCount > 0,
+          count: stockCount,
+          detail: `Estoque encontrado pela extensao em ${stockCount}/${rawCompetitors.length} anuncios.`,
+        }
+      }
+      if (extensionAvailable && rawCompetitors.length > 0) {
+        return {
+          ...source,
+          status: scraping ? ("partial" as const) : ("unavailable" as const),
+          used: false,
+          detail: scraping
+            ? "Extensao coletando dados no navegador."
+            : "Extensao detectada, mas ainda sem dados coletados.",
+        }
+      }
+      return source
+    })
+  }, [data.dataSources, extensionAvailable, rawCompetitors.length, scrapeResult, scraping])
+  const priceToWinSource = effectiveDataSources.find((source) => source.key === "price_to_win")
+  const stockSource = effectiveDataSources.find((source) => source.key === "server_scrape")
 
   const availableCities = useMemo(() => {
     const cities = new Map<string, number>()
@@ -380,6 +420,11 @@ function AnalysisResults({
                 <span className="inline-flex items-center gap-1 rounded-md bg-blue-50 dark:bg-blue-950/30 border border-blue-200 dark:border-blue-800 px-2 py-0.5 text-[10px] font-mono font-medium text-blue-700 dark:text-blue-300">
                   <Tag className="h-3 w-3" />
                   {data.catalog.catalogProductId}
+                </span>
+              )}
+              {data.primaryItemSource === "synthetic_catalog_item" && (
+                <span className="inline-flex items-center gap-1 rounded-md bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800 px-2 py-0.5 text-[10px] font-medium text-amber-700 dark:text-amber-300">
+                  Catalogo sem estoque/vendidos reais
                 </span>
               )}
               <span className="inline-flex items-center gap-1 rounded-md bg-emerald-50 dark:bg-emerald-950/30 border border-emerald-200 dark:border-emerald-800 px-2 py-0.5 text-[10px] font-medium text-emerald-700 dark:text-emerald-300">
@@ -461,6 +506,13 @@ function AnalysisResults({
           >
             <BarChart3 className="h-3.5 w-3.5" />
             Detalhes
+          </TabsTrigger>
+          <TabsTrigger
+            value="diagnostics"
+            className="rounded-md text-xs gap-1.5 data-[state=active]:bg-background data-[state=active]:shadow-sm px-4 py-2"
+          >
+            <Clock className="h-3.5 w-3.5" />
+            Dados
           </TabsTrigger>
         </TabsList>
 
@@ -557,15 +609,35 @@ function AnalysisResults({
               scraping={scraping}
             />
           )}
-          {phase === "partial" && (
+          {stockSource?.detail && (
+            <div className="rounded-lg border bg-muted/30 px-4 py-3 text-xs text-muted-foreground">
+              {stockSource.detail}
+            </div>
+          )}
+          {(phase === "partial" || phase === "no_competitors" || phase === "not_catalog") && (
             <div className="rounded-lg border border-amber-200 dark:border-amber-800 bg-amber-50 dark:bg-amber-950/30 px-4 py-3 text-xs text-amber-700 dark:text-amber-300">
-              Dados de catalogo carregados, mas a descoberta de concorrentes falhou parcialmente.
+              {phase === "partial"
+                ? "Analise carregada com algumas fontes indisponiveis. Veja a aba Dados."
+                : phase === "not_catalog"
+                  ? "Este anuncio nao retornou vinculo de catalogo; a comparacao de concorrentes nao esta disponivel."
+                  : "Catalogo encontrado, mas nenhum concorrente foi retornado alem do item analisado."}
             </div>
           )}
         </TabsContent>
 
         <TabsContent value="catalog" className="mt-5">
-          <CatalogOverview data={data.catalog} />
+          <CatalogOverview data={data.catalog} priceToWinSource={priceToWinSource} />
+        </TabsContent>
+
+        <TabsContent value="diagnostics" className="mt-5">
+          <AnalysisDiagnostics
+            dataSources={effectiveDataSources}
+            logs={data.logs}
+            analysisStatus={data.analysisStatus}
+            receivedId={data.receivedId}
+            resolvedInputType={data.resolvedInputType}
+            primaryItemSource={data.primaryItemSource}
+          />
         </TabsContent>
       </Tabs>
     </div>

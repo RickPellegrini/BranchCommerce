@@ -1,6 +1,6 @@
 "use client"
 
-import type { CatalogSection } from "@/features/product-analysis/domain/types"
+import type { AnalysisDataSource, CatalogSection } from "@/features/product-analysis/domain/types"
 import { formatBrl } from "@/features/product-analysis/utils/money"
 import {
   CheckCircle,
@@ -111,6 +111,10 @@ function PriceToWinCard({ ptw }: { ptw: NonNullable<CatalogSection["priceToWin"]
     sharing_first_place: "Dividindo 1o",
     listed: "Listado",
   }
+  const diff =
+    ptw.current_price != null && ptw.price_to_win != null
+      ? ptw.current_price - ptw.price_to_win
+      : null
 
   return (
     <div className="rounded-xl border bg-card p-4 shadow-sm">
@@ -135,6 +139,21 @@ function PriceToWinCard({ ptw }: { ptw: NonNullable<CatalogSection["priceToWin"]
           <div className="flex items-center justify-between">
             <span className="text-xs text-muted-foreground">Preco alvo</span>
             <span className="text-sm font-bold text-blue-600">{formatBrl(ptw.price_to_win)}</span>
+          </div>
+        )}
+        {diff != null && Math.abs(diff) >= 0.01 && (
+          <div className="flex items-center justify-between">
+            <span className="text-xs text-muted-foreground">Diferenca para ganhar</span>
+            <span
+              className={
+                diff > 0
+                  ? "text-sm font-semibold text-rose-600"
+                  : "text-sm font-semibold text-emerald-600"
+              }
+            >
+              {diff > 0 ? "-" : "+"}
+              {formatBrl(Math.abs(diff))}
+            </span>
           </div>
         )}
         {ptw.visit_share != null && (
@@ -163,12 +182,54 @@ function PriceToWinCard({ ptw }: { ptw: NonNullable<CatalogSection["priceToWin"]
             <span className="text-sm font-semibold">{formatBrl(ptw.winner.price)}</span>
           </div>
         )}
+        {ptw.reason && ptw.reason.length > 0 && (
+          <div className="rounded-lg bg-muted/50 px-3 py-2 text-[11px] text-muted-foreground">
+            Motivo: {ptw.reason.join(", ")}
+          </div>
+        )}
+        {ptw.boosts && ptw.boosts.length > 0 && (
+          <div className="space-y-1">
+            {ptw.boosts.slice(0, 3).map((boost, index) => (
+              <div
+                key={`${boost.id ?? "boost"}-${index}`}
+                className="text-[11px] text-muted-foreground"
+              >
+                {boost.description ?? boost.id}: {boost.status ?? "-"}
+              </div>
+            ))}
+          </div>
+        )}
       </div>
     </div>
   )
 }
 
-export function CatalogOverview({ data }: { data: CatalogSection }) {
+function PriceToWinUnavailableCard({ source }: { source?: AnalysisDataSource }) {
+  return (
+    <div className="rounded-xl border bg-card p-4 shadow-sm">
+      <div className="flex items-center gap-2 mb-3">
+        <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-muted">
+          <Trophy className="h-4 w-4 text-muted-foreground" />
+        </div>
+        <h4 className="text-xs font-bold uppercase tracking-wider text-muted-foreground">
+          Price to Win
+        </h4>
+      </div>
+      <p className="text-sm font-semibold text-foreground">Buy Box nao confirmado</p>
+      <p className="mt-1 text-xs text-muted-foreground">
+        {source?.error ?? source?.detail ?? "O Mercado Livre nao retornou dados de Price to Win."}
+      </p>
+    </div>
+  )
+}
+
+export function CatalogOverview({
+  data,
+  priceToWinSource,
+}: {
+  data: CatalogSection
+  priceToWinSource?: AnalysisDataSource
+}) {
   const sc = statusConfig[data.status] ?? statusConfig.undetermined
   const { item } = data
   const ptw = data.priceToWin
@@ -216,13 +277,13 @@ export function CatalogOverview({ data }: { data: CatalogSection }) {
           icon={<Package className="h-4 w-4 text-blue-600" />}
           iconBg="bg-blue-50 dark:bg-blue-950/30"
           label="Estoque"
-          value={item.stock}
+          value={item.stock ?? "-"}
         />
         <MetricCard
           icon={<BarChart3 className="h-4 w-4 text-violet-600" />}
           iconBg="bg-violet-50 dark:bg-violet-950/30"
           label="Vendidos"
-          value={item.sold}
+          value={item.sold ?? "-"}
         />
         <MetricCard
           icon={<Eye className="h-4 w-4 text-cyan-600" />}
@@ -271,7 +332,11 @@ export function CatalogOverview({ data }: { data: CatalogSection }) {
 
       {/* Price to Win + Completeness */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-        {ptw && <PriceToWinCard ptw={ptw} />}
+        {ptw ? (
+          <PriceToWinCard ptw={ptw} />
+        ) : (
+          <PriceToWinUnavailableCard source={priceToWinSource} />
+        )}
 
         <div className="rounded-xl border bg-card p-4 shadow-sm">
           <div className="mb-2 flex items-start gap-2">

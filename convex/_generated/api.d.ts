@@ -15,6 +15,7 @@ import type * as finance from "../finance.js";
 import type * as mercadolivre from "../mercadolivre.js";
 import type * as mercadopago from "../mercadopago.js";
 import type * as mpCron from "../mpCron.js";
+import type * as productAnalysis from "../productAnalysis.js";
 import type * as stock from "../stock.js";
 
 import type {
@@ -31,6 +32,7 @@ declare const fullApi: ApiFromModules<{
   mercadolivre: typeof mercadolivre;
   mercadopago: typeof mercadopago;
   mpCron: typeof mpCron;
+  productAnalysis: typeof productAnalysis;
   stock: typeof stock;
 }>;
 

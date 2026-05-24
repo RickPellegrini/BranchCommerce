@@ -167,12 +167,13 @@ export function CompetitorTable({
                             {c.itemId}
                           </span>
                         )}
-                        {c.sellerPermalink && (
+                        {(c.sellerPermalink || c.permalink) && (
                           <a
-                            href={c.sellerPermalink}
+                            href={c.sellerPermalink ?? c.permalink ?? "#"}
                             target="_blank"
                             rel="noopener noreferrer"
                             className="text-muted-foreground hover:text-blue-600"
+                            title={c.sellerPermalink ? "Abrir vendedor" : "Abrir anuncio"}
                           >
                             <ExternalLink className="h-3 w-3" />
                           </a>
@@ -224,18 +225,25 @@ export function CompetitorTable({
                   {/* ── Estoque ── */}
                   <td className="px-4 py-3 text-right">
                     {c.scrapedStock != null ? (
-                      <p
-                        className={`font-semibold text-xs tabular-nums ${
-                          !c.scrapedStockIsMinimum && c.scrapedStock <= 3
-                            ? "text-rose-600"
-                            : !c.scrapedStockIsMinimum && c.scrapedStock <= 10
-                              ? "text-amber-600"
-                              : "text-foreground"
-                        }`}
-                      >
-                        {c.scrapedStockIsMinimum ? "≥" : ""}
-                        {c.scrapedStock}
-                      </p>
+                      <>
+                        <p
+                          className={`font-semibold text-xs tabular-nums ${
+                            !c.scrapedStockIsMinimum && c.scrapedStock <= 3
+                              ? "text-rose-600"
+                              : !c.scrapedStockIsMinimum && c.scrapedStock <= 10
+                                ? "text-amber-600"
+                                : "text-foreground"
+                          }`}
+                        >
+                          {c.scrapedStockIsMinimum ? "≥" : ""}
+                          {c.scrapedStock}
+                        </p>
+                        {c.stockSource && (
+                          <p className="text-[10px] text-muted-foreground">
+                            {c.stockSource === "extension" ? "Extensao" : "Pagina"}
+                          </p>
+                        )}
+                      </>
                     ) : scraping ? (
                       <div className="h-4 w-8 animate-pulse rounded bg-muted ml-auto" />
                     ) : (

@@ -32,6 +32,7 @@ function comp(overrides: Partial<CompetitorEntry> & { price: number }): Competit
     scrapedStock: null,
     scrapedStockIsMinimum: false,
     scrapedStartTime: null,
+    stockSource: null,
     ...overrides,
   }
 }

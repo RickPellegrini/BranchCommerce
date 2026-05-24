@@ -3,7 +3,14 @@
 import { useState, useCallback, useEffect } from "react"
 import type { FullAnalysis } from "@/features/product-analysis/domain/types"
 
-export type AnalysisPhase = "idle" | "loading" | "success" | "partial" | "error"
+export type AnalysisPhase =
+  | "idle"
+  | "loading"
+  | "success"
+  | "partial"
+  | "no_competitors"
+  | "not_catalog"
+  | "error"
 
 export function useProductAnalysis(itemId: string | null) {
   const [phase, setPhase] = useState<AnalysisPhase>("idle")
@@ -25,13 +32,8 @@ export function useProductAnalysis(itemId: string | null) {
         return
       }
       const analysis = json.data as FullAnalysis
-      if (analysis.competitors.competitors.length === 0 && analysis.catalog) {
-        setData(analysis)
-        setPhase("partial")
-      } else {
-        setData(analysis)
-        setPhase("success")
-      }
+      setData(analysis)
+      setPhase(analysis.analysisStatus)
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : String(e))
       setPhase("error")

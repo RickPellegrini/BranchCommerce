@@ -4,6 +4,10 @@ import type {
   MlProduct,
   CatalogCompetitor,
   CompetitorEntry,
+  AnalysisDataSource,
+  AnalysisDataSourceKey,
+  AnalysisDataSourceStatus,
+  AnalysisStatus,
 } from "@/features/product-analysis/domain/types"
 import { createAnalysisLogger } from "@/features/product-analysis/infra/logger"
 import {
@@ -35,6 +39,147 @@ type ResolveResult =
       item: MlItemFull
     }
 
+type RecordSource = (
+  key: AnalysisDataSourceKey,
+  status: AnalysisDataSourceStatus,
+  patch?: Partial<Omit<AnalysisDataSource, "key" | "label" | "kind" | "status">>,
+) => void
+
+const SOURCE_DEFS: Record<
+  AnalysisDataSourceKey,
+  Pick<AnalysisDataSource, "key" | "label" | "kind" | "status" | "used">
+> = {
+  catalog_product_items: {
+    key: "catalog_product_items",
+    label: "Concorrentes do catalogo",
+    kind: "mercadolivre_api",
+    status: "skipped",
+    used: false,
+  },
+  catalog_product: {
+    key: "catalog_product",
+    label: "Produto de catalogo",
+    kind: "mercadolivre_api",
+    status: "skipped",
+    used: false,
+  },
+  item: {
+    key: "item",
+    label: "Anuncio principal",
+    kind: "mercadolivre_api",
+    status: "skipped",
+    used: false,
+  },
+  competitor_sellers: {
+    key: "competitor_sellers",
+    label: "Dados dos vendedores",
+    kind: "mercadolivre_api",
+    status: "skipped",
+    used: false,
+  },
+  competitor_visits: {
+    key: "competitor_visits",
+    label: "Visitas dos concorrentes",
+    kind: "mercadolivre_api",
+    status: "skipped",
+    used: false,
+  },
+  price_to_win: {
+    key: "price_to_win",
+    label: "Price to Win / Buy Box",
+    kind: "mercadolivre_api",
+    status: "skipped",
+    used: false,
+  },
+  own_visits_7d: {
+    key: "own_visits_7d",
+    label: "Visitas do anuncio 7d",
+    kind: "mercadolivre_api",
+    status: "skipped",
+    used: false,
+  },
+  own_visits_30d: {
+    key: "own_visits_30d",
+    label: "Visitas do anuncio 30d",
+    kind: "mercadolivre_api",
+    status: "skipped",
+    used: false,
+  },
+  server_scrape: {
+    key: "server_scrape",
+    label: "Estoque via pagina publica",
+    kind: "scraping",
+    status: "skipped",
+    used: false,
+  },
+  extension_scrape: {
+    key: "extension_scrape",
+    label: "Estoque via extensao",
+    kind: "extension",
+    status: "skipped",
+    used: false,
+  },
+  computed_summary: {
+    key: "computed_summary",
+    label: "Resumo calculado",
+    kind: "computed",
+    status: "skipped",
+    used: false,
+  },
+}
+
+const SOURCE_ORDER = Object.keys(SOURCE_DEFS) as AnalysisDataSourceKey[]
+
+function createDataSourceRecorder() {
+  const sources = new Map<AnalysisDataSourceKey, AnalysisDataSource>()
+  const record: RecordSource = (key, status, patch = {}) => {
+    const previous = sources.get(key)
+    sources.set(key, {
+      ...SOURCE_DEFS[key],
+      ...previous,
+      ...patch,
+      status,
+    })
+  }
+  const list = () => SOURCE_ORDER.map((key) => sources.get(key) ?? SOURCE_DEFS[key])
+  return { record, list }
+}
+
+function sourceError(err: unknown): string {
+  if (err instanceof MlUpstreamError) {
+    return `ML ${err.mlStatus}: ${err.bodyText.slice(0, 180)}`
+  }
+  return err instanceof Error ? err.message : String(err)
+}
+
+function itemPermalinkFromId(itemId: string): string {
+  const normalizedId = itemId.replace(/^(MLB)(\d+)$/i, "$1-$2")
+  return `https://produto.mercadolivre.com.br/${normalizedId}`
+}
+
+function deriveAnalysisStatus(params: {
+  catalogProductId: string | null
+  competitorsCount: number
+  sources: AnalysisDataSource[]
+}): AnalysisStatus {
+  if (!params.catalogProductId) return "not_catalog"
+  if (params.competitorsCount === 0) return "no_competitors"
+
+  const relevantKeys = new Set<AnalysisDataSourceKey>([
+    "competitor_sellers",
+    "competitor_visits",
+    "price_to_win",
+    "own_visits_7d",
+    "own_visits_30d",
+    "server_scrape",
+  ])
+  const hasPartialSource = params.sources.some(
+    (source) =>
+      relevantKeys.has(source.key) && source.status !== "success" && source.status !== "skipped",
+  )
+  return hasPartialSource ? "partial" : "success"
+}
+
 // ─── Synthesize MlItemFull from product + first listing ─────────────
 // Used when /items/{id} is blocked (third-party items).
 // Combines /products/{id} metadata with /products/{id}/items first listing.
@@ -52,11 +197,11 @@ function synthesizeItem(product: MlProduct, firstListing: CatalogCompetitor): Ml
     price: firstListing.price,
     original_price: firstListing.original_price ?? null,
     currency_id: firstListing.currency_id ?? "BRL",
-    available_quantity: 0,
-    sold_quantity: 0,
+    available_quantity: null,
+    sold_quantity: null,
     listing_type_id: firstListing.listing_type_id ?? "gold_special",
     condition: firstListing.condition ?? "new",
-    permalink: `https://www.mercadolivre.com.br/p/${product.id}`,
+    permalink: product.permalink ?? `https://www.mercadolivre.com.br/p/${product.id}`,
     thumbnail: thumbnailUrl,
     pictures: (product.pictures ?? []).map((p) => ({
       id: p.id,
@@ -96,15 +241,30 @@ async function resolveId(
   rawId: string,
   token: string,
   logger: ReturnType<typeof createAnalysisLogger>,
+  recordSource: RecordSource,
 ): Promise<ResolveResult> {
   // Strategy A — catalog-first: /products/{rawId}/items + /products/{rawId}
   logger.log("resolve:A", `GET /products/${rawId}/items (with token)`)
+  const catalogT0 = Date.now()
   try {
     const [itemsRes, product] = await Promise.all([
       getProductItems(rawId, token),
       getProduct(rawId, token),
     ])
     const listings = itemsRes.results ?? []
+    recordSource("catalog_product_items", listings.length > 0 ? "success" : "unavailable", {
+      endpoint: `/products/${rawId}/items`,
+      count: listings.length,
+      used: listings.length > 0,
+      durationMs: Date.now() - catalogT0,
+      detail: listings.length > 0 ? "Catalogo resolvido com anuncios." : "Catalogo sem anuncios.",
+    })
+    recordSource("catalog_product", "success", {
+      endpoint: `/products/${rawId}`,
+      used: listings.length > 0,
+      durationMs: Date.now() - catalogT0,
+      detail: product.name,
+    })
 
     if (listings.length > 0) {
       logger.log("resolve:A", `✓ CATALOG_RESOLVED — "${product.name}", ${listings.length} listings`)
@@ -117,6 +277,18 @@ async function resolveId(
     }
     logger.log("resolve:A", `✗ 0 listings — not a valid catalog`)
   } catch (err: unknown) {
+    recordSource("catalog_product_items", "failed", {
+      endpoint: `/products/${rawId}/items`,
+      used: false,
+      durationMs: Date.now() - catalogT0,
+      error: sourceError(err),
+    })
+    recordSource("catalog_product", "failed", {
+      endpoint: `/products/${rawId}`,
+      used: false,
+      durationMs: Date.now() - catalogT0,
+      error: sourceError(err),
+    })
     if (err instanceof MlUpstreamError) {
       logger.log("resolve:A", `✗ ML ${err.mlStatus} — not a catalog_product_id`)
     } else {
@@ -126,14 +298,27 @@ async function resolveId(
 
   // Strategy B — item fallback: /items/{rawId} (works for user's own items)
   logger.log("resolve:B", `GET /items/${rawId} (with token)`)
+  const itemT0 = Date.now()
   try {
     const item = await getItem(rawId, token)
+    recordSource("item", "success", {
+      endpoint: `/items/${rawId}`,
+      used: true,
+      durationMs: Date.now() - itemT0,
+      detail: item.title,
+    })
     logger.log(
       "resolve:B",
       `✓ ITEM_RESOLVED — "${item.title}" (catalog=${item.catalog_product_id ?? "none"})`,
     )
     return { type: "item", item }
   } catch (err: unknown) {
+    recordSource("item", "failed", {
+      endpoint: `/items/${rawId}`,
+      used: false,
+      durationMs: Date.now() - itemT0,
+      error: sourceError(err),
+    })
     if (err instanceof MlUpstreamError) {
       logger.log("resolve:B", `✗ ML ${err.mlStatus}: ${err.bodyText.slice(0, 200)}`)
     } else {
@@ -171,12 +356,13 @@ function catalogListingToCompetitor(c: CatalogCompetitor): CompetitorEntry {
     sellerTotalTransactions: null,
     sellerPermalink: null,
     thumbnail: null,
-    permalink: null,
+    permalink: itemPermalinkFromId(c.item_id),
     visits30d: null,
     visitsShare: null,
     scrapedStock: null,
     scrapedStockIsMinimum: false,
     scrapedStartTime: null,
+    stockSource: null,
   }
 }
 
@@ -184,10 +370,11 @@ function catalogListingToCompetitor(c: CatalogCompetitor): CompetitorEntry {
 
 export async function getProductAnalysis(token: string, receivedId: string): Promise<FullAnalysis> {
   const logger = createAnalysisLogger()
+  const dataSources = createDataSourceRecorder()
   logger.log("start", `receivedId=${receivedId}`)
   const t0 = Date.now()
 
-  const resolved = await resolveId(receivedId, token, logger)
+  const resolved = await resolveId(receivedId, token, logger, dataSources.record)
 
   let item: MlItemFull
   let catalogProductId: string | null
@@ -210,14 +397,40 @@ export async function getProductAnalysis(token: string, receivedId: string): Pro
     // If the item belongs to a catalog, fetch competitors
     if (catalogProductId) {
       logger.log("discover", `Item has catalog_product_id=${catalogProductId}, fetching listings`)
+      const discoverT0 = Date.now()
       try {
         const res = await getProductItems(catalogProductId, token)
         allListings = res.results ?? []
+        dataSources.record(
+          "catalog_product_items",
+          allListings.length > 0 ? "success" : "unavailable",
+          {
+            endpoint: `/products/${catalogProductId}/items`,
+            count: allListings.length,
+            used: allListings.length > 0,
+            durationMs: Date.now() - discoverT0,
+            detail:
+              allListings.length > 0
+                ? "Anuncios do catalogo carregados."
+                : "Catalogo sem anuncios retornados.",
+          },
+        )
         logger.log("discover", `✓ ${allListings.length} listings`)
       } catch (err: unknown) {
         const detail = err instanceof MlUpstreamError ? `ML ${err.mlStatus}` : String(err)
+        dataSources.record("catalog_product_items", "failed", {
+          endpoint: `/products/${catalogProductId}/items`,
+          used: false,
+          durationMs: Date.now() - discoverT0,
+          error: sourceError(err),
+        })
         logger.log("discover", `✗ ${detail} — continuing without competitors`)
       }
+    } else {
+      dataSources.record("catalog_product_items", "skipped", {
+        used: false,
+        detail: "Anuncio sem catalog_product_id.",
+      })
     }
   }
 
@@ -278,6 +491,119 @@ export async function getProductAnalysis(token: string, receivedId: string): Pro
   const visits7 = visits7Result.status === "fulfilled" ? visits7Result.value : null
   const visits30 = visits30Result.status === "fulfilled" ? visits30Result.value : null
 
+  if (uniqueSellerIds.length === 0) {
+    dataSources.record("competitor_sellers", "skipped", {
+      used: false,
+      detail: "Sem concorrentes para enriquecer.",
+    })
+  } else if (sellersResult.status === "fulfilled") {
+    dataSources.record(
+      "competitor_sellers",
+      sellersMap.size === uniqueSellerIds.length
+        ? "success"
+        : sellersMap.size > 0
+          ? "partial"
+          : "unavailable",
+      {
+        endpoint: `/users?ids=...`,
+        count: sellersMap.size,
+        used: sellersMap.size > 0,
+        durationMs: Date.now() - enrichT0,
+        detail: `${sellersMap.size}/${uniqueSellerIds.length} vendedores carregados.`,
+      },
+    )
+  } else {
+    dataSources.record("competitor_sellers", "failed", {
+      endpoint: `/users?ids=...`,
+      used: false,
+      durationMs: Date.now() - enrichT0,
+      error: sourceError(sellersResult.reason),
+    })
+  }
+
+  if (competitorItemIds.length === 0) {
+    dataSources.record("competitor_visits", "skipped", {
+      used: false,
+      detail: "Sem concorrentes para buscar visitas.",
+    })
+  } else if (visitsResult.status === "fulfilled") {
+    dataSources.record(
+      "competitor_visits",
+      visitsMap.size === competitorItemIds.length
+        ? "success"
+        : visitsMap.size > 0
+          ? "partial"
+          : "unavailable",
+      {
+        endpoint: `/items/{id}/visits/time_window`,
+        count: visitsMap.size,
+        used: visitsMap.size > 0,
+        durationMs: Date.now() - enrichT0,
+        detail: `${visitsMap.size}/${competitorItemIds.length} visitas carregadas.`,
+      },
+    )
+  } else {
+    dataSources.record("competitor_visits", "failed", {
+      endpoint: `/items/{id}/visits/time_window`,
+      used: false,
+      durationMs: Date.now() - enrichT0,
+      error: sourceError(visitsResult.reason),
+    })
+  }
+
+  if (ptwResult.status === "fulfilled") {
+    dataSources.record(
+      ptw ? (ptw.winner?.item_id ? "price_to_win" : "price_to_win") : "price_to_win",
+      ptw ? "success" : "unavailable",
+      {
+        endpoint: `/items/${item.id}/price_to_win?version=v2`,
+        used: !!ptw,
+        durationMs: Date.now() - enrichT0,
+        detail: ptw
+          ? ptw.winner?.item_id
+            ? "Buy Box confirmado pela API."
+            : "Price to Win retornou sem vencedor confirmado."
+          : "Price to Win indisponivel.",
+      },
+    )
+  } else {
+    dataSources.record("price_to_win", "failed", {
+      endpoint: `/items/${item.id}/price_to_win?version=v2`,
+      used: false,
+      durationMs: Date.now() - enrichT0,
+      error: sourceError(ptwResult.reason),
+    })
+  }
+
+  dataSources.record(
+    "own_visits_7d",
+    visits7Result.status === "rejected" ? "failed" : visits7 != null ? "success" : "unavailable",
+    {
+      endpoint: `/items/visits`,
+      count: visits7 != null ? 1 : 0,
+      used: visits7 != null,
+      durationMs: Date.now() - enrichT0,
+      detail:
+        visits7 != null ? `${visits7} visitas nos ultimos 7 dias.` : "Visitas 7d indisponiveis.",
+      error: visits7Result.status === "rejected" ? sourceError(visits7Result.reason) : undefined,
+    },
+  )
+  dataSources.record(
+    "own_visits_30d",
+    visits30Result.status === "rejected" ? "failed" : visits30 != null ? "success" : "unavailable",
+    {
+      endpoint: `/items/visits`,
+      count: visits30 != null ? 1 : 0,
+      used: visits30 != null,
+      durationMs: Date.now() - enrichT0,
+      detail:
+        visits30 != null
+          ? `${visits30} visitas nos ultimos 30 dias.`
+          : "Visitas 30d indisponiveis.",
+      error: visits30Result.status === "rejected" ? sourceError(visits30Result.reason) : undefined,
+    },
+  )
+
   const totalVisits = Array.from(visitsMap.values()).reduce((a, b) => a + b, 0)
 
   for (const comp of competitors) {
@@ -304,6 +630,7 @@ export async function getProductAnalysis(token: string, receivedId: string): Pro
       comp.scrapedStock = scraped.availableQuantity
       comp.scrapedStockIsMinimum = scraped.stockIsMinimum
       comp.scrapedStartTime = scraped.startTime
+      comp.stockSource = scraped.availableQuantity != null ? "server_scrape" : null
     }
   }
 
@@ -311,12 +638,43 @@ export async function getProductAnalysis(token: string, receivedId: string): Pro
     (r) => r.availableQuantity != null,
   ).length
   const catalogMs = Date.now() - enrichT0
+  if (competitorItemIds.length === 0) {
+    dataSources.record("server_scrape", "skipped", {
+      used: false,
+      detail: "Sem concorrentes para buscar estoque.",
+    })
+  } else {
+    dataSources.record(
+      "server_scrape",
+      scrapeHits === competitorItemIds.length
+        ? "success"
+        : scrapeHits > 0
+          ? "partial"
+          : "unavailable",
+      {
+        endpoint: "produto.mercadolivre.com.br/{itemId}",
+        count: scrapeHits,
+        used: scrapeHits > 0,
+        durationMs: catalogMs,
+        detail: `Estoque encontrado em ${scrapeHits}/${competitorItemIds.length} anuncios.`,
+      },
+    )
+  }
   logger.log(
     "enrich",
     `✓ ${sellersMap.size} sellers, ${visitsMap.size} visits (total=${totalVisits}), stock=${scrapeHits}/${competitorItemIds.length}, ptw=${ptw?.status ?? "N/A"}, visits7d=${visits7}, visits30d=${visits30} in ${catalogMs}ms`,
   )
 
   const summary = aggregateCompetitors(competitors, item.price)
+  dataSources.record("computed_summary", "success", {
+    used: true,
+    count: competitors.length,
+    detail: "Resumo de concorrencia calculado internamente.",
+  })
+  dataSources.record("extension_scrape", "skipped", {
+    used: false,
+    detail: "Executado no navegador quando a extensao Branch Hunter esta instalada.",
+  })
   logger.log(
     "compute",
     `min=${summary.minPrice}, max=${summary.maxPrice}, avg=${summary.avgPrice}, ` +
@@ -326,6 +684,12 @@ export async function getProductAnalysis(token: string, receivedId: string): Pro
 
   const catalog = buildCatalogSection(item, visits7, visits30, ptw)
   const totalMs = Date.now() - t0
+  const sources = dataSources.list()
+  const analysisStatus = deriveAnalysisStatus({
+    catalogProductId,
+    competitorsCount: competitors.length,
+    sources,
+  })
 
   logger.log(
     "done",
@@ -334,6 +698,10 @@ export async function getProductAnalysis(token: string, receivedId: string): Pro
   )
 
   return {
+    receivedId,
+    resolvedInputType: resolved.type,
+    primaryItemSource: resolved.type === "catalog_product" ? "synthetic_catalog_item" : "real_item",
+    analysisStatus,
     catalog,
     competitors: {
       strategy: "catalog_product_items",
@@ -341,8 +709,9 @@ export async function getProductAnalysis(token: string, receivedId: string): Pro
       totalAfterFilters: competitors.length,
       competitors,
       summary,
-      buyBoxWinnerItemId: ptw?.winner?.item_id ?? allListings[0]?.item_id ?? null,
+      buyBoxWinnerItemId: ptw?.winner?.item_id ?? null,
     },
+    dataSources: sources,
     logs: logger.entries,
     fetchedAt: new Date().toISOString(),
     timings: {

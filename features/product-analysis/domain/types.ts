@@ -26,8 +26,8 @@ export type MlItemFull = {
   price: number
   original_price?: number | null
   currency_id?: string
-  available_quantity: number
-  sold_quantity: number
+  available_quantity: number | null
+  sold_quantity: number | null
   listing_type_id: string
   condition: string
   permalink: string
@@ -213,8 +213,8 @@ export type CatalogSection = {
     domainId: string | null
     price: number
     originalPrice: number | null
-    stock: number
-    sold: number
+    stock: number | null
+    sold: number | null
     listingType: string
     condition: string
     permalink: string
@@ -262,6 +262,7 @@ export type CompetitorEntry = {
   scrapedStock: number | null
   scrapedStockIsMinimum: boolean
   scrapedStartTime: string | null
+  stockSource: "server_scrape" | "extension" | null
 }
 
 export type CompetitorSummary = {
@@ -280,6 +281,42 @@ export type CompetitorSummary = {
 
 export type DiscoveryStrategy = "catalog_product_items"
 
+export type AnalysisStatus = "success" | "partial" | "no_competitors" | "not_catalog"
+
+export type ResolvedInputType = "catalog_product" | "item"
+
+export type PrimaryItemSource = "real_item" | "synthetic_catalog_item"
+
+export type AnalysisDataSourceKey =
+  | "catalog_product_items"
+  | "catalog_product"
+  | "item"
+  | "competitor_sellers"
+  | "competitor_visits"
+  | "price_to_win"
+  | "own_visits_7d"
+  | "own_visits_30d"
+  | "server_scrape"
+  | "extension_scrape"
+  | "computed_summary"
+
+export type AnalysisDataSourceKind = "mercadolivre_api" | "scraping" | "extension" | "computed"
+
+export type AnalysisDataSourceStatus = "success" | "partial" | "failed" | "skipped" | "unavailable"
+
+export type AnalysisDataSource = {
+  key: AnalysisDataSourceKey
+  label: string
+  kind: AnalysisDataSourceKind
+  status: AnalysisDataSourceStatus
+  used: boolean
+  endpoint?: string
+  count?: number
+  detail?: string
+  error?: string
+  durationMs?: number
+}
+
 export type CompetitorSection = {
   strategy: DiscoveryStrategy
   totalCandidatesRaw: number
@@ -292,8 +329,13 @@ export type CompetitorSection = {
 export type LogEntry = { step: string; detail: string; count?: number; ms?: number }
 
 export type FullAnalysis = {
+  receivedId: string
+  resolvedInputType: ResolvedInputType
+  primaryItemSource: PrimaryItemSource
+  analysisStatus: AnalysisStatus
   catalog: CatalogSection
   competitors: CompetitorSection
+  dataSources: AnalysisDataSource[]
   logs: LogEntry[]
   fetchedAt: string
   timings: { totalMs: number; catalogMs: number; competitorsMs: number }

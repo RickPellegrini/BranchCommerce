@@ -325,4 +325,35 @@ export default defineSchema({
   })
     .index("by_app_user", ["appUserId"])
     .index("by_app_user_provider", ["appUserId", "provider"]),
+
+  productAnalysisSnapshots: defineTable({
+    userId: v.string(),
+    receivedId: v.string(),
+    itemId: v.string(),
+    title: v.string(),
+    catalogProductId: v.optional(v.string()),
+    resolvedInputType: v.union(v.literal("catalog_product"), v.literal("item")),
+    primaryItemSource: v.union(v.literal("real_item"), v.literal("synthetic_catalog_item")),
+    analysisStatus: v.union(
+      v.literal("success"),
+      v.literal("partial"),
+      v.literal("no_competitors"),
+      v.literal("not_catalog"),
+    ),
+    price: v.number(),
+    minPrice: v.optional(v.number()),
+    avgPrice: v.optional(v.number()),
+    buyBoxWinnerItemId: v.optional(v.string()),
+    buyBoxConfirmed: v.boolean(),
+    competitorCount: v.number(),
+    stockFoundCount: v.number(),
+    stockTotalCount: v.number(),
+    totalMs: v.number(),
+    dataSourcesJson: v.optional(v.string()),
+    createdAt: v.number(),
+  })
+    .index("by_user", ["userId"])
+    .index("by_user_created_at", ["userId", "createdAt"])
+    .index("by_user_item", ["userId", "itemId"])
+    .index("by_user_catalog", ["userId", "catalogProductId"]),
 })

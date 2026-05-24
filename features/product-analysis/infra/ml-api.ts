@@ -147,18 +147,11 @@ export async function getPriceToWin(
   token: string,
   itemId: string,
 ): Promise<MlPriceToWinResult | null> {
-  try {
-    return await fetchMlPrivate<MlPriceToWinResult>(
-      `/items/${itemId}/price_to_win?version=v2`,
-      token,
-      `GET /items/${itemId}/price_to_win`,
-    )
-  } catch (err) {
-    if (err instanceof MlUpstreamError) {
-      console.log(`[ml-private] ⚠ price_to_win skipped (${err.mlStatus})`)
-    }
-    return null
-  }
+  return await fetchMlPrivate<MlPriceToWinResult>(
+    `/items/${itemId}/price_to_win?version=v2`,
+    token,
+    `GET /items/${itemId}/price_to_win`,
+  )
 }
 
 function chunk<T>(arr: T[], size: number): T[][] {
