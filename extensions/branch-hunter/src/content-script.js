@@ -4,6 +4,8 @@
   const DEBUG = false
   const LISTING_TYPE_FEES = { premium: 16, gold_special: 12 }
   const BADGE_ATTR = "data-bh-processed"
+  const PUBLIC_STOCK_RETRY_TIMEOUT_MS = 12000
+  const PUBLIC_STOCK_RETRY_INTERVAL_MS = 500
 
   const state = {
     listingId: "",
@@ -124,6 +126,8 @@
     const selectors = [
       ".ui-pdp-buybox__quantity__available",
       "#buybox_available_quantity .ui-pdp-buybox__quantity__available",
+      "#buybox_available_quantity [aria-label]",
+      ".ui-pdp-buybox__quantity__trigger",
       "[class*='quantity__available']",
     ]
 
@@ -150,7 +154,12 @@
       .split("\n")
       .map((line) => line.trim())
       .filter(Boolean)
-    const stockLine = lines.find((line) => /dispon[ií]ve/i.test(line) || /\+\s*\d+/.test(line))
+    const stockLine = lines.find(
+      (line) =>
+        /\+\s*\d+/.test(line) ||
+        /[uú]ltimo/i.test(line) ||
+        /(\d+)\s+(?:unidade|unidades|disponível|disponiveis|disponíveis)/i.test(line),
+    )
     const parsed = parsePublicStockText(stockLine)
     if (parsed) {
       return {
@@ -172,9 +181,22 @@
     }
   }
 
+  async function collectPublicStockWithRetry(expectedItemId) {
+    const deadline = Date.now() + PUBLIC_STOCK_RETRY_TIMEOUT_MS
+    let lastResult = collectPublicStockFromPage(expectedItemId)
+
+    while (Date.now() < deadline) {
+      if (lastResult.ok || lastResult.status === "blocked") return lastResult
+      await new Promise((resolve) => setTimeout(resolve, PUBLIC_STOCK_RETRY_INTERVAL_MS))
+      lastResult = collectPublicStockFromPage(expectedItemId)
+    }
+
+    return lastResult
+  }
+
   chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     if (message?.type !== "BRANCH_HUNTER_COLLECT_PUBLIC_STOCK") return
-    sendResponse(collectPublicStockFromPage(String(message.itemId || state.listingId || "")))
+    collectPublicStockWithRetry(String(message.itemId || state.listingId || "")).then(sendResponse)
     return true
   })
 

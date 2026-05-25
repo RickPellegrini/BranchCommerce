@@ -1,5 +1,5 @@
 const STOCK_SCAN_TIMEOUT_MS = 25000
-const STOCK_SCAN_SETTLE_MS = 1200
+const STOCK_SCAN_SETTLE_MS = 2500
 
 function waitForTabComplete(tabId) {
   return new Promise((resolve) => {
