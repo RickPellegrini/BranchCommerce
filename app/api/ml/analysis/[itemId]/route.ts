@@ -19,7 +19,7 @@ function getConvexClient() {
 async function saveAnalysisSnapshot(appUserId: string, analysis: FullAnalysis) {
   const client = getConvexClient()
   const stockFoundCount = analysis.competitors.competitors.filter(
-    (competitor) => competitor.scrapedStock != null,
+    (competitor) => competitor.referenceStock != null,
   ).length
   const stockTotalCount = analysis.competitors.competitors.length
   const summary = analysis.competitors.summary

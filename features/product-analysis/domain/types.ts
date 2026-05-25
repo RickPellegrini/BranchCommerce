@@ -121,6 +121,22 @@ export type MlSellerBatchEntry = {
   body: MlSeller
 }
 
+export type MlItemBatchBody = {
+  id: string
+  title?: string
+  available_quantity?: number | null
+  sold_quantity?: number | null
+  status?: string
+  seller_id?: number
+  catalog_product_id?: string | null
+  permalink?: string
+}
+
+export type MlItemBatchEntry = {
+  code: number
+  body?: MlItemBatchBody
+}
+
 export type MlProduct = {
   id: string
   catalog_product_id?: string
@@ -259,10 +275,9 @@ export type CompetitorEntry = {
   permalink: string | null
   visits30d: number | null
   visitsShare: number | null
-  scrapedStock: number | null
-  scrapedStockIsMinimum: boolean
-  scrapedStartTime: string | null
-  stockSource: "server_scrape" | "extension" | null
+  referenceStock: number | null
+  referenceStockLabel: string | null
+  referenceStockSource: "ml_api" | null
 }
 
 export type CompetitorSummary = {
@@ -296,11 +311,10 @@ export type AnalysisDataSourceKey =
   | "price_to_win"
   | "own_visits_7d"
   | "own_visits_30d"
-  | "server_scrape"
-  | "extension_scrape"
+  | "reference_stock"
   | "computed_summary"
 
-export type AnalysisDataSourceKind = "mercadolivre_api" | "scraping" | "extension" | "computed"
+export type AnalysisDataSourceKind = "mercadolivre_api" | "computed"
 
 export type AnalysisDataSourceStatus = "success" | "partial" | "failed" | "skipped" | "unavailable"
 

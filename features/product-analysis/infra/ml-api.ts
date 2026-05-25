@@ -4,6 +4,7 @@ import type {
   MlProduct,
   MlSeller,
   MlSellerBatchEntry,
+  MlItemBatchEntry,
   MlPriceToWinResult,
   MlVisitsEntry,
   CatalogProductItemsResponse,
@@ -137,6 +138,40 @@ export async function getSellersBatch(
       }
     }
   }
+  return map
+}
+
+export async function getItemsReferenceStockBatch(
+  token: string,
+  itemIds: string[],
+): Promise<Map<string, { availableQuantity: number | null; soldQuantity: number | null }>> {
+  const map = new Map<string, { availableQuantity: number | null; soldQuantity: number | null }>()
+  if (itemIds.length === 0) return map
+
+  const attributes = "id,available_quantity,sold_quantity"
+  const settled = await Promise.allSettled(
+    chunk(itemIds, 20).map((batch) => {
+      const ids = batch.join(",")
+      return fetchMl<MlItemBatchEntry[]>(
+        `/items?ids=${ids}&attributes=${attributes}`,
+        `GET /items?ids= stock (batch=${batch.length})`,
+        token,
+      )
+    }),
+  )
+
+  for (const result of settled) {
+    if (result.status !== "fulfilled") continue
+    for (const entry of result.value) {
+      const id = entry.body?.id
+      if (entry.code !== 200 || !id) continue
+      map.set(id, {
+        availableQuantity: entry.body?.available_quantity ?? null,
+        soldQuantity: entry.body?.sold_quantity ?? null,
+      })
+    }
+  }
+
   return map
 }
 

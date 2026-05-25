@@ -97,12 +97,10 @@ export function CompetitorTable({
   competitors,
   myPrice,
   winnerItemId,
-  scraping = false,
 }: {
   competitors: CompetitorEntry[]
   myPrice: number
   winnerItemId: string | null
-  scraping?: boolean
 }) {
   if (competitors.length === 0) return null
 
@@ -224,28 +222,21 @@ export function CompetitorTable({
 
                   {/* ── Estoque ── */}
                   <td className="px-4 py-3 text-right">
-                    {c.scrapedStock != null ? (
+                    {c.referenceStockLabel ? (
                       <>
                         <p
                           className={`font-semibold text-xs tabular-nums ${
-                            !c.scrapedStockIsMinimum && c.scrapedStock <= 3
+                            c.referenceStock != null && c.referenceStock <= 1
                               ? "text-rose-600"
-                              : !c.scrapedStockIsMinimum && c.scrapedStock <= 10
+                              : c.referenceStock != null && c.referenceStock <= 50
                                 ? "text-amber-600"
                                 : "text-foreground"
                           }`}
                         >
-                          {c.scrapedStockIsMinimum ? "≥" : ""}
-                          {c.scrapedStock}
+                          {c.referenceStockLabel}
                         </p>
-                        {c.stockSource && (
-                          <p className="text-[10px] text-muted-foreground">
-                            {c.stockSource === "extension" ? "Extensao" : "Pagina"}
-                          </p>
-                        )}
+                        <p className="text-[10px] text-muted-foreground">Ref. API</p>
                       </>
-                    ) : scraping ? (
-                      <div className="h-4 w-8 animate-pulse rounded bg-muted ml-auto" />
                     ) : (
                       <span className="text-xs text-muted-foreground">-</span>
                     )}

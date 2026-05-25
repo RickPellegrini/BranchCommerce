@@ -18,8 +18,6 @@ const statusLabel: Record<AnalysisDataSource["status"], string> = {
 
 const kindLabel: Record<AnalysisDataSource["kind"], string> = {
   mercadolivre_api: "API ML",
-  scraping: "Scraping",
-  extension: "Extensao",
   computed: "Calculado",
 }
 

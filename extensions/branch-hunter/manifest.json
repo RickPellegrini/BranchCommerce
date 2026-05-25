@@ -33,18 +33,6 @@
         "src/content-script.js"
       ],
       "run_at": "document_idle"
-    },
-    {
-      "matches": [
-        "*://branchcommercehub.com/*",
-        "*://*.vercel.app/*",
-        "http://localhost:3000/*",
-        "https://localhost:3000/*",
-        "http://127.0.0.1:3000/*",
-        "https://127.0.0.1:3000/*"
-      ],
-      "js": ["src/bridge.js"],
-      "run_at": "document_idle"
     }
   ]
 }

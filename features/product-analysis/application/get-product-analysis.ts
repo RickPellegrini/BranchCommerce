@@ -15,12 +15,12 @@ import {
   getProduct,
   getProductItems,
   getSellersBatch,
+  getItemsReferenceStockBatch,
   getCompetitorVisits,
   getPriceToWin,
   getVisitsBatch,
   MlUpstreamError,
 } from "@/features/product-analysis/infra/ml-api"
-import { scrapeCompetitorPages } from "@/features/product-analysis/infra/scrape-item-page"
 import { dateRange } from "@/features/product-analysis/utils/dates"
 import { buildCatalogSection } from "@/features/product-analysis/application/build-catalog-section"
 import { aggregateCompetitors } from "@/features/product-analysis/application/aggregate-competitors"
@@ -105,17 +105,10 @@ const SOURCE_DEFS: Record<
     status: "skipped",
     used: false,
   },
-  server_scrape: {
-    key: "server_scrape",
-    label: "Estoque via pagina publica",
-    kind: "scraping",
-    status: "skipped",
-    used: false,
-  },
-  extension_scrape: {
-    key: "extension_scrape",
-    label: "Estoque via extensao",
-    kind: "extension",
+  reference_stock: {
+    key: "reference_stock",
+    label: "Estoque referencial API",
+    kind: "mercadolivre_api",
     status: "skipped",
     used: false,
   },
@@ -171,7 +164,7 @@ function deriveAnalysisStatus(params: {
     "price_to_win",
     "own_visits_7d",
     "own_visits_30d",
-    "server_scrape",
+    "reference_stock",
   ])
   const hasPartialSource = params.sources.some(
     (source) =>
@@ -359,11 +352,24 @@ function catalogListingToCompetitor(c: CatalogCompetitor): CompetitorEntry {
     permalink: itemPermalinkFromId(c.item_id),
     visits30d: null,
     visitsShare: null,
-    scrapedStock: null,
-    scrapedStockIsMinimum: false,
-    scrapedStartTime: null,
-    stockSource: null,
+    referenceStock: null,
+    referenceStockLabel: null,
+    referenceStockSource: null,
   }
+}
+
+function referenceStockLabel(value: number | null): string | null {
+  if (value == null) return null
+  if (value === 1) return "1-50"
+  if (value === 50) return "51-100"
+  if (value === 100) return "101-150"
+  if (value === 150) return "151-200"
+  if (value === 200) return "201-250"
+  if (value === 250) return "251-500"
+  if (value === 500) return "501-5000"
+  if (value === 5000) return "5001-50000"
+  if (value === 50000) return "50001-99999"
+  return String(value)
 }
 
 // ─── Main orchestration ─────────────────────────────────────────────
@@ -441,31 +447,22 @@ export async function getProductAnalysis(token: string, receivedId: string): Pro
 
   logger.log("competitors", `total=${allListings.length}, afterExcludingSelf=${competitors.length}`)
 
-  // Enrich everything in a single parallel wave:
-  // competitors (sellers + visits + stock) + own item (price_to_win + visits)
+  // Enrich everything in a single parallel wave using ML API only.
   const uniqueSellerIds = [...new Set(competitors.map((c) => c.sellerId))]
   const competitorItemIds = competitors.map((c) => c.itemId)
   const range7 = dateRange(7)
   const range30 = dateRange(30)
   logger.log(
     "enrich",
-    `Fetching ${uniqueSellerIds.length} sellers + ${competitorItemIds.length} visits + stock + ptw + own visits`,
+    `Fetching ${uniqueSellerIds.length} sellers + ${competitorItemIds.length} visits + reference stock + ptw + own visits`,
   )
   const enrichT0 = Date.now()
 
-  // Shared map: scraping writes results here as each page completes.
-  // This lets us snapshot partial results after a grace period.
-  const scrapeMap = new Map<
-    string,
-    import("@/features/product-analysis/infra/scrape-item-page").ScrapedItemResult
-  >()
-  const scrapePromise = scrapeCompetitorPages(competitorItemIds, scrapeMap)
-
-  // Fast API calls run in parallel with the scraping above.
-  const [sellersResult, visitsResult, ptwResult, visits7Result, visits30Result] =
+  const [sellersResult, visitsResult, stockResult, ptwResult, visits7Result, visits30Result] =
     await Promise.allSettled([
       getSellersBatch(token, uniqueSellerIds),
       getCompetitorVisits(token, competitorItemIds),
+      getItemsReferenceStockBatch(token, competitorItemIds),
       getPriceToWin(token, item.id),
       getVisitsBatch(token, [item.id], range7.from, range7.to).then((m) => m.get(item.id) ?? null),
       getVisitsBatch(token, [item.id], range30.from, range30.to).then(
@@ -473,20 +470,16 @@ export async function getProductAnalysis(token: string, receivedId: string): Pro
       ),
     ])
 
-  // Give scraping a short grace period after the fast calls finish.
-  // scrapeMap already has partial results; wait up to 2s more for stragglers.
-  const SCRAPE_GRACE_MS = 2_000
-  await Promise.race([
-    scrapePromise,
-    new Promise<void>((resolve) => setTimeout(resolve, SCRAPE_GRACE_MS)),
-  ])
-
   const sellersMap =
     sellersResult.status === "fulfilled"
       ? sellersResult.value
       : new Map<number, import("@/features/product-analysis/domain/types").MlSeller>()
   const visitsMap =
     visitsResult.status === "fulfilled" ? visitsResult.value : new Map<string, number>()
+  const referenceStockMap =
+    stockResult.status === "fulfilled"
+      ? stockResult.value
+      : new Map<string, { availableQuantity: number | null; soldQuantity: number | null }>()
   const ptw = ptwResult.status === "fulfilled" ? ptwResult.value : null
   const visits7 = visits7Result.status === "fulfilled" ? visits7Result.value : null
   const visits30 = visits30Result.status === "fulfilled" ? visits30Result.value : null
@@ -625,44 +618,50 @@ export async function getProductAnalysis(token: string, receivedId: string): Pro
       comp.visits30d = v
       comp.visitsShare = totalVisits > 0 ? (v / totalVisits) * 100 : 0
     }
-    const scraped = scrapeMap.get(comp.itemId)
-    if (scraped) {
-      comp.scrapedStock = scraped.availableQuantity
-      comp.scrapedStockIsMinimum = scraped.stockIsMinimum
-      comp.scrapedStartTime = scraped.startTime
-      comp.stockSource = scraped.availableQuantity != null ? "server_scrape" : null
+    const referenceStock = referenceStockMap.get(comp.itemId)
+    if (referenceStock) {
+      comp.referenceStock = referenceStock.availableQuantity
+      comp.referenceStockLabel = referenceStockLabel(referenceStock.availableQuantity)
+      comp.referenceStockSource = referenceStock.availableQuantity != null ? "ml_api" : null
     }
   }
 
-  const scrapeHits = Array.from(scrapeMap.values()).filter(
+  const stockHits = Array.from(referenceStockMap.values()).filter(
     (r) => r.availableQuantity != null,
   ).length
   const catalogMs = Date.now() - enrichT0
   if (competitorItemIds.length === 0) {
-    dataSources.record("server_scrape", "skipped", {
+    dataSources.record("reference_stock", "skipped", {
       used: false,
       detail: "Sem concorrentes para buscar estoque.",
     })
+  } else if (stockResult.status === "rejected") {
+    dataSources.record("reference_stock", "failed", {
+      endpoint: `/items?ids=...&attributes=id,available_quantity,sold_quantity`,
+      used: false,
+      durationMs: catalogMs,
+      error: sourceError(stockResult.reason),
+    })
   } else {
     dataSources.record(
-      "server_scrape",
-      scrapeHits === competitorItemIds.length
+      "reference_stock",
+      stockHits === competitorItemIds.length
         ? "success"
-        : scrapeHits > 0
+        : stockHits > 0
           ? "partial"
           : "unavailable",
       {
-        endpoint: "produto.mercadolivre.com.br/{itemId}",
-        count: scrapeHits,
-        used: scrapeHits > 0,
+        endpoint: `/items?ids=...&attributes=id,available_quantity,sold_quantity`,
+        count: stockHits,
+        used: stockHits > 0,
         durationMs: catalogMs,
-        detail: `Estoque encontrado em ${scrapeHits}/${competitorItemIds.length} anuncios.`,
+        detail: `Estoque referencial encontrado em ${stockHits}/${competitorItemIds.length} anuncios.`,
       },
     )
   }
   logger.log(
     "enrich",
-    `✓ ${sellersMap.size} sellers, ${visitsMap.size} visits (total=${totalVisits}), stock=${scrapeHits}/${competitorItemIds.length}, ptw=${ptw?.status ?? "N/A"}, visits7d=${visits7}, visits30d=${visits30} in ${catalogMs}ms`,
+    `✓ ${sellersMap.size} sellers, ${visitsMap.size} visits (total=${totalVisits}), referenceStock=${stockHits}/${competitorItemIds.length}, ptw=${ptw?.status ?? "N/A"}, visits7d=${visits7}, visits30d=${visits30} in ${catalogMs}ms`,
   )
 
   const summary = aggregateCompetitors(competitors, item.price)
@@ -670,10 +669,6 @@ export async function getProductAnalysis(token: string, receivedId: string): Pro
     used: true,
     count: competitors.length,
     detail: "Resumo de concorrencia calculado internamente.",
-  })
-  dataSources.record("extension_scrape", "skipped", {
-    used: false,
-    detail: "Executado no navegador quando a extensao Branch Hunter esta instalada.",
   })
   logger.log(
     "compute",

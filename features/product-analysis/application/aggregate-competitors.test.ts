@@ -29,10 +29,9 @@ function comp(overrides: Partial<CompetitorEntry> & { price: number }): Competit
     permalink: null,
     visits30d: null,
     visitsShare: null,
-    scrapedStock: null,
-    scrapedStockIsMinimum: false,
-    scrapedStartTime: null,
-    stockSource: null,
+    referenceStock: null,
+    referenceStockLabel: null,
+    referenceStockSource: null,
     ...overrides,
   }
 }

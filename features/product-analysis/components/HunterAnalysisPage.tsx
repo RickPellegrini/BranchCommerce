@@ -33,8 +33,6 @@ import { CatalogOverview } from "./CatalogOverview"
 import { CompetitorTable } from "./CompetitorTable"
 import { AnalysisDiagnostics } from "./AnalysisDiagnostics"
 import type { CompetitorEntry } from "@/features/product-analysis/domain/types"
-import { useExtensionScraping } from "@/features/product-analysis/hooks/use-extension-scraping"
-import { getScrapedRowForItem } from "@/features/product-analysis/utils/ml-item-id"
 
 function parseMlId(input: string): string | null {
   const trimmed = input.trim()
@@ -298,65 +296,11 @@ function AnalysisResults({
   const [listingFilter, setListingFilter] = useState<"all" | "gold_pro" | "gold_special">("all")
   const [cityFilter, setCityFilter] = useState<string | null>(null)
 
-  const { extensionAvailable, scraping, result: scrapeResult, scrape } = useExtensionScraping()
-
-  useEffect(() => {
-    console.log("[analysis] scrape effect:", {
-      extensionAvailable,
-      competitors: rawCompetitors.length,
-      catalogId: data.catalog.catalogProductId,
-    })
-    if (!extensionAvailable || rawCompetitors.length === 0) return
-    const itemIds = rawCompetitors.map((c) => c.itemId)
-    scrape(itemIds, data.catalog.catalogProductId)
-  }, [extensionAvailable, rawCompetitors, data.catalog.catalogProductId, scrape])
-
-  const competitors = useMemo<CompetitorEntry[]>(() => {
-    if (!scrapeResult) return rawCompetitors
-    return rawCompetitors.map((c) => {
-      const s = getScrapedRowForItem(scrapeResult.stockData, c.itemId)
-      if (!s) return c
-      return {
-        ...c,
-        scrapedStock: s.availableQuantity ?? c.scrapedStock,
-        scrapedStockIsMinimum: s.stockIsMinimum ?? c.scrapedStockIsMinimum,
-        scrapedStartTime: s.startTime ?? c.scrapedStartTime,
-        stockSource: s.availableQuantity != null ? "extension" : c.stockSource,
-      }
-    })
-  }, [rawCompetitors, scrapeResult])
-
-  const effectiveBuyBoxWinner = scrapeResult?.buyBoxWinner ?? data.competitors.buyBoxWinnerItemId
-  const effectiveDataSources = useMemo(() => {
-    return data.dataSources.map((source) => {
-      if (source.key !== "extension_scrape") return source
-      if (scrapeResult) {
-        const stockCount = Object.values(scrapeResult.stockData).filter(
-          (entry) => entry.availableQuantity != null,
-        ).length
-        return {
-          ...source,
-          status: stockCount > 0 ? ("success" as const) : ("unavailable" as const),
-          used: stockCount > 0,
-          count: stockCount,
-          detail: `Estoque encontrado pela extensao em ${stockCount}/${rawCompetitors.length} anuncios.`,
-        }
-      }
-      if (extensionAvailable && rawCompetitors.length > 0) {
-        return {
-          ...source,
-          status: scraping ? ("partial" as const) : ("unavailable" as const),
-          used: false,
-          detail: scraping
-            ? "Extensao coletando dados no navegador."
-            : "Extensao detectada, mas ainda sem dados coletados.",
-        }
-      }
-      return source
-    })
-  }, [data.dataSources, extensionAvailable, rawCompetitors.length, scrapeResult, scraping])
+  const competitors = rawCompetitors
+  const effectiveBuyBoxWinner = data.competitors.buyBoxWinnerItemId
+  const effectiveDataSources = data.dataSources
   const priceToWinSource = effectiveDataSources.find((source) => source.key === "price_to_win")
-  const stockSource = effectiveDataSources.find((source) => source.key === "server_scrape")
+  const stockSource = effectiveDataSources.find((source) => source.key === "reference_stock")
 
   const availableCities = useMemo(() => {
     const cities = new Map<string, number>()
@@ -606,7 +550,6 @@ function AnalysisResults({
               competitors={filtered}
               myPrice={item.price}
               winnerItemId={effectiveBuyBoxWinner}
-              scraping={scraping}
             />
           )}
           {stockSource?.detail && (
