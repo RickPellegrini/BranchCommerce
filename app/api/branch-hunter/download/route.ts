@@ -4,9 +4,6 @@ import path from "path"
 import { NextResponse } from "next/server"
 import { zipSync } from "fflate"
 
-import { getCurrentUserEmail } from "@/lib/auth/server"
-import { isAdminEmail } from "@/lib/auth/admin"
-
 async function collectFiles(
   rootDir: string,
   currentDir: string,
@@ -30,14 +27,6 @@ async function collectFiles(
 
 export async function GET() {
   try {
-    const email = await getCurrentUserEmail()
-    if (!isAdminEmail(email)) {
-      return NextResponse.json(
-        { ok: false, error: "Sem permissao para baixar a extensao." },
-        { status: 403 },
-      )
-    }
-
     const extensionRoot = path.join(process.cwd(), "extensions", "branch-hunter")
     const zipFiles: Record<string, Uint8Array> = {}
     await collectFiles(extensionRoot, extensionRoot, zipFiles)
