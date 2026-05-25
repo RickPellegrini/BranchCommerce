@@ -235,7 +235,9 @@ export function CompetitorTable({
                         >
                           {c.referenceStockLabel}
                         </p>
-                        <p className="text-[10px] text-muted-foreground">Ref. API</p>
+                        <p className="text-[10px] text-muted-foreground">
+                          {c.referenceStockSource === "extension_page" ? "Extensao" : "Ref. API"}
+                        </p>
                       </>
                     ) : (
                       <span className="text-xs text-muted-foreground">-</span>

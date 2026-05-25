@@ -73,6 +73,111 @@
     return value && String(value).trim() ? String(value) : "--"
   }
 
+  function parsePublicStockText(text) {
+    const normalized = String(text || "")
+      .replace(/\s+/g, " ")
+      .trim()
+    if (!normalized) return null
+
+    const lower = normalized.toLowerCase()
+    if (lower.includes("último") || lower.includes("ultimo")) {
+      return { stockText: normalized, stockMin: 1 }
+    }
+
+    const plusMatch = normalized.match(/\+\s*(\d+)/)
+    if (plusMatch) {
+      return { stockText: normalized, stockMin: Number(plusMatch[1]) }
+    }
+
+    const unitMatch = normalized.match(
+      /(\d+)\s+(?:unidade|unidades|disponível|disponiveis|disponíveis)/i,
+    )
+    if (unitMatch) {
+      return { stockText: normalized, stockMin: Number(unitMatch[1]) }
+    }
+
+    return { stockText: normalized, stockMin: null }
+  }
+
+  function detectBlockedPage() {
+    const text = document.body?.innerText?.toLowerCase() || ""
+    return (
+      text.includes("captcha") ||
+      text.includes("não foi possível acessar") ||
+      text.includes("nao foi possivel acessar") ||
+      text.includes("verifique que você não é um robô") ||
+      text.includes("verifique que voce nao e um robo")
+    )
+  }
+
+  function collectPublicStockFromPage(expectedItemId) {
+    if (detectBlockedPage()) {
+      return {
+        ok: false,
+        status: "blocked",
+        itemId: expectedItemId,
+        finalUrl: location.href,
+        error: "Bloqueado pelo ML.",
+      }
+    }
+
+    const selectors = [
+      ".ui-pdp-buybox__quantity__available",
+      "#buybox_available_quantity .ui-pdp-buybox__quantity__available",
+      "[class*='quantity__available']",
+    ]
+
+    for (const selector of selectors) {
+      const node = document.querySelector(selector)
+      const parsed = parsePublicStockText(node?.textContent)
+      if (parsed) {
+        return {
+          ok: true,
+          status: "success",
+          itemId: expectedItemId,
+          finalUrl: location.href,
+          source: "extension_page",
+          ...parsed,
+        }
+      }
+    }
+
+    const buybox =
+      document.querySelector("#buybox_available_quantity") ||
+      document.querySelector(".ui-pdp-buybox") ||
+      document.querySelector("[data-testid='buy-box-container']")
+    const lines = (buybox?.innerText || document.body?.innerText || "")
+      .split("\n")
+      .map((line) => line.trim())
+      .filter(Boolean)
+    const stockLine = lines.find((line) => /dispon[ií]ve/i.test(line) || /\+\s*\d+/.test(line))
+    const parsed = parsePublicStockText(stockLine)
+    if (parsed) {
+      return {
+        ok: true,
+        status: "success",
+        itemId: expectedItemId,
+        finalUrl: location.href,
+        source: "extension_page",
+        ...parsed,
+      }
+    }
+
+    return {
+      ok: false,
+      status: "unavailable",
+      itemId: expectedItemId,
+      finalUrl: location.href,
+      error: "Estoque nao encontrado na pagina.",
+    }
+  }
+
+  chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
+    if (message?.type !== "BRANCH_HUNTER_COLLECT_PUBLIC_STOCK") return
+    sendResponse(collectPublicStockFromPage(String(message.itemId || state.listingId || "")))
+    return true
+  })
+
   function buildPanelHTML() {
     return `
       <style>

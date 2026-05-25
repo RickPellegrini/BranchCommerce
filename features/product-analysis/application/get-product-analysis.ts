@@ -150,6 +150,24 @@ function itemPermalinkFromId(itemId: string): string {
   return `https://produto.mercadolivre.com.br/${normalizedId}`
 }
 
+function catalogPermalinkFromId(productId: string): string {
+  return `https://www.mercadolivre.com.br/p/${productId}`
+}
+
+function validMlPermalink(value: string | null | undefined): string | null {
+  if (!value) return null
+  try {
+    const url = new URL(value)
+    const host = url.hostname.replace(/^www\./, "")
+    if (host === "mercadolivre.com.br" || host.endsWith(".mercadolivre.com.br")) {
+      return url.toString()
+    }
+  } catch {
+    return null
+  }
+  return null
+}
+
 function deriveAnalysisStatus(params: {
   catalogProductId: string | null
   competitorsCount: number
@@ -194,7 +212,7 @@ function synthesizeItem(product: MlProduct, firstListing: CatalogCompetitor): Ml
     sold_quantity: null,
     listing_type_id: firstListing.listing_type_id ?? "gold_special",
     condition: firstListing.condition ?? "new",
-    permalink: product.permalink ?? `https://www.mercadolivre.com.br/p/${product.id}`,
+    permalink: validMlPermalink(product.permalink) ?? catalogPermalinkFromId(product.id),
     thumbnail: thumbnailUrl,
     pictures: (product.pictures ?? []).map((p) => ({
       id: p.id,

@@ -277,7 +277,7 @@ export type CompetitorEntry = {
   visitsShare: number | null
   referenceStock: number | null
   referenceStockLabel: string | null
-  referenceStockSource: "ml_api" | null
+  referenceStockSource: "ml_api" | "extension_page" | null
 }
 
 export type CompetitorSummary = {

@@ -19,6 +19,7 @@ import {
   Package,
   MapPin,
   X,
+  Download,
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -42,6 +43,75 @@ function parseMlId(input: string): string | null {
 }
 
 type RecentSearch = { id: string; title: string; timestamp: number }
+
+type ExtensionStockStatus = "idle" | "waiting" | "scanning" | "success" | "unavailable" | "error"
+
+type ExtensionStockResult = {
+  itemId: string
+  ok: boolean
+  status?: string
+  stockText?: string | null
+  stockMin?: number | null
+  error?: string
+}
+
+type ExtensionStockMap = Record<string, ExtensionStockResult>
+
+function requestExtensionStockScan(
+  items: Array<{ itemId: string; url: string }>,
+): Promise<ExtensionStockResult[]> {
+  return new Promise((resolve, reject) => {
+    if (typeof window === "undefined") {
+      reject(new Error("Janela indisponivel."))
+      return
+    }
+
+    const requestId = `stock-${Date.now()}-${Math.random().toString(36).slice(2)}`
+    const timeout = window.setTimeout(() => {
+      window.removeEventListener("message", onMessage)
+      reject(new Error("Extensao Branch Hunter nao respondeu."))
+    }, 90000)
+
+    function onMessage(event: MessageEvent) {
+      if (event.source !== window) return
+      const message = event.data
+      if (
+        !message ||
+        message.source !== "branch-hunter-extension" ||
+        message.type !== "BRANCH_HUNTER_STOCK_SCAN_RESULT" ||
+        message.requestId !== requestId
+      ) {
+        return
+      }
+
+      window.clearTimeout(timeout)
+      window.removeEventListener("message", onMessage)
+      if (!message.response?.ok) {
+        reject(new Error(message.response?.error || "Falha ao coletar estoque via extensao."))
+        return
+      }
+      resolve(Array.isArray(message.response.results) ? message.response.results : [])
+    }
+
+    window.addEventListener("message", onMessage)
+    window.postMessage(
+      {
+        source: "branchcommerce",
+        type: "BRANCH_HUNTER_STOCK_SCAN",
+        requestId,
+        items,
+      },
+      window.location.origin,
+    )
+  })
+}
+
+function stockLabelFromExtension(result: ExtensionStockResult): string | null {
+  const text = result.stockText?.replace(/[()]/g, "").trim()
+  if (text) return text
+  if (typeof result.stockMin === "number") return String(result.stockMin)
+  return null
+}
 
 function StatCard({
   icon,
@@ -158,6 +228,16 @@ export function HunterAnalysisPage() {
               do vendedor e desempenho.
             </p>
           </div>
+          <Button
+            variant="outline"
+            className="shrink-0 gap-2"
+            onClick={() => {
+              window.location.href = "/api/branch-hunter/download"
+            }}
+          >
+            <Download className="size-4" />
+            Baixar extensao
+          </Button>
         </div>
       )}
 
@@ -295,8 +375,73 @@ function AnalysisResults({
   const [logisticFilter, setLogisticFilter] = useState<LogisticFilter>("all")
   const [listingFilter, setListingFilter] = useState<"all" | "gold_pro" | "gold_special">("all")
   const [cityFilter, setCityFilter] = useState<string | null>(null)
+  const [extensionStockStatus, setExtensionStockStatus] = useState<ExtensionStockStatus>("idle")
+  const [extensionStock, setExtensionStock] = useState<ExtensionStockMap>({})
 
-  const competitors = rawCompetitors
+  useEffect(() => {
+    queueMicrotask(() => {
+      setExtensionStock({})
+      setExtensionStockStatus("idle")
+    })
+  }, [data.receivedId])
+
+  useEffect(() => {
+    const pending = rawCompetitors
+      .filter((c) => c.referenceStock == null && c.permalink)
+      .slice(0, 10)
+      .map((c) => ({ itemId: c.itemId, url: c.permalink as string }))
+
+    if (pending.length === 0 || extensionStockStatus !== "idle") return
+
+    let cancelled = false
+    const waitingTimer = window.setTimeout(() => {
+      if (!cancelled) setExtensionStockStatus("waiting")
+    }, 0)
+    window.setTimeout(() => {
+      if (cancelled) return
+      setExtensionStockStatus("scanning")
+      requestExtensionStockScan(pending)
+        .then((results) => {
+          if (cancelled) return
+          const next: ExtensionStockMap = {}
+          for (const result of results) {
+            if (result?.itemId) next[result.itemId] = result
+          }
+          setExtensionStock(next)
+          setExtensionStockStatus(
+            results.some((result) => result.ok && stockLabelFromExtension(result))
+              ? "success"
+              : "unavailable",
+          )
+        })
+        .catch(() => {
+          if (!cancelled) setExtensionStockStatus("error")
+        })
+    }, 400)
+
+    return () => {
+      cancelled = true
+      window.clearTimeout(waitingTimer)
+    }
+  }, [rawCompetitors, extensionStockStatus])
+
+  const competitors = useMemo(
+    () =>
+      rawCompetitors.map((competitor) => {
+        if (competitor.referenceStock != null) return competitor
+        const result = extensionStock[competitor.itemId]
+        if (!result?.ok) return competitor
+        const label = stockLabelFromExtension(result)
+        if (!label) return competitor
+        return {
+          ...competitor,
+          referenceStock: typeof result.stockMin === "number" ? result.stockMin : null,
+          referenceStockLabel: label,
+          referenceStockSource: "extension_page" as const,
+        }
+      }),
+    [rawCompetitors, extensionStock],
+  )
   const effectiveBuyBoxWinner = data.competitors.buyBoxWinnerItemId
   const effectiveDataSources = data.dataSources
   const priceToWinSource = effectiveDataSources.find((source) => source.key === "price_to_win")
@@ -555,6 +700,17 @@ function AnalysisResults({
           {stockSource?.detail && (
             <div className="rounded-lg border bg-muted/30 px-4 py-3 text-xs text-muted-foreground">
               {stockSource.detail}
+            </div>
+          )}
+          {extensionStockStatus !== "idle" && (
+            <div className="rounded-lg border bg-muted/30 px-4 py-3 text-xs text-muted-foreground">
+              {extensionStockStatus === "waiting" || extensionStockStatus === "scanning"
+                ? "Estoque via extensao: atualizando pela pagina publica do Mercado Livre..."
+                : extensionStockStatus === "success"
+                  ? "Estoque via extensao carregado para os anuncios disponiveis."
+                  : extensionStockStatus === "unavailable"
+                    ? "Extensao nao encontrou estoque publico nos anuncios analisados."
+                    : "Extensao Branch Hunter nao respondeu. Instale/atualize a extensao para usar o fallback de estoque."}
             </div>
           )}
           {(phase === "partial" || phase === "no_competitors" || phase === "not_catalog") && (
