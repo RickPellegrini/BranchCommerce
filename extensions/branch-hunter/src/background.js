@@ -1,5 +1,6 @@
 const STOCK_SCAN_TIMEOUT_MS = 25000
 const STOCK_SCAN_SETTLE_MS = 2500
+const STOCK_SCAN_CONCURRENCY = 3
 
 function waitForTabComplete(tabId) {
   return new Promise((resolve) => {
@@ -90,10 +91,20 @@ async function scanStockItem(item) {
 async function scanStockItems(items) {
   const sanitized = items.filter((item) => item && item.itemId && item.url).slice(0, 10)
 
-  const results = []
-  for (const item of sanitized) {
-    results.push(await scanStockItem(item))
+  const results = new Array(sanitized.length)
+  let cursor = 0
+
+  async function worker() {
+    while (cursor < sanitized.length) {
+      const index = cursor
+      cursor += 1
+      results[index] = await scanStockItem(sanitized[index])
+    }
   }
+
+  await Promise.all(
+    Array.from({ length: Math.min(STOCK_SCAN_CONCURRENCY, sanitized.length) }, () => worker()),
+  )
   return results
 }
 

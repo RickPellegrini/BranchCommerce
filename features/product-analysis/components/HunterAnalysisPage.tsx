@@ -70,7 +70,7 @@ function requestExtensionStockScan(
     const timeout = window.setTimeout(() => {
       window.removeEventListener("message", onMessage)
       reject(new Error("Extensao Branch Hunter nao respondeu."))
-    }, 90000)
+    }, 240000)
 
     function onMessage(event: MessageEvent) {
       if (event.source !== window) return
@@ -377,10 +377,12 @@ function AnalysisResults({
   const [cityFilter, setCityFilter] = useState<string | null>(null)
   const [extensionStockStatus, setExtensionStockStatus] = useState<ExtensionStockStatus>("idle")
   const [extensionStock, setExtensionStock] = useState<ExtensionStockMap>({})
+  const [extensionStockError, setExtensionStockError] = useState<string | null>(null)
 
   useEffect(() => {
     queueMicrotask(() => {
       setExtensionStock({})
+      setExtensionStockError(null)
       setExtensionStockStatus("idle")
     })
   }, [data.receivedId])
@@ -408,14 +410,23 @@ function AnalysisResults({
             if (result?.itemId) next[result.itemId] = result
           }
           setExtensionStock(next)
+          setExtensionStockError(
+            results
+              .filter((result) => !result.ok)
+              .map((result) => result.error || result.status || "sem detalhe")
+              .find(Boolean) ?? null,
+          )
           setExtensionStockStatus(
             results.some((result) => result.ok && stockLabelFromExtension(result))
               ? "success"
               : "unavailable",
           )
         })
-        .catch(() => {
-          if (!cancelled) setExtensionStockStatus("error")
+        .catch((error) => {
+          if (!cancelled) {
+            setExtensionStockError(error instanceof Error ? error.message : String(error))
+            setExtensionStockStatus("error")
+          }
         })
     }, 400)
 
@@ -695,6 +706,9 @@ function AnalysisResults({
               competitors={filtered}
               myPrice={item.price}
               winnerItemId={effectiveBuyBoxWinner}
+              isStockFallbackLoading={
+                extensionStockStatus === "waiting" || extensionStockStatus === "scanning"
+              }
             />
           )}
           {stockSource?.detail && (
@@ -704,13 +718,20 @@ function AnalysisResults({
           )}
           {extensionStockStatus !== "idle" && (
             <div className="rounded-lg border bg-muted/30 px-4 py-3 text-xs text-muted-foreground">
-              {extensionStockStatus === "waiting" || extensionStockStatus === "scanning"
-                ? "Estoque via extensao: atualizando pela pagina publica do Mercado Livre..."
-                : extensionStockStatus === "success"
-                  ? "Estoque via extensao carregado para os anuncios disponiveis."
-                  : extensionStockStatus === "unavailable"
-                    ? "Extensao nao encontrou estoque publico nos anuncios analisados."
-                    : "Extensao Branch Hunter nao respondeu. Instale/atualize a extensao para usar o fallback de estoque."}
+              <p>
+                {extensionStockStatus === "waiting" || extensionStockStatus === "scanning"
+                  ? "Estoque via extensao: atualizando pela pagina publica do Mercado Livre..."
+                  : extensionStockStatus === "success"
+                    ? "Estoque via extensao carregado para os anuncios disponiveis."
+                    : extensionStockStatus === "unavailable"
+                      ? "Extensao nao encontrou estoque publico nos anuncios analisados."
+                      : "Extensao Branch Hunter nao respondeu. Instale/atualize a extensao para usar o fallback de estoque."}
+              </p>
+              {extensionStockError && (
+                <p className="mt-1 font-mono text-[11px] text-muted-foreground">
+                  Detalhe: {extensionStockError}
+                </p>
+              )}
             </div>
           )}
           {(phase === "partial" || phase === "no_competitors" || phase === "not_catalog") && (
