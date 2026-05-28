@@ -388,14 +388,16 @@ function AnalysisResults({
   const [extensionStockStatus, setExtensionStockStatus] = useState<ExtensionStockStatus>("idle")
   const [extensionStock, setExtensionStock] = useState<ExtensionStockMap>({})
   const [extensionStockError, setExtensionStockError] = useState<string | null>(null)
+  const extensionStockScanKeyRef = useRef<string | null>(null)
 
   useEffect(() => {
     queueMicrotask(() => {
       setExtensionStock({})
       setExtensionStockError(null)
       setExtensionStockStatus("idle")
+      extensionStockScanKeyRef.current = null
     })
-  }, [data.receivedId])
+  }, [data.receivedId, data.fetchedAt])
 
   useEffect(() => {
     const pending = rawCompetitors
@@ -403,13 +405,16 @@ function AnalysisResults({
       .slice(0, 10)
       .map((c) => ({ itemId: c.itemId, url: c.permalink as string }))
 
-    if (pending.length === 0 || extensionStockStatus !== "idle") return
+    if (pending.length === 0) return
+
+    const scanKey = `${data.receivedId}:${data.fetchedAt}:${pending.map((p) => p.itemId).join(",")}`
+    if (extensionStockScanKeyRef.current === scanKey) return
+    extensionStockScanKeyRef.current = scanKey
 
     let cancelled = false
-    const waitingTimer = window.setTimeout(() => {
-      if (!cancelled) setExtensionStockStatus("waiting")
-    }, 0)
-    window.setTimeout(() => {
+    setExtensionStockStatus("waiting")
+
+    const scanTimer = window.setTimeout(() => {
       if (cancelled) return
       setExtensionStockStatus("scanning")
       requestExtensionStockScan(pending)
@@ -442,9 +447,9 @@ function AnalysisResults({
 
     return () => {
       cancelled = true
-      window.clearTimeout(waitingTimer)
+      window.clearTimeout(scanTimer)
     }
-  }, [rawCompetitors, extensionStockStatus])
+  }, [rawCompetitors, data.receivedId, data.fetchedAt])
 
   const competitors = useMemo(
     () =>

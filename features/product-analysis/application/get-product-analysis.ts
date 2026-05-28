@@ -497,7 +497,14 @@ export async function getProductAnalysis(token: string, receivedId: string): Pro
   const referenceStockMap =
     stockResult.status === "fulfilled"
       ? stockResult.value
-      : new Map<string, { availableQuantity: number | null; soldQuantity: number | null }>()
+      : new Map<
+          string,
+          {
+            availableQuantity: number | null
+            soldQuantity: number | null
+            permalink: string | null
+          }
+        >()
   const ptw = ptwResult.status === "fulfilled" ? ptwResult.value : null
   const visits7 = visits7Result.status === "fulfilled" ? visits7Result.value : null
   const visits30 = visits30Result.status === "fulfilled" ? visits30Result.value : null
@@ -641,6 +648,10 @@ export async function getProductAnalysis(token: string, receivedId: string): Pro
       comp.referenceStock = referenceStock.availableQuantity
       comp.referenceStockLabel = referenceStockLabel(referenceStock.availableQuantity)
       comp.referenceStockSource = referenceStock.availableQuantity != null ? "ml_api" : null
+      const apiPermalink = validMlPermalink(referenceStock.permalink)
+      if (apiPermalink) {
+        comp.permalink = apiPermalink
+      }
     }
   }
 

@@ -144,11 +144,23 @@ export async function getSellersBatch(
 export async function getItemsReferenceStockBatch(
   token: string,
   itemIds: string[],
-): Promise<Map<string, { availableQuantity: number | null; soldQuantity: number | null }>> {
-  const map = new Map<string, { availableQuantity: number | null; soldQuantity: number | null }>()
+): Promise<
+  Map<
+    string,
+    {
+      availableQuantity: number | null
+      soldQuantity: number | null
+      permalink: string | null
+    }
+  >
+> {
+  const map = new Map<
+    string,
+    { availableQuantity: number | null; soldQuantity: number | null; permalink: string | null }
+  >()
   if (itemIds.length === 0) return map
 
-  const attributes = "id,available_quantity,sold_quantity"
+  const attributes = "id,available_quantity,sold_quantity,permalink"
   const settled = await Promise.allSettled(
     chunk(itemIds, 20).map((batch) => {
       const ids = batch.join(",")
@@ -168,6 +180,7 @@ export async function getItemsReferenceStockBatch(
       map.set(id, {
         availableQuantity: entry.body?.available_quantity ?? null,
         soldQuantity: entry.body?.sold_quantity ?? null,
+        permalink: entry.body?.permalink ?? null,
       })
     }
   }

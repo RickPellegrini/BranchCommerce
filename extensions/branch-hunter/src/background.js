@@ -4,17 +4,30 @@ const STOCK_SCAN_CONCURRENCY = 3
 
 function waitForTabComplete(tabId) {
   return new Promise((resolve) => {
-    const timeout = setTimeout(() => {
+    let settled = false
+    const finish = (value) => {
+      if (settled) return
+      settled = true
+      clearTimeout(timeout)
       chrome.tabs.onUpdated.removeListener(listener)
-      resolve(false)
+      resolve(value)
+    }
+
+    chrome.tabs.get(tabId, (tab) => {
+      if (chrome.runtime.lastError) return
+      if (tab?.status === "complete") {
+        finish(true)
+      }
+    })
+
+    const timeout = setTimeout(() => {
+      finish(false)
     }, STOCK_SCAN_TIMEOUT_MS)
 
     function listener(updatedTabId, changeInfo) {
       if (updatedTabId !== tabId) return
       if (changeInfo.status !== "complete") return
-      clearTimeout(timeout)
-      chrome.tabs.onUpdated.removeListener(listener)
-      resolve(true)
+      finish(true)
     }
 
     chrome.tabs.onUpdated.addListener(listener)
@@ -41,6 +54,32 @@ function sendTabMessage(tabId, message) {
   })
 }
 
+function isContentScriptUnavailable(error) {
+  const text = String(error || "").toLowerCase()
+  return (
+    text.includes("could not establish connection") || text.includes("receiving end does not exist")
+  )
+}
+
+async function sendTabMessageWithRetry(tabId, message, attempts = 10, intervalMs = 600) {
+  let lastResponse = {
+    ok: false,
+    status: "failed",
+    error: "Content script indisponivel.",
+  }
+
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    const response = await sendTabMessage(tabId, message)
+    lastResponse = response
+    if (response?.ok || !isContentScriptUnavailable(response?.error)) {
+      return response
+    }
+    await delay(intervalMs)
+  }
+
+  return lastResponse
+}
+
 async function scanStockItem(item) {
   const itemId = String(item?.itemId || "").trim()
   const url = String(item?.url || "").trim()
@@ -62,7 +101,7 @@ async function scanStockItem(item) {
     await waitForTabComplete(tabId)
     await delay(STOCK_SCAN_SETTLE_MS)
 
-    const response = await sendTabMessage(tabId, {
+    const response = await sendTabMessageWithRetry(tabId, {
       type: "BRANCH_HUNTER_COLLECT_PUBLIC_STOCK",
       itemId,
     })
