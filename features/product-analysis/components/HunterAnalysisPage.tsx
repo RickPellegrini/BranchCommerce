@@ -443,7 +443,7 @@ function AnalysisResults({
             setExtensionStockStatus("error")
           }
         })
-    }, 400)
+    }, 0)
 
     return () => {
       cancelled = true

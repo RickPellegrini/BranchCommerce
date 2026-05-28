@@ -1,6 +1,7 @@
-const STOCK_SCAN_TIMEOUT_MS = 25000
-const STOCK_SCAN_SETTLE_MS = 2500
-const STOCK_SCAN_CONCURRENCY = 3
+const STOCK_SCAN_TIMEOUT_MS = 15000
+const STOCK_SCAN_POLL_MS = 350
+const STOCK_SCAN_POLL_MAX_MS = 9000
+const STOCK_SCAN_CONCURRENCY = 4
 
 function waitForTabComplete(tabId) {
   return new Promise((resolve) => {
@@ -61,7 +62,7 @@ function isContentScriptUnavailable(error) {
   )
 }
 
-async function sendTabMessageWithRetry(tabId, message, attempts = 10, intervalMs = 600) {
+async function sendTabMessageWithRetry(tabId, message, attempts = 5, intervalMs = 250) {
   let lastResponse = {
     ok: false,
     status: "failed",
@@ -99,12 +100,31 @@ async function scanStockItem(item) {
     if (!tabId) throw new Error("Aba de varredura nao foi criada.")
 
     await waitForTabComplete(tabId)
-    await delay(STOCK_SCAN_SETTLE_MS)
 
-    const response = await sendTabMessageWithRetry(tabId, {
+    const message = {
       type: "BRANCH_HUNTER_COLLECT_PUBLIC_STOCK",
       itemId,
-    })
+    }
+
+    let response = {
+      ok: false,
+      status: "unavailable",
+      error: "Estoque nao encontrado na pagina.",
+    }
+    const pollUntil = Date.now() + STOCK_SCAN_POLL_MAX_MS
+
+    while (Date.now() < pollUntil) {
+      response = await sendTabMessageWithRetry(tabId, message)
+      if (response?.status === "blocked") break
+      if (response?.ok && typeof response.stockMin === "number") break
+      if (response?.ok && response.stockText && response.stockMin == null) {
+        // Keep polling while ML still shows only "+N disponiveis".
+        await delay(STOCK_SCAN_POLL_MS)
+        continue
+      }
+      if (response?.ok) break
+      await delay(STOCK_SCAN_POLL_MS)
+    }
 
     return {
       itemId,

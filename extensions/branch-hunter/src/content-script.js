@@ -4,8 +4,8 @@
   const DEBUG = false
   const LISTING_TYPE_FEES = { premium: 16, gold_special: 12 }
   const BADGE_ATTR = "data-bh-processed"
-  const PUBLIC_STOCK_RETRY_TIMEOUT_MS = 12000
-  const PUBLIC_STOCK_RETRY_INTERVAL_MS = 500
+  const PUBLIC_STOCK_RETRY_TIMEOUT_MS = 8000
+  const PUBLIC_STOCK_RETRY_INTERVAL_MS = 300
   const APP_WEB_BASE_URL = "https://branchcommercehub.com"
 
   const state = {
@@ -131,10 +131,17 @@
     return { stockText: normalized, stockMin: null }
   }
 
+  function pushExactStockCandidate(candidates, value) {
+    const count = Number(value)
+    if (!Number.isFinite(count) || count <= 0 || count > 50000) return
+    candidates.push(count)
+  }
+
   function collectExactStockFromQuantityControl() {
+    const candidates = []
+
     const selectSelectors = [
       'select[name="quantity"]',
-      "#quantity__value",
       ".ui-pdp-buybox__quantity__select select",
       '[data-testid="quantity-selector"] select',
       ".ui-pdp-buybox__quantity select",
@@ -144,14 +151,11 @@
       const select = document.querySelector(selector)
       if (!(select instanceof HTMLSelectElement)) continue
 
-      const values = Array.from(select.options)
-        .map((option) => Number(option.value))
-        .filter((value) => Number.isFinite(value) && value > 0)
-
-      if (values.length === 0) continue
-
-      const max = Math.max(...values)
-      return { stockText: `${max} unidades`, stockMin: max }
+      for (const option of Array.from(select.options)) {
+        pushExactStockCandidate(candidates, Number(option.value))
+        const fromLabel = parseExactUnitCount(option.textContent)
+        if (fromLabel?.stockMin != null) pushExactStockCandidate(candidates, fromLabel.stockMin)
+      }
     }
 
     const triggerSelectors = [
@@ -159,15 +163,53 @@
       "#quantity__value",
       ".ui-pdp-buybox__quantity__label",
       "[class*='quantity__trigger']",
+      "[class*='quantity__value']",
     ]
 
     for (const selector of triggerSelectors) {
       const node = document.querySelector(selector)
       const parsed = parseExactUnitCount(node?.textContent)
-      if (parsed) return parsed
+      if (parsed?.stockMin != null) pushExactStockCandidate(candidates, parsed.stockMin)
+      const aria = parseExactUnitCount(node?.getAttribute?.("aria-label"))
+      if (aria?.stockMin != null) pushExactStockCandidate(candidates, aria.stockMin)
     }
 
-    return null
+    const buybox =
+      document.querySelector("#buybox_available_quantity") ||
+      document.querySelector(".ui-pdp-buybox") ||
+      document.querySelector("[data-testid='buy-box-container']")
+
+    if (buybox) {
+      buybox.querySelectorAll("[aria-label]").forEach((node) => {
+        const parsed = parseExactUnitCount(node.getAttribute("aria-label"))
+        if (parsed?.stockMin != null) pushExactStockCandidate(candidates, parsed.stockMin)
+      })
+
+      const buyboxText = buybox.innerText || ""
+      for (const match of buyboxText.matchAll(/(\d+)\s+unidades?\b/gi)) {
+        const index = match.index ?? 0
+        const prefix = buyboxText.slice(Math.max(0, index - 4), index)
+        if (prefix.includes("+")) continue
+        pushExactStockCandidate(candidates, match[1])
+      }
+    }
+
+    if (candidates.length === 0) return null
+
+    const max = Math.max(...candidates)
+    return { stockText: `${max} unidades`, stockMin: max }
+  }
+
+  function collectStockFromEmbeddedJson() {
+    const html = document.documentElement.innerHTML
+    const values = [...html.matchAll(/"available_quantity"\s*:\s*(\d+)/g)]
+      .map((match) => Number(match[1]))
+      .filter((value) => Number.isFinite(value) && value > 0 && value <= 50000)
+
+    if (values.length === 0) return null
+
+    const max = Math.max(...values)
+    return { stockText: `${max} unidades`, stockMin: max }
   }
 
   function detectBlockedPage() {
@@ -192,15 +234,22 @@
       }
     }
 
-    const exactFromQuantity = collectExactStockFromQuantityControl()
-    if (exactFromQuantity) {
+    const exactCandidates = [
+      collectExactStockFromQuantityControl(),
+      collectStockFromEmbeddedJson(),
+    ].filter((entry) => entry?.stockMin != null)
+
+    if (exactCandidates.length > 0) {
+      const best = exactCandidates.reduce((bestSoFar, entry) =>
+        (entry.stockMin ?? 0) > (bestSoFar.stockMin ?? 0) ? entry : bestSoFar,
+      )
       return {
         ok: true,
         status: "success",
         itemId: expectedItemId,
         finalUrl: location.href,
         source: "extension_page",
-        ...exactFromQuantity,
+        ...best,
       }
     }
 
@@ -235,17 +284,20 @@
       .map((line) => line.trim())
       .filter(Boolean)
 
-    const exactLine = lines
+    const exactLines = lines
       .map((line) => parseExactUnitCount(line))
-      .find((parsed) => parsed?.stockMin != null)
-    if (exactLine) {
+      .filter((parsed) => parsed?.stockMin != null)
+    if (exactLines.length > 0) {
+      const best = exactLines.reduce((bestSoFar, entry) =>
+        (entry.stockMin ?? 0) > (bestSoFar.stockMin ?? 0) ? entry : bestSoFar,
+      )
       return {
         ok: true,
         status: "success",
         itemId: expectedItemId,
         finalUrl: location.href,
         source: "extension_page",
-        ...exactLine,
+        ...best,
       }
     }
 
@@ -291,16 +343,22 @@
     }
   }
 
+  function hasExactStockResult(result) {
+    return result?.ok === true && typeof result.stockMin === "number"
+  }
+
   async function collectPublicStockWithRetry(expectedItemId) {
     const deadline = Date.now() + PUBLIC_STOCK_RETRY_TIMEOUT_MS
     let lastResult = collectPublicStockFromPage(expectedItemId)
 
     while (Date.now() < deadline) {
-      if (lastResult.ok || lastResult.status === "blocked") return lastResult
+      if (lastResult.status === "blocked") return lastResult
+      if (hasExactStockResult(lastResult)) return lastResult
       await new Promise((resolve) => setTimeout(resolve, PUBLIC_STOCK_RETRY_INTERVAL_MS))
       lastResult = collectPublicStockFromPage(expectedItemId)
     }
 
+    if (lastResult.ok || lastResult.status === "blocked") return lastResult
     return lastResult
   }
 
