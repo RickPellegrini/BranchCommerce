@@ -312,6 +312,18 @@
         }
         .btn-secondary { background: #e5e7eb; color: #374151; }
         .btn-secondary:hover { background: #d1d5db; }
+        .btn-toggle {
+          background: none; border: 1px solid #d1d5db; border-radius: 8px;
+          padding: 6px 10px; font-size: 11px; font-weight: 600;
+          color: #6b7280; cursor: pointer; width: 100%;
+          display: flex; align-items: center; justify-content: center; gap: 4px;
+          transition: background 0.15s;
+        }
+        .btn-toggle:hover { background: #f1f5f9; }
+        .btn-toggle svg { transition: transform 0.2s; }
+        .btn-toggle.expanded svg { transform: rotate(180deg); }
+        .collapsible { display: none; }
+        .collapsible.open { display: grid; gap: 8px; }
         .result-title { margin: 0; font-size: 12px; font-weight: 700; color: #111827; }
         .result-row {
           display: flex; align-items: center; justify-content: space-between;
@@ -383,6 +395,12 @@
           <div class="result-row critical total"><span class="row-label"><svg class="row-icon" viewBox="0 0 24 24" fill="none"><path d="M4 6h16v12H4z" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>Total custos</span><strong id="bh-result-total-costs">R$ 0,00</strong></div>
         </div>
 
+        <button id="bh-toggle-details" class="btn-toggle" type="button">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none"><path d="M6 9l6 6 6-6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          <span id="bh-toggle-label">Ver mais</span>
+        </button>
+
+        <div id="bh-details" class="collapsible">
         <div class="section section-operation grid">
             <div class="section-title-row">
               <span class="section-icon" aria-hidden="true"><svg width="12" height="12" viewBox="0 0 24 24" fill="none"><path d="M3 6h18v12H3zM8 10h8" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg></span>
@@ -440,7 +458,6 @@
             <div class="result-row"><span class="row-label"><svg class="row-icon" viewBox="0 0 24 24" fill="none"><path d="M4 6h16M4 12h16M4 18h10" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>Centralize fixo</span><strong id="bh-result-centralize">R$ 0,00</strong></div>
             <div class="result-row"><span class="row-label"><svg class="row-icon" viewBox="0 0 24 24" fill="none"><path d="M12 3v18M3 12h18" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>Custo Full</span><strong id="bh-result-full">R$ 0,00</strong></div>
           </div>
-
         </div>
       </section>
     `
@@ -468,6 +485,9 @@
       profitRow: $("bh-profit-row"),
       resultProfit: $("bh-result-profit"),
       resultMargin: $("bh-result-margin"),
+      toggleDetails: $("bh-toggle-details"),
+      toggleLabel: $("bh-toggle-label"),
+      detailsPanel: $("bh-details"),
       listingTypeSelect: $("bh-listing-type-select"),
       listingTypeFee: $("bh-listing-type-fee"),
       headerChip: $("bh-header-chip"),
@@ -803,6 +823,12 @@
     elements.fullToggle.addEventListener("change", () => {
       applyLogisticModeUiState(elements, "full")
       void recalcAndPersist()
+    })
+
+    elements.toggleDetails.addEventListener("click", () => {
+      const isOpen = elements.detailsPanel.classList.toggle("open")
+      elements.toggleLabel.textContent = isOpen ? "Ver menos" : "Ver mais"
+      elements.toggleDetails.classList.toggle("expanded", isOpen)
     })
 
     elements.openCatalogAnalysis.addEventListener("click", () => {
