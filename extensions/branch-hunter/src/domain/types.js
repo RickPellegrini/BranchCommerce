@@ -43,6 +43,8 @@
    * @property {number|undefined} freeShippingMinPrice
    * @property {number|undefined} freeShippingSubsidyPercent
    * @property {number|undefined} defaultShippingCost
+   * @property {boolean|undefined} centralizeEnabled
+   * @property {boolean|undefined} fullEnabled
    */
 
   /**
@@ -63,6 +65,7 @@
    * @property {string} shippingModeLabel
    * @property {string} shippingModeDetail
    * @property {number} centralizeFixedCosts
+   * @property {number} fullCosts
    * @property {number} totalCosts
    * @property {number} netProfit
    * @property {number} netMarginPercent
@@ -112,6 +115,8 @@
       freeShippingMinPrice: 79,
       freeShippingSubsidyPercent: 50,
       defaultShippingCost: 12,
+      centralizeEnabled: true,
+      fullEnabled: false,
     }
   }
 

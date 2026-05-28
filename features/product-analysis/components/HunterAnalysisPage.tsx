@@ -151,6 +151,16 @@ export function HunterAnalysisPage() {
 
   const { phase, data, error, refresh } = useProductAnalysis(activeItemId)
 
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search)
+    const itemIdFromQuery = params.get("itemId")
+    if (!itemIdFromQuery) return
+    const parsed = parseMlId(itemIdFromQuery)
+    if (!parsed) return
+    setSearchInput(parsed)
+    setActiveItemId(parsed)
+  }, [])
+
   const handleAnalyze = useCallback(() => {
     setSearchError(null)
     const mlId = parseMlId(searchInput)

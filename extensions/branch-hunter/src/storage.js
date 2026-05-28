@@ -19,6 +19,8 @@
       defaultShippingCost: 12,
       shippingFallback: 12,
       forceManualShipping: false,
+      centralizeEnabled: true,
+      fullEnabled: false,
     },
   }
 

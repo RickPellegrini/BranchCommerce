@@ -2063,6 +2063,15 @@ export function FinancialDashboard({
     const mlConnected = params.get("ml_connected")
     const mpErrorCode = params.get("mp_error")
     const mpConnected = params.get("mp_connected")
+    const moduleParam = params.get("module")
+    const hunterSectionParam = params.get("hunterSection")
+
+    if (moduleParam === "branchhunter") {
+      setActiveModule("branchhunter")
+      if (hunterSectionParam === "analise-anuncio" || hunterSectionParam === "padrao") {
+        setActiveHunterSection(hunterSectionParam)
+      }
+    }
 
     if (!mlErrorCode && !mlConnected && !mpErrorCode && !mpConnected) return
 
@@ -11046,7 +11055,7 @@ export function FinancialDashboard({
               <Button
                 className="bg-emerald-600 text-white hover:bg-emerald-700"
                 onClick={() => {
-                  window.location.href = "/api/branch-hunter/download"
+                  window.location.href = `/api/branch-hunter/download?v=${Date.now()}`
                 }}
               >
                 Baixar extensao Branch Hunter (.zip)

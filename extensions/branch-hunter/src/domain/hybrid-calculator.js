@@ -1,6 +1,7 @@
 ;(() => {
   const CENTRALIZE_FIXED_SHIPPING = 5
   const CENTRALIZE_FIXED_PACKAGING = 1.5
+  const FULL_COST_PER_UNIT = 3
 
   function toNumberOrZero(value) {
     const number = Number(value)
@@ -97,7 +98,12 @@
     const productCost = Math.max(0, toNumberOrZero(operation.productCost))
     const packagingCost = Math.max(0, toNumberOrZero(operation.packagingCost))
     const otherFixedCosts = Math.max(0, toNumberOrZero(operation.otherFixedCosts))
-    const centralizeFixedCosts = CENTRALIZE_FIXED_SHIPPING + CENTRALIZE_FIXED_PACKAGING
+    const centralizeEnabled = Boolean(operation?.centralizeEnabled)
+    const fullEnabled = Boolean(operation?.fullEnabled)
+    const centralizeFixedCosts = centralizeEnabled
+      ? CENTRALIZE_FIXED_SHIPPING + CENTRALIZE_FIXED_PACKAGING
+      : 0
+    const fullCosts = fullEnabled ? FULL_COST_PER_UNIT : 0
 
     const totalCosts =
       marketplaceFeeAmount +
@@ -108,7 +114,8 @@
       productCost +
       packagingCost +
       otherFixedCosts +
-      centralizeFixedCosts
+      centralizeFixedCosts +
+      fullCosts
 
     const netProfit = grossRevenue - totalCosts
     const netMarginPercent = grossRevenue > 0 ? (netProfit / grossRevenue) * 100 : 0
@@ -125,6 +132,7 @@
       shippingModeLabel,
       shippingModeDetail,
       centralizeFixedCosts,
+      fullCosts,
       totalCosts,
       netProfit,
       netMarginPercent,

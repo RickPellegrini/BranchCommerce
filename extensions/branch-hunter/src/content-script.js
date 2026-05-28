@@ -6,6 +6,7 @@
   const BADGE_ATTR = "data-bh-processed"
   const PUBLIC_STOCK_RETRY_TIMEOUT_MS = 12000
   const PUBLIC_STOCK_RETRY_INTERVAL_MS = 500
+  const APP_DASHBOARD_URL = "https://branch-commerce.vercel.app/dashboard"
 
   const state = {
     listingId: "",
@@ -310,6 +311,7 @@
         .dynamic-row strong { color: #111827; font-size: 12px; }
         .dynamic-row small { color: #6b7280; font-size: 11px; }
         .actions { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+        .actions-1 { grid-template-columns: 1fr; }
         button {
           border: 0; border-radius: 8px; padding: 8px 10px;
           font-size: 12px; font-weight: 600; cursor: pointer;
@@ -460,22 +462,48 @@
           <div class="section section-centralize">
             <div class="section-title-row">
               <span class="section-icon" aria-hidden="true"><svg width="12" height="12" viewBox="0 0 24 24" fill="none"><path d="M4 6h16M4 12h16M4 18h10" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg></span>
-              <p class="section-title">Centralize</p>
+              <p class="section-title">Centralize / Full</p>
             </div>
-            <p class="subtle">Custos fixos aplicados automaticamente.</p>
-            <div class="dynamic-row"><span>Envio fixo</span><strong>R$ 5,00</strong></div>
-            <div class="dynamic-row"><span>Embalagem fixa</span><strong>R$ 1,50</strong></div>
+            <p class="subtle">Escolha um modo por vez.</p>
+            <div class="freight-card">
+              <div class="switch-row">
+                <div>
+                  <p class="section-title">Centralize</p>
+                  <p class="freight-hint">Entra envio fixo + embalagem fixa</p>
+                </div>
+                <label class="switch-inline switch-blue">
+                  <input id="bh-centralize-toggle" type="checkbox" checked> Ativo
+                </label>
+              </div>
+              <div class="dynamic-row"><span>Envio fixo</span><strong>R$ 5,00</strong></div>
+              <div class="dynamic-row"><span>Embalagem fixa</span><strong>R$ 1,50</strong></div>
+            </div>
+            <div class="freight-card">
+              <div class="switch-row">
+                <div>
+                  <p class="section-title">Full</p>
+                  <p class="freight-hint">Custo de R$ 3,00 por unidade</p>
+                </div>
+                <label class="switch-inline switch-green">
+                  <input id="bh-full-toggle" type="checkbox"> Ativo
+                </label>
+              </div>
+            </div>
           </div>
 
           <div style="display:grid;gap:6px;">
             <div class="result-row"><span class="row-label"><svg class="row-icon" viewBox="0 0 24 24" fill="none"><path d="M4 12h16M12 4v16" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>Receita bruta</span><strong id="bh-result-gross">R$ 0,00</strong></div>
             <div class="result-row"><span class="row-label"><svg class="row-icon" viewBox="0 0 24 24" fill="none"><path d="M3 17h18M5 17l2-6h10l2 6" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>Frete usado</span><strong id="bh-result-shipping">R$ 0,00</strong></div>
             <div class="result-row"><span class="row-label"><svg class="row-icon" viewBox="0 0 24 24" fill="none"><path d="M4 6h16M4 12h16M4 18h10" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>Centralize fixo</span><strong id="bh-result-centralize">R$ 0,00</strong></div>
+            <div class="result-row"><span class="row-label"><svg class="row-icon" viewBox="0 0 24 24" fill="none"><path d="M12 3v18M3 12h18" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>Custo Full</span><strong id="bh-result-full">R$ 0,00</strong></div>
           </div>
 
           <div class="actions">
             <button id="bh-sync-dynamic" class="btn-primary" type="button">Atualizar dados ML</button>
             <button id="bh-reset" class="btn-secondary" type="button">Limpar</button>
+          </div>
+          <div class="actions actions-1">
+            <button id="bh-open-catalog-analysis" class="btn-secondary" type="button">Abrir analise de catalogo no app</button>
           </div>
         </div>
       </section>
@@ -514,6 +542,7 @@
       resultGross: $("bh-result-gross"),
       resultShipping: $("bh-result-shipping"),
       resultCentralize: $("bh-result-centralize"),
+      resultFull: $("bh-result-full"),
       resultTotalCosts: $("bh-result-total-costs"),
       profitRow: $("bh-profit-row"),
       resultProfit: $("bh-result-profit"),
@@ -524,6 +553,9 @@
       listingTypeSelect: $("bh-listing-type-select"),
       listingTypeFee: $("bh-listing-type-fee"),
       headerChip: $("bh-header-chip"),
+      centralizeToggle: $("bh-centralize-toggle"),
+      fullToggle: $("bh-full-toggle"),
+      openCatalogAnalysis: $("bh-open-catalog-analysis"),
     }
   }
 
@@ -562,6 +594,8 @@
       freeShippingMinPrice: Number(state.shippingConfig.freeShippingMinPrice ?? 79),
       freeShippingSubsidyPercent: Number(state.shippingConfig.freeShippingSubsidyPercent ?? 50),
       defaultShippingCost: 12,
+      centralizeEnabled: Boolean(elements.centralizeToggle.checked),
+      fullEnabled: Boolean(elements.fullToggle.checked),
     }
   }
 
@@ -610,6 +644,7 @@
     elements.resultGross.textContent = formatMoney(calculationResult.grossRevenue)
     elements.resultShipping.textContent = formatMoney(calculationResult.shippingCostUsed)
     elements.resultCentralize.textContent = formatMoney(calculationResult.centralizeFixedCosts)
+    elements.resultFull.textContent = formatMoney(calculationResult.fullCosts || 0)
     elements.resultTotalCosts.textContent = formatMoney(calculationResult.totalCosts)
     elements.resultProfit.textContent = formatMoney(calculationResult.netProfit)
     elements.resultMargin.textContent = formatPercent(calculationResult.netMarginPercent)
@@ -745,12 +780,40 @@
     elements.salePriceManualToggle.checked = Boolean(values.forceManualSalePrice)
     elements.salePriceManualInput.value = String(values.manualSalePrice ?? 0)
     elements.listingTypeSelect.value = values.listingTypeOverride || "gold_special"
+    const fullEnabled = Boolean(values.fullEnabled)
+    const centralizeEnabled = fullEnabled ? false : (values.centralizeEnabled ?? true)
+    elements.centralizeToggle.checked = centralizeEnabled
+    elements.fullToggle.checked = fullEnabled
     if (elements.headerChip) {
       elements.headerChip.textContent =
         elements.listingTypeSelect.value === "premium" ? "Premium" : "Clássico"
     }
     applySalePriceUiState(elements)
     applyShippingUiState(elements)
+  }
+
+  function applyLogisticModeUiState(elements, changedMode) {
+    if (changedMode === "centralize" && elements.centralizeToggle.checked) {
+      elements.fullToggle.checked = false
+    }
+    if (changedMode === "full" && elements.fullToggle.checked) {
+      elements.centralizeToggle.checked = false
+    }
+  }
+
+  function openCatalogAnalysisInApp() {
+    const listingId = state.listingId && state.listingId !== "unknown-item" ? state.listingId : ""
+    const configuredBase = state.syncConfig.apiBaseUrl
+      ? `${state.syncConfig.apiBaseUrl.replace(/\/+$/, "")}/dashboard`
+      : APP_DASHBOARD_URL
+    const base = configuredBase
+    const url = new URL(base)
+    url.searchParams.set("module", "branchhunter")
+    url.searchParams.set("hunterSection", "analise-anuncio")
+    if (listingId) {
+      url.searchParams.set("itemId", listingId)
+    }
+    window.open(url.toString(), "_blank", "noopener,noreferrer")
   }
 
   async function hydrateInputs() {
@@ -824,6 +887,14 @@
       elements.headerChip.textContent = label
       void recalcAndPersist()
     })
+    elements.centralizeToggle.addEventListener("change", () => {
+      applyLogisticModeUiState(elements, "centralize")
+      void recalcAndPersist()
+    })
+    elements.fullToggle.addEventListener("change", () => {
+      applyLogisticModeUiState(elements, "full")
+      void recalcAndPersist()
+    })
 
     elements.toggleDetails.addEventListener("click", () => {
       const isOpen = elements.detailsPanel.classList.toggle("open")
@@ -850,6 +921,9 @@
         ...settings.defaults,
       })
       await recalcAndPersist()
+    })
+    elements.openCatalogAnalysis.addEventListener("click", () => {
+      openCatalogAnalysisInApp()
     })
   }
 
