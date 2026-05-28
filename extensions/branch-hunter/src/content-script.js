@@ -6,7 +6,7 @@
   const BADGE_ATTR = "data-bh-processed"
   const PUBLIC_STOCK_RETRY_TIMEOUT_MS = 12000
   const PUBLIC_STOCK_RETRY_INTERVAL_MS = 500
-  const APP_BASE_URL = "https://branch-commerce.vercel.app"
+  const APP_WEB_BASE_URL = "https://branchcommercehub.com"
 
   const state = {
     listingId: "",
@@ -823,9 +823,7 @@
 
   function openCatalogAnalysisInApp() {
     const listingId = resolveListingIdForCatalogAnalysis()
-    const base = state.syncConfig.apiBaseUrl
-      ? state.syncConfig.apiBaseUrl.replace(/\/+$/, "")
-      : APP_BASE_URL
+    const base = APP_WEB_BASE_URL.replace(/\/+$/, "")
     const targetPath = `${base}/branch-hunter`
     const url = new URL(targetPath)
     url.searchParams.set("hunterSection", "analise-anuncio")
