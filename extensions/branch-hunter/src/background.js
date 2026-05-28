@@ -1,7 +1,7 @@
 const STOCK_SCAN_TIMEOUT_MS = 15000
-const STOCK_SCAN_POLL_MS = 350
-const STOCK_SCAN_POLL_MAX_MS = 9000
-const STOCK_SCAN_CONCURRENCY = 4
+const STOCK_SCAN_CONCURRENCY = 5
+const STOCK_POLL_INTERVAL_MS = 220
+const STOCK_POLL_MAX_MS = 4500
 
 function waitForTabComplete(tabId) {
   return new Promise((resolve) => {
@@ -62,35 +62,65 @@ function isContentScriptUnavailable(error) {
   )
 }
 
-async function sendTabMessageWithRetry(tabId, message, attempts = 5, intervalMs = 250) {
+function shouldStopStockPolling(response) {
+  if (!response) return false
+  if (response.ok) return true
+  if (response.status === "blocked") return true
+  if (response.status === "failed" && !isContentScriptUnavailable(response.error)) return true
+  return false
+}
+
+async function collectStockFromTab(tabId, itemId) {
+  const message = {
+    type: "BRANCH_HUNTER_COLLECT_PUBLIC_STOCK",
+    itemId,
+  }
+  const deadline = Date.now() + STOCK_POLL_MAX_MS
   let lastResponse = {
     ok: false,
-    status: "failed",
-    error: "Content script indisponivel.",
+    status: "unavailable",
+    error: "Estoque nao encontrado na pagina.",
   }
 
-  for (let attempt = 0; attempt < attempts; attempt += 1) {
+  while (Date.now() < deadline) {
     const response = await sendTabMessage(tabId, message)
-    lastResponse = response
-    if (response?.ok || !isContentScriptUnavailable(response?.error)) {
+    lastResponse = response || lastResponse
+
+    if (shouldStopStockPolling(response)) {
       return response
     }
-    await delay(intervalMs)
+
+    await delay(STOCK_POLL_INTERVAL_MS)
   }
 
   return lastResponse
 }
 
-async function scanStockItem(item) {
+function notifyStockScanPartial(callerTabId, requestId, result) {
+  if (!callerTabId || !requestId || !result?.itemId) return
+  chrome.tabs.sendMessage(
+    callerTabId,
+    {
+      type: "BRANCH_HUNTER_STOCK_SCAN_PARTIAL",
+      requestId,
+      result,
+    },
+    () => void chrome.runtime.lastError,
+  )
+}
+
+async function scanStockItem(item, requestId, callerTabId) {
   const itemId = String(item?.itemId || "").trim()
   const url = String(item?.url || "").trim()
   if (!itemId || !url) {
-    return {
+    const failed = {
       itemId,
       ok: false,
       status: "failed",
       error: "Item sem itemId ou URL.",
     }
+    notifyStockScanPartial(callerTabId, requestId, failed)
+    return failed
   }
 
   let tabId = null
@@ -101,45 +131,25 @@ async function scanStockItem(item) {
 
     await waitForTabComplete(tabId)
 
-    const message = {
-      type: "BRANCH_HUNTER_COLLECT_PUBLIC_STOCK",
-      itemId,
-    }
-
-    let response = {
-      ok: false,
-      status: "unavailable",
-      error: "Estoque nao encontrado na pagina.",
-    }
-    const pollUntil = Date.now() + STOCK_SCAN_POLL_MAX_MS
-
-    while (Date.now() < pollUntil) {
-      response = await sendTabMessageWithRetry(tabId, message)
-      if (response?.status === "blocked") break
-      if (response?.ok && typeof response.stockMin === "number") break
-      if (response?.ok && response.stockText && response.stockMin == null) {
-        // Keep polling while ML still shows only "+N disponiveis".
-        await delay(STOCK_SCAN_POLL_MS)
-        continue
-      }
-      if (response?.ok) break
-      await delay(STOCK_SCAN_POLL_MS)
-    }
-
-    return {
+    const response = await collectStockFromTab(tabId, itemId)
+    const result = {
       itemId,
       url,
       finalUrl: response?.finalUrl || tab.url || url,
       ...response,
     }
+    notifyStockScanPartial(callerTabId, requestId, result)
+    return result
   } catch (error) {
-    return {
+    const failed = {
       itemId,
       url,
       ok: false,
       status: "failed",
       error: error instanceof Error ? error.message : String(error),
     }
+    notifyStockScanPartial(callerTabId, requestId, failed)
+    return failed
   } finally {
     if (tabId) {
       chrome.tabs.remove(tabId, () => void chrome.runtime.lastError)
@@ -147,7 +157,7 @@ async function scanStockItem(item) {
   }
 }
 
-async function scanStockItems(items) {
+async function scanStockItems(items, requestId, callerTabId) {
   const sanitized = items.filter((item) => item && item.itemId && item.url).slice(0, 10)
 
   const results = new Array(sanitized.length)
@@ -157,7 +167,7 @@ async function scanStockItems(items) {
     while (cursor < sanitized.length) {
       const index = cursor
       cursor += 1
-      results[index] = await scanStockItem(sanitized[index])
+      results[index] = await scanStockItem(sanitized[index], requestId, callerTabId)
     }
   }
 
@@ -167,7 +177,7 @@ async function scanStockItems(items) {
   return results
 }
 
-chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
+chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (!message) return
 
   if (message.type === "BRANCH_HUNTER_LISTING") {
@@ -186,7 +196,12 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   }
 
   if (message.type === "BRANCH_HUNTER_STOCK_SCAN") {
-    scanStockItems(Array.isArray(message.items) ? message.items : [])
+    const callerTabId = sender.tab?.id
+    scanStockItems(
+      Array.isArray(message.items) ? message.items : [],
+      message.requestId,
+      callerTabId,
+    )
       .then((results) => {
         sendResponse({
           ok: true,

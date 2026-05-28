@@ -10,6 +10,19 @@
     window.location.origin,
   )
 
+  chrome.runtime.onMessage.addListener((message) => {
+    if (!message || message.type !== "BRANCH_HUNTER_STOCK_SCAN_PARTIAL") return
+    window.postMessage(
+      {
+        source: EXT_SOURCE,
+        type: "BRANCH_HUNTER_STOCK_SCAN_PARTIAL",
+        requestId: message.requestId,
+        result: message.result,
+      },
+      window.location.origin,
+    )
+  })
+
   window.addEventListener("message", (event) => {
     if (event.source !== window) return
     const message = event.data

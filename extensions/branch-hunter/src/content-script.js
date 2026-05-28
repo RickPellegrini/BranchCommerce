@@ -4,8 +4,8 @@
   const DEBUG = false
   const LISTING_TYPE_FEES = { premium: 16, gold_special: 12 }
   const BADGE_ATTR = "data-bh-processed"
-  const PUBLIC_STOCK_RETRY_TIMEOUT_MS = 8000
-  const PUBLIC_STOCK_RETRY_INTERVAL_MS = 300
+  const PUBLIC_STOCK_RETRY_TIMEOUT_MS = 3200
+  const PUBLIC_STOCK_RETRY_INTERVAL_MS = 160
   const APP_WEB_BASE_URL = "https://branchcommercehub.com"
 
   const state = {
@@ -76,42 +76,7 @@
     return value && String(value).trim() ? String(value) : "--"
   }
 
-  function parseExactUnitCount(text) {
-    const normalized = String(text || "")
-      .replace(/\s+/g, " ")
-      .trim()
-    if (!normalized || /\+\s*\d+/.test(normalized)) return null
-
-    const lower = normalized.toLowerCase()
-    if (lower.includes("último") || lower.includes("ultimo")) {
-      return { stockText: "Último disponível", stockMin: 1 }
-    }
-
-    const qtyLabel = normalized.match(/quantidade:\s*(\d+)\s+unidade/i)
-    if (qtyLabel) {
-      const count = Number(qtyLabel[1])
-      return { stockText: `${count} unidades`, stockMin: count }
-    }
-
-    const unitMatch = normalized.match(/(\d+)\s+unidades?\b/i)
-    if (unitMatch) {
-      const count = Number(unitMatch[1])
-      return { stockText: `${count} unidades`, stockMin: count }
-    }
-
-    const availableMatch = normalized.match(/(\d+)\s+dispon[ií]ve(?:l|is)\b/i)
-    if (availableMatch) {
-      const count = Number(availableMatch[1])
-      return { stockText: `${count} disponíveis`, stockMin: count }
-    }
-
-    return null
-  }
-
   function parsePublicStockText(text) {
-    const exact = parseExactUnitCount(text)
-    if (exact) return exact
-
     const normalized = String(text || "")
       .replace(/\s+/g, " ")
       .trim()
@@ -119,97 +84,22 @@
 
     const lower = normalized.toLowerCase()
     if (lower.includes("último") || lower.includes("ultimo")) {
-      return { stockText: "Último disponível", stockMin: 1 }
+      return { stockText: normalized, stockMin: 1 }
     }
 
     const plusMatch = normalized.match(/\+\s*(\d+)/)
     if (plusMatch) {
-      // ML uses "+5" as a bucket (5+), not an exact count.
-      return { stockText: normalized, stockMin: null }
+      return { stockText: normalized, stockMin: Number(plusMatch[1]) }
+    }
+
+    const unitMatch = normalized.match(
+      /(\d+)\s+(?:unidade|unidades|disponível|disponiveis|disponíveis)/i,
+    )
+    if (unitMatch) {
+      return { stockText: normalized, stockMin: Number(unitMatch[1]) }
     }
 
     return { stockText: normalized, stockMin: null }
-  }
-
-  function pushExactStockCandidate(candidates, value) {
-    const count = Number(value)
-    if (!Number.isFinite(count) || count <= 0 || count > 50000) return
-    candidates.push(count)
-  }
-
-  function collectExactStockFromQuantityControl() {
-    const candidates = []
-
-    const selectSelectors = [
-      'select[name="quantity"]',
-      ".ui-pdp-buybox__quantity__select select",
-      '[data-testid="quantity-selector"] select',
-      ".ui-pdp-buybox__quantity select",
-    ]
-
-    for (const selector of selectSelectors) {
-      const select = document.querySelector(selector)
-      if (!(select instanceof HTMLSelectElement)) continue
-
-      for (const option of Array.from(select.options)) {
-        pushExactStockCandidate(candidates, Number(option.value))
-        const fromLabel = parseExactUnitCount(option.textContent)
-        if (fromLabel?.stockMin != null) pushExactStockCandidate(candidates, fromLabel.stockMin)
-      }
-    }
-
-    const triggerSelectors = [
-      ".ui-pdp-buybox__quantity__trigger",
-      "#quantity__value",
-      ".ui-pdp-buybox__quantity__label",
-      "[class*='quantity__trigger']",
-      "[class*='quantity__value']",
-    ]
-
-    for (const selector of triggerSelectors) {
-      const node = document.querySelector(selector)
-      const parsed = parseExactUnitCount(node?.textContent)
-      if (parsed?.stockMin != null) pushExactStockCandidate(candidates, parsed.stockMin)
-      const aria = parseExactUnitCount(node?.getAttribute?.("aria-label"))
-      if (aria?.stockMin != null) pushExactStockCandidate(candidates, aria.stockMin)
-    }
-
-    const buybox =
-      document.querySelector("#buybox_available_quantity") ||
-      document.querySelector(".ui-pdp-buybox") ||
-      document.querySelector("[data-testid='buy-box-container']")
-
-    if (buybox) {
-      buybox.querySelectorAll("[aria-label]").forEach((node) => {
-        const parsed = parseExactUnitCount(node.getAttribute("aria-label"))
-        if (parsed?.stockMin != null) pushExactStockCandidate(candidates, parsed.stockMin)
-      })
-
-      const buyboxText = buybox.innerText || ""
-      for (const match of buyboxText.matchAll(/(\d+)\s+unidades?\b/gi)) {
-        const index = match.index ?? 0
-        const prefix = buyboxText.slice(Math.max(0, index - 4), index)
-        if (prefix.includes("+")) continue
-        pushExactStockCandidate(candidates, match[1])
-      }
-    }
-
-    if (candidates.length === 0) return null
-
-    const max = Math.max(...candidates)
-    return { stockText: `${max} unidades`, stockMin: max }
-  }
-
-  function collectStockFromEmbeddedJson() {
-    const html = document.documentElement.innerHTML
-    const values = [...html.matchAll(/"available_quantity"\s*:\s*(\d+)/g)]
-      .map((match) => Number(match[1]))
-      .filter((value) => Number.isFinite(value) && value > 0 && value <= 50000)
-
-    if (values.length === 0) return null
-
-    const max = Math.max(...values)
-    return { stockText: `${max} unidades`, stockMin: max }
   }
 
   function detectBlockedPage() {
@@ -234,36 +124,18 @@
       }
     }
 
-    const exactCandidates = [
-      collectExactStockFromQuantityControl(),
-      collectStockFromEmbeddedJson(),
-    ].filter((entry) => entry?.stockMin != null)
-
-    if (exactCandidates.length > 0) {
-      const best = exactCandidates.reduce((bestSoFar, entry) =>
-        (entry.stockMin ?? 0) > (bestSoFar.stockMin ?? 0) ? entry : bestSoFar,
-      )
-      return {
-        ok: true,
-        status: "success",
-        itemId: expectedItemId,
-        finalUrl: location.href,
-        source: "extension_page",
-        ...best,
-      }
-    }
-
     const selectors = [
       ".ui-pdp-buybox__quantity__available",
       "#buybox_available_quantity .ui-pdp-buybox__quantity__available",
       "#buybox_available_quantity [aria-label]",
+      ".ui-pdp-buybox__quantity__trigger",
       "[class*='quantity__available']",
     ]
 
     for (const selector of selectors) {
       const node = document.querySelector(selector)
       const parsed = parsePublicStockText(node?.textContent)
-      if (parsed?.stockMin != null) {
+      if (parsed) {
         return {
           ok: true,
           status: "success",
@@ -283,39 +155,6 @@
       .split("\n")
       .map((line) => line.trim())
       .filter(Boolean)
-
-    const exactLines = lines
-      .map((line) => parseExactUnitCount(line))
-      .filter((parsed) => parsed?.stockMin != null)
-    if (exactLines.length > 0) {
-      const best = exactLines.reduce((bestSoFar, entry) =>
-        (entry.stockMin ?? 0) > (bestSoFar.stockMin ?? 0) ? entry : bestSoFar,
-      )
-      return {
-        ok: true,
-        status: "success",
-        itemId: expectedItemId,
-        finalUrl: location.href,
-        source: "extension_page",
-        ...best,
-      }
-    }
-
-    for (const selector of selectors) {
-      const node = document.querySelector(selector)
-      const parsed = parsePublicStockText(node?.textContent)
-      if (parsed) {
-        return {
-          ok: true,
-          status: "success",
-          itemId: expectedItemId,
-          finalUrl: location.href,
-          source: "extension_page",
-          ...parsed,
-        }
-      }
-    }
-
     const stockLine = lines.find(
       (line) =>
         /\+\s*\d+/.test(line) ||
@@ -343,22 +182,16 @@
     }
   }
 
-  function hasExactStockResult(result) {
-    return result?.ok === true && typeof result.stockMin === "number"
-  }
-
   async function collectPublicStockWithRetry(expectedItemId) {
     const deadline = Date.now() + PUBLIC_STOCK_RETRY_TIMEOUT_MS
     let lastResult = collectPublicStockFromPage(expectedItemId)
 
     while (Date.now() < deadline) {
-      if (lastResult.status === "blocked") return lastResult
-      if (hasExactStockResult(lastResult)) return lastResult
+      if (lastResult.ok || lastResult.status === "blocked") return lastResult
       await new Promise((resolve) => setTimeout(resolve, PUBLIC_STOCK_RETRY_INTERVAL_MS))
       lastResult = collectPublicStockFromPage(expectedItemId)
     }
 
-    if (lastResult.ok || lastResult.status === "blocked") return lastResult
     return lastResult
   }
 

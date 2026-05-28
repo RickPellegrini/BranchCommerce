@@ -98,11 +98,13 @@ export function CompetitorTable({
   myPrice,
   winnerItemId,
   isStockFallbackLoading = false,
+  extensionStockResolvedIds,
 }: {
   competitors: CompetitorEntry[]
   myPrice: number
   winnerItemId: string | null
   isStockFallbackLoading?: boolean
+  extensionStockResolvedIds?: ReadonlySet<string>
 }) {
   if (competitors.length === 0) return null
 
@@ -243,12 +245,20 @@ export function CompetitorTable({
                       </>
                     ) : (
                       <div className="text-right">
-                        <span className="text-xs text-muted-foreground">
-                          {isStockFallbackLoading ? "Atualizando..." : "Indisponivel"}
-                        </span>
-                        {isStockFallbackLoading && (
-                          <p className="text-[10px] text-muted-foreground">Extensao</p>
-                        )}
+                        {(() => {
+                          const scanDone = extensionStockResolvedIds?.has(c.itemId) ?? false
+                          const isLoading = isStockFallbackLoading && !scanDone
+                          return (
+                            <>
+                              <span className="text-xs text-muted-foreground">
+                                {isLoading ? "Atualizando..." : "Indisponivel"}
+                              </span>
+                              {isLoading && (
+                                <p className="text-[10px] text-muted-foreground">Extensao</p>
+                              )}
+                            </>
+                          )
+                        })()}
                       </div>
                     )}
                   </td>
