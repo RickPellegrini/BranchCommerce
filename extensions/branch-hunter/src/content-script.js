@@ -76,7 +76,42 @@
     return value && String(value).trim() ? String(value) : "--"
   }
 
+  function parseExactUnitCount(text) {
+    const normalized = String(text || "")
+      .replace(/\s+/g, " ")
+      .trim()
+    if (!normalized || /\+\s*\d+/.test(normalized)) return null
+
+    const lower = normalized.toLowerCase()
+    if (lower.includes("último") || lower.includes("ultimo")) {
+      return { stockText: "Último disponível", stockMin: 1 }
+    }
+
+    const qtyLabel = normalized.match(/quantidade:\s*(\d+)\s+unidade/i)
+    if (qtyLabel) {
+      const count = Number(qtyLabel[1])
+      return { stockText: `${count} unidades`, stockMin: count }
+    }
+
+    const unitMatch = normalized.match(/(\d+)\s+unidades?\b/i)
+    if (unitMatch) {
+      const count = Number(unitMatch[1])
+      return { stockText: `${count} unidades`, stockMin: count }
+    }
+
+    const availableMatch = normalized.match(/(\d+)\s+dispon[ií]ve(?:l|is)\b/i)
+    if (availableMatch) {
+      const count = Number(availableMatch[1])
+      return { stockText: `${count} disponíveis`, stockMin: count }
+    }
+
+    return null
+  }
+
   function parsePublicStockText(text) {
+    const exact = parseExactUnitCount(text)
+    if (exact) return exact
+
     const normalized = String(text || "")
       .replace(/\s+/g, " ")
       .trim()
@@ -84,22 +119,55 @@
 
     const lower = normalized.toLowerCase()
     if (lower.includes("último") || lower.includes("ultimo")) {
-      return { stockText: normalized, stockMin: 1 }
+      return { stockText: "Último disponível", stockMin: 1 }
     }
 
     const plusMatch = normalized.match(/\+\s*(\d+)/)
     if (plusMatch) {
-      return { stockText: normalized, stockMin: Number(plusMatch[1]) }
-    }
-
-    const unitMatch = normalized.match(
-      /(\d+)\s+(?:unidade|unidades|disponível|disponiveis|disponíveis)/i,
-    )
-    if (unitMatch) {
-      return { stockText: normalized, stockMin: Number(unitMatch[1]) }
+      // ML uses "+5" as a bucket (5+), not an exact count.
+      return { stockText: normalized, stockMin: null }
     }
 
     return { stockText: normalized, stockMin: null }
+  }
+
+  function collectExactStockFromQuantityControl() {
+    const selectSelectors = [
+      'select[name="quantity"]',
+      "#quantity__value",
+      ".ui-pdp-buybox__quantity__select select",
+      '[data-testid="quantity-selector"] select',
+      ".ui-pdp-buybox__quantity select",
+    ]
+
+    for (const selector of selectSelectors) {
+      const select = document.querySelector(selector)
+      if (!(select instanceof HTMLSelectElement)) continue
+
+      const values = Array.from(select.options)
+        .map((option) => Number(option.value))
+        .filter((value) => Number.isFinite(value) && value > 0)
+
+      if (values.length === 0) continue
+
+      const max = Math.max(...values)
+      return { stockText: `${max} unidades`, stockMin: max }
+    }
+
+    const triggerSelectors = [
+      ".ui-pdp-buybox__quantity__trigger",
+      "#quantity__value",
+      ".ui-pdp-buybox__quantity__label",
+      "[class*='quantity__trigger']",
+    ]
+
+    for (const selector of triggerSelectors) {
+      const node = document.querySelector(selector)
+      const parsed = parseExactUnitCount(node?.textContent)
+      if (parsed) return parsed
+    }
+
+    return null
   }
 
   function detectBlockedPage() {
@@ -124,18 +192,29 @@
       }
     }
 
+    const exactFromQuantity = collectExactStockFromQuantityControl()
+    if (exactFromQuantity) {
+      return {
+        ok: true,
+        status: "success",
+        itemId: expectedItemId,
+        finalUrl: location.href,
+        source: "extension_page",
+        ...exactFromQuantity,
+      }
+    }
+
     const selectors = [
       ".ui-pdp-buybox__quantity__available",
       "#buybox_available_quantity .ui-pdp-buybox__quantity__available",
       "#buybox_available_quantity [aria-label]",
-      ".ui-pdp-buybox__quantity__trigger",
       "[class*='quantity__available']",
     ]
 
     for (const selector of selectors) {
       const node = document.querySelector(selector)
       const parsed = parsePublicStockText(node?.textContent)
-      if (parsed) {
+      if (parsed?.stockMin != null) {
         return {
           ok: true,
           status: "success",
@@ -155,6 +234,36 @@
       .split("\n")
       .map((line) => line.trim())
       .filter(Boolean)
+
+    const exactLine = lines
+      .map((line) => parseExactUnitCount(line))
+      .find((parsed) => parsed?.stockMin != null)
+    if (exactLine) {
+      return {
+        ok: true,
+        status: "success",
+        itemId: expectedItemId,
+        finalUrl: location.href,
+        source: "extension_page",
+        ...exactLine,
+      }
+    }
+
+    for (const selector of selectors) {
+      const node = document.querySelector(selector)
+      const parsed = parsePublicStockText(node?.textContent)
+      if (parsed) {
+        return {
+          ok: true,
+          status: "success",
+          itemId: expectedItemId,
+          finalUrl: location.href,
+          source: "extension_page",
+          ...parsed,
+        }
+      }
+    }
+
     const stockLine = lines.find(
       (line) =>
         /\+\s*\d+/.test(line) ||

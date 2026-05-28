@@ -107,9 +107,9 @@ function requestExtensionStockScan(
 }
 
 function stockLabelFromExtension(result: ExtensionStockResult): string | null {
+  if (typeof result.stockMin === "number") return String(result.stockMin)
   const text = result.stockText?.replace(/[()]/g, "").trim()
   if (text) return text
-  if (typeof result.stockMin === "number") return String(result.stockMin)
   return null
 }
 
