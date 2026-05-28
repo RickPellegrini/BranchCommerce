@@ -6,7 +6,7 @@
   const BADGE_ATTR = "data-bh-processed"
   const PUBLIC_STOCK_RETRY_TIMEOUT_MS = 12000
   const PUBLIC_STOCK_RETRY_INTERVAL_MS = 500
-  const APP_DASHBOARD_URL = "https://branch-commerce.vercel.app/dashboard"
+  const APP_BASE_URL = "https://branch-commerce.vercel.app"
 
   const state = {
     listingId: "",
@@ -801,14 +801,33 @@
     }
   }
 
+  function normalizeMlItemId(value) {
+    const match = String(value || "").match(/MLB[-]?\d+/i)
+    if (!match) return ""
+    return match[0].toUpperCase().replace("-", "")
+  }
+
+  function resolveListingIdForCatalogAnalysis() {
+    const fromCandidates =
+      globalThis.BranchHunterPageUtils?.getCandidateListingIds?.().find((id) =>
+        /^MLB\d+$/.test(id),
+      ) || ""
+    if (fromCandidates) return fromCandidates
+
+    const fromState = normalizeMlItemId(state.listingId)
+    if (fromState) return fromState
+
+    const fromUrl = normalizeMlItemId(state.listingUrl || location.href)
+    return fromUrl
+  }
+
   function openCatalogAnalysisInApp() {
-    const listingId = state.listingId && state.listingId !== "unknown-item" ? state.listingId : ""
-    const configuredBase = state.syncConfig.apiBaseUrl
-      ? `${state.syncConfig.apiBaseUrl.replace(/\/+$/, "")}/dashboard`
-      : APP_DASHBOARD_URL
-    const base = configuredBase
-    const url = new URL(base)
-    url.searchParams.set("module", "branchhunter")
+    const listingId = resolveListingIdForCatalogAnalysis()
+    const base = state.syncConfig.apiBaseUrl
+      ? state.syncConfig.apiBaseUrl.replace(/\/+$/, "")
+      : APP_BASE_URL
+    const targetPath = `${base}/branch-hunter`
+    const url = new URL(targetPath)
     url.searchParams.set("hunterSection", "analise-anuncio")
     if (listingId) {
       url.searchParams.set("itemId", listingId)
