@@ -72,10 +72,6 @@
     return typeof value === "number" && Number.isFinite(value) ? formatMoney(value) : "--"
   }
 
-  function formatNullableText(value) {
-    return value && String(value).trim() ? String(value) : "--"
-  }
-
   function parsePublicStockText(text) {
     const normalized = String(text || "")
       .replace(/\s+/g, " ")
