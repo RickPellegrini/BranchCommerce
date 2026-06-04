@@ -84,9 +84,13 @@ import {
   filterTransactions,
   formatCurrency,
   formatDate,
-  monthlyEvolution,
+  buildMonthlyEvolutionReport,
   summarizeTransactions,
 } from "@/lib/finance/calculations"
+import {
+  buildFinancialReconciliation,
+  type FinancialReconciliationIssue,
+} from "@/lib/finance/reconciliation"
 import type { DayGroup } from "@/lib/mercadopago/future-releases"
 import type {
   AnexoLancamento,
@@ -544,6 +548,29 @@ function monthDateRange(year: number, month1to12: number) {
 function previousMonth(year: number, month1to12: number) {
   if (month1to12 === 1) return { year: year - 1, month: 12 }
   return { year, month: month1to12 - 1 }
+}
+
+/** Intervalo de pedidos ML: DRE, filtro do financeiro e últimos 12 meses dos relatórios. */
+function computeMlOrdersFetchRange(
+  dreYear: number,
+  dreMonth: number,
+  filterStart?: string,
+  filterEnd?: string,
+) {
+  const dre = monthDateRange(dreYear, dreMonth)
+  const now = new Date()
+  const reportStart = toIsoDate(new Date(now.getFullYear(), now.getMonth() - 11, 1))
+  const todayEnd = toIsoDate(endOfMonth(now))
+
+  let start = dre.start
+  if (filterStart && filterStart < start) start = filterStart
+  if (reportStart < start) start = reportStart
+
+  let end = dre.end
+  if (filterEnd && filterEnd > end) end = filterEnd
+  if (todayEnd > end) end = todayEnd
+
+  return { startDate: start, endDate: end }
 }
 
 function toIsoDate(date: Date) {
@@ -1138,6 +1165,26 @@ function transactionIsManualAdjustment(transaction: FinancialTransaction) {
   return transaction.origin !== "Venda online"
 }
 
+function formatPeriodLabel(start?: string, end?: string) {
+  if (!start || !end) return "Periodo nao definido"
+  if (start === end) return formatDate(start)
+  return `${formatDate(start)} – ${formatDate(end)}`
+}
+
+function FinanceReconciliationAlert({ issues }: { issues: FinancialReconciliationIssue[] }) {
+  if (issues.length === 0) return null
+  return (
+    <div className="rounded-none border border-amber-600/40 bg-amber-50/50 px-3 py-2 text-sm dark:bg-amber-950/30">
+      <p className="font-medium text-amber-900 dark:text-amber-200">Conferencia entre telas</p>
+      <ul className="mt-1 list-disc space-y-0.5 pl-4 text-xs text-muted-foreground">
+        {issues.map((issue) => (
+          <li key={issue.code}>{issue.message}</li>
+        ))}
+      </ul>
+    </div>
+  )
+}
+
 function buildTopProductRows({
   abcRows,
   products,
@@ -1292,6 +1339,8 @@ function buildAbcRowsFromOrders(
     const orderTaxes = Math.max(0, order.taxesAmount)
     const orderOverhead = orderMlFee + orderShipping + orderTaxes
 
+    const orderRevenue = Math.max(0, order.totalAmount)
+
     for (const item of order.items) {
       const quantity = Math.max(0, item.quantity)
       if (quantity <= 0) continue
@@ -1301,9 +1350,10 @@ function buildAbcRowsFromOrders(
       const mappedProduct = mappedByItem ?? mappedBySku
 
       const unitCost = mappedProduct?.unitCost ?? 0
-      const revenue = Math.max(0, item.unitPrice) * quantity
       const itemShare = orderItemCount > 0 ? quantity / orderItemCount : 0
-      const totalCost = unitCost * quantity + orderOverhead * itemShare
+      const revenue = orderRevenue * itemShare
+      const itemFulfillment = centralizeFulfillmentCostForItem(mappedProduct, quantity, item.title)
+      const totalCost = unitCost * quantity + orderOverhead * itemShare + itemFulfillment
       const profit = revenue - totalCost
       const key = item.id || item.sku || item.title
 
@@ -1574,6 +1624,9 @@ export function FinancialDashboard({
   } | null>(null)
   const [launchFormAnexos, setLaunchFormAnexos] = useState<AnexoLancamento[]>([])
   const [returnModal, setReturnModal] = useState<{
+    transaction: FinancialTransaction
+  } | null>(null)
+  const [deleteInstallmentModal, setDeleteInstallmentModal] = useState<{
     transaction: FinancialTransaction
   } | null>(null)
   const [returnForm, setReturnForm] = useState({
@@ -1870,8 +1923,21 @@ export function FinancialDashboard({
         }
         setGlobalSyncStatus(
           payload.data?.skipped
-            ? "Dados externos ainda recentes; usando cache salvo."
-            : "Sincronizacao geral concluida.",
+            ? "Dados externos ainda recentes; usando cache salvo. Use Sincronizar tudo para forcar."
+            : (() => {
+                const stockResult = payload.data?.results?.stock as
+                  | {
+                      created?: number
+                      updated?: number
+                      linkedManual?: number
+                      totalMlItems?: number
+                    }
+                  | undefined
+                if (stockResult?.totalMlItems != null) {
+                  return `Estoque ML: ${stockResult.created ?? 0} novo(s), ${stockResult.updated ?? 0} atualizado(s), ${stockResult.linkedManual ?? 0} vinculado(s) de ${stockResult.totalMlItems} anuncio(s).`
+                }
+                return "Sincronizacao geral concluida."
+              })(),
         )
         const stockSalesResult = payload.data?.results?.stockSales
         if (stockSalesResult && typeof stockSalesResult === "object") {
@@ -2009,18 +2075,7 @@ export function FinancialDashboard({
 
   const mpFutureFees = useMemo(() => mpFutureGross - mpFutureNet, [mpFutureGross, mpFutureNet])
 
-  const financeData = useQuery(
-    api.finance.getDashboardData,
-    userId
-      ? {
-          userId,
-          startDate: filters.startDate,
-          endDate: filters.endDate,
-          kind: filters.kind,
-          categoryId: filters.categoryId ? (filters.categoryId as Id<"categories">) : undefined,
-        }
-      : "skip",
-  )
+  const financeData = useQuery(api.finance.getDashboardData, userId ? { userId } : "skip")
 
   const stockData = useQuery(api.stock.getDashboardData, userId ? { userId } : "skip")
 
@@ -2130,10 +2185,9 @@ export function FinancialDashboard({
           return
         }
 
-        await loadMlOrders({
-          startDate: filters.startDate,
-          endDate: filters.endDate,
-        })
+        await loadMlOrders(
+          computeMlOrdersFetchRange(dreYear, dreMonth, filters.startDate, filters.endDate),
+        )
       } catch {
         // Keep financial module resilient when ML integration is unavailable.
       }
@@ -2141,7 +2195,7 @@ export function FinancialDashboard({
 
     void loadOrdersForFinancial()
     // eslint-disable-next-line react-hooks/exhaustive-deps -- loadMlOrders is a local fetch helper; reload is driven by module/user/date range.
-  }, [activeModule, filters.endDate, filters.startDate, userId])
+  }, [activeModule, dreMonth, dreYear, filters.endDate, filters.startDate, userId])
 
   const categories = useMemo<FinancialCategory[]>(
     () =>
@@ -2528,23 +2582,58 @@ export function FinancialDashboard({
     }
   }
   const summary = useMemo(() => summarizeTransactions(filteredTransactions), [filteredTransactions])
-  const evolutionReport = useMemo(() => monthlyEvolution(transactions), [transactions])
+  const evolutionReport = useMemo(
+    () =>
+      buildMonthlyEvolutionReport(
+        transactions,
+        mlOrders.map((order) => ({
+          dateCreated: order.dateCreated,
+          totalAmount: order.totalAmount,
+          status: order.status,
+        })),
+        12,
+      ),
+    [mlOrders, transactions],
+  )
   const evolutionDetailsByLabel = useMemo(() => {
     const labels = new Set(evolutionReport.map((item) => item.monthLabel))
-    const map = new Map<string, FinancialTransaction[]>()
-    for (const transaction of transactions) {
-      const [year, month] = transaction.date.split("-").map(Number)
-      const label = new Date(year, (month ?? 1) - 1, 1).toLocaleDateString("pt-BR", {
+    const map = new Map<
+      string,
+      Array<
+        | { kind: "transaction"; transaction: FinancialTransaction }
+        | { kind: "ml"; id: string; description: string; amount: number }
+      >
+    >()
+    const monthLabelFromIso = (dateIso: string) => {
+      const [year, month] = dateIso.split("-").map(Number)
+      return new Date(year, (month ?? 1) - 1, 1).toLocaleDateString("pt-BR", {
         month: "short",
         year: "2-digit",
       })
+    }
+    for (const transaction of transactions) {
+      if (transaction.kind === "income" && transaction.origin === "Venda online") continue
+      const label = monthLabelFromIso(transaction.date)
       if (!labels.has(label)) continue
       const current = map.get(label) ?? []
-      current.push(transaction)
+      current.push({ kind: "transaction", transaction })
+      map.set(label, current)
+    }
+    for (const order of mlOrders) {
+      if (!isValidMarketplaceOrder(order)) continue
+      const label = monthLabelFromIso(order.dateCreated.slice(0, 10))
+      if (!labels.has(label)) continue
+      const current = map.get(label) ?? []
+      current.push({
+        kind: "ml",
+        id: order.id,
+        description: `Pedido ML #${order.id}`,
+        amount: Math.max(0, order.totalAmount),
+      })
       map.set(label, current)
     }
     return map
-  }, [evolutionReport, transactions])
+  }, [evolutionReport, mlOrders, transactions])
   const salesInFilter = filteredTransactions
     .filter((item) => item.kind === "income" && item.origin === "Venda online")
     .reduce((total, item) => total + item.amount, 0)
@@ -3847,6 +3936,61 @@ export function FinancialDashboard({
       })),
     [],
   )
+  const drePeriodsAlignedWithFilters = useMemo(() => {
+    if (!filters.startDate || !filters.endDate) return true
+    return dreRange.start === filters.startDate && dreRange.end === filters.endDate
+  }, [dreRange.end, dreRange.start, filters.endDate, filters.startDate])
+  const financeReconciliation = useMemo(() => {
+    const commerceFlowSales = commerceFlowData.reduce((sum, row) => sum + row.salesIncome, 0)
+    const evolutionIncomeForPeriod = (() => {
+      if (!filters.endDate) return undefined
+      const [year, month] = filters.endDate.split("-").map(Number)
+      const label = new Date(year, (month ?? 1) - 1, 1).toLocaleDateString("pt-BR", {
+        month: "short",
+        year: "2-digit",
+      })
+      return evolutionReport.find((item) => item.monthLabel === label)?.income
+    })()
+    const abcRevenueTotal = abcRows.reduce((sum, row) => sum + row.revenue, 0)
+    const abcProfitTotal = abcRows.reduce((sum, row) => sum + row.profit, 0)
+
+    return buildFinancialReconciliation({
+      periodsAligned: drePeriodsAlignedWithFilters,
+      filterPeriodLabel: formatPeriodLabel(filters.startDate, filters.endDate),
+      drePeriodLabel: formatPeriodLabel(dreRange.start, dreRange.end),
+      revenueFromOrders: ordersFinancialSummary.grossRevenue,
+      dreRevenue: dreSnapshot.revenueConfirmed,
+      dreGrossProfit: dreSnapshot.grossProfit,
+      dreNetProfit: dreSnapshot.netProfit,
+      ordersNetProfit: ordersFinancialSummary.netProfit,
+      abcRevenueTotal,
+      abcProfitTotal,
+      filterExpensesAll: expensesInFilter,
+      dreOperationalExpenses: dreSnapshot.operationalExpenses,
+      dreFixedCosts: dreSnapshot.fixedCosts,
+      commerceFlowSales,
+      evolutionIncomeForPeriod,
+      dreIncludeMovements,
+    })
+  }, [
+    abcRows,
+    commerceFlowData,
+    dreIncludeMovements,
+    drePeriodsAlignedWithFilters,
+    dreRange.end,
+    dreRange.start,
+    dreSnapshot.fixedCosts,
+    dreSnapshot.grossProfit,
+    dreSnapshot.netProfit,
+    dreSnapshot.operationalExpenses,
+    dreSnapshot.revenueConfirmed,
+    evolutionReport,
+    expensesInFilter,
+    filters.endDate,
+    filters.startDate,
+    ordersFinancialSummary.grossRevenue,
+    ordersFinancialSummary.netProfit,
+  ])
 
   const filteredMlOrders = useMemo(() => {
     const filtered = mlOrders.filter((order) => {
@@ -4203,16 +4347,47 @@ export function FinancialDashboard({
     setEditingTransactionId(null)
   }
 
-  const removeTransaction = async (transaction: FinancialTransaction) => {
+  const installmentDeletePlanCount = useMemo(() => {
+    const modalTx = deleteInstallmentModal?.transaction
+    if (!modalTx?.installmentPlanId || modalTx.installmentIndex == null) {
+      return { total: 0, future: 0 }
+    }
+    const samePlan = transactions.filter((tx) => tx.installmentPlanId === modalTx.installmentPlanId)
+    const future = samePlan.filter(
+      (tx) => (tx.installmentIndex ?? 0) >= modalTx.installmentIndex!,
+    ).length
+    return { total: samePlan.length, future }
+  }, [deleteInstallmentModal, transactions])
+
+  const confirmDeleteTransaction = (transaction: FinancialTransaction) => {
+    if (
+      transaction.installmentPlanId != null &&
+      transaction.installmentIndex != null &&
+      transaction.installmentCount != null
+    ) {
+      setDeleteInstallmentModal({ transaction })
+      return
+    }
+    void removeTransaction(transaction)
+  }
+
+  const removeTransaction = async (
+    transaction: FinancialTransaction,
+    installmentScope?: "single" | "this_and_future",
+  ) => {
     if (!userId) return
-    const confirmed = window.confirm("Deseja realmente excluir este lancamento?")
-    if (!confirmed) return
+    if (!installmentScope) {
+      const confirmed = window.confirm("Deseja realmente excluir este lancamento?")
+      if (!confirmed) return
+    }
 
     await deleteTransaction({
       userId,
       transactionId: transaction.id as Id<"transactions">,
+      ...(installmentScope ? { installmentScope } : {}),
     })
 
+    setDeleteInstallmentModal(null)
     if (editingTransactionId === transaction.id) {
       setEditingTransactionId(null)
     }
@@ -6379,6 +6554,7 @@ export function FinancialDashboard({
 
             {activeFinanceSection === "overview" && (
               <section className="space-y-4">
+                <FinanceReconciliationAlert issues={financeReconciliation.issues} />
                 <Card className="border-border/70">
                   <CardHeader className="pb-3">
                     <CardTitle className="inline-flex items-center gap-2 text-xl">
@@ -7126,6 +7302,7 @@ export function FinancialDashboard({
 
             {activeFinanceSection === "abc" && (
               <section className="space-y-4">
+                <FinanceReconciliationAlert issues={financeReconciliation.issues} />
                 <Card>
                   <CardHeader>
                     <CardTitle className="inline-flex items-center gap-2">
@@ -7375,6 +7552,7 @@ export function FinancialDashboard({
 
             {activeFinanceSection === "dre" && (
               <section className="space-y-4">
+                <FinanceReconciliationAlert issues={financeReconciliation.issues} />
                 <Card>
                   <CardHeader className="flex flex-row items-start justify-between">
                     <div>
@@ -8011,6 +8189,7 @@ export function FinancialDashboard({
 
             {activeFinanceSection === "reports" && (
               <section className="space-y-4">
+                <FinanceReconciliationAlert issues={financeReconciliation.issues} />
                 <div className="grid gap-4 xl:grid-cols-2">
                   <Card>
                     <CardHeader>
@@ -8102,6 +8281,10 @@ export function FinancialDashboard({
                   <Card>
                     <CardHeader>
                       <CardTitle>Evolucao mensal</CardTitle>
+                      <CardDescription>
+                        Entradas e saidas do financeiro mais vendas do Mercado Livre (ultimos 12
+                        meses). Receitas ja lançadas como Venda online nao entram em duplicidade.
+                      </CardDescription>
                     </CardHeader>
                     <CardContent className="grid gap-2">
                       {evolutionReport.map((item) => {
@@ -8134,33 +8317,50 @@ export function FinancialDashboard({
                                 {details.length === 0 ? (
                                   <p className="text-xs text-muted-foreground">Sem lancamentos.</p>
                                 ) : (
-                                  details.slice(0, 8).map((transaction) => (
-                                    <div
-                                      key={transaction.id}
-                                      className="flex items-center justify-between gap-2 text-xs"
-                                    >
-                                      <span className="truncate">
-                                        {transaction.description}{" "}
-                                        <span className="text-muted-foreground">
-                                          (
-                                          {categoryMap.get(transaction.categoryId)?.name ??
-                                            "Sem categoria"}
-                                          )
-                                        </span>
-                                      </span>
-                                      <span
-                                        className={cn(
-                                          "shrink-0 tabular-nums",
-                                          transaction.kind === "income"
-                                            ? "text-emerald-600 dark:text-emerald-400"
-                                            : "text-rose-600 dark:text-rose-400",
-                                        )}
+                                  details.slice(0, 8).map((entry) =>
+                                    entry.kind === "ml" ? (
+                                      <div
+                                        key={`ml-${entry.id}`}
+                                        className="flex items-center justify-between gap-2 text-xs"
                                       >
-                                        {transaction.kind === "income" ? "+" : "-"}{" "}
-                                        {formatCurrency(transaction.amount)}
-                                      </span>
-                                    </div>
-                                  ))
+                                        <span className="truncate">
+                                          {entry.description}{" "}
+                                          <span className="text-muted-foreground">
+                                            (Mercado Livre)
+                                          </span>
+                                        </span>
+                                        <span className="shrink-0 tabular-nums text-emerald-600 dark:text-emerald-400">
+                                          + {formatCurrency(entry.amount)}
+                                        </span>
+                                      </div>
+                                    ) : (
+                                      <div
+                                        key={entry.transaction.id}
+                                        className="flex items-center justify-between gap-2 text-xs"
+                                      >
+                                        <span className="truncate">
+                                          {entry.transaction.description}{" "}
+                                          <span className="text-muted-foreground">
+                                            (
+                                            {categoryMap.get(entry.transaction.categoryId)?.name ??
+                                              "Sem categoria"}
+                                            )
+                                          </span>
+                                        </span>
+                                        <span
+                                          className={cn(
+                                            "shrink-0 tabular-nums",
+                                            entry.transaction.kind === "income"
+                                              ? "text-emerald-600 dark:text-emerald-400"
+                                              : "text-rose-600 dark:text-rose-400",
+                                          )}
+                                        >
+                                          {entry.transaction.kind === "income" ? "+" : "-"}{" "}
+                                          {formatCurrency(entry.transaction.amount)}
+                                        </span>
+                                      </div>
+                                    ),
+                                  )
                                 )}
                                 {details.length > 8 && (
                                   <p className="text-xs text-muted-foreground">
@@ -8717,7 +8917,7 @@ export function FinancialDashboard({
                                       <Button
                                         size="sm"
                                         variant="destructive"
-                                        onClick={() => void removeTransaction(transaction)}
+                                        onClick={() => confirmDeleteTransaction(transaction)}
                                       >
                                         Excluir
                                       </Button>
@@ -8732,6 +8932,66 @@ export function FinancialDashboard({
                     )}
                   </CardContent>
                 </Card>
+
+                <Dialog.Root
+                  open={deleteInstallmentModal !== null}
+                  onOpenChange={(open) => {
+                    if (!open) setDeleteInstallmentModal(null)
+                  }}
+                >
+                  <Dialog.Portal>
+                    <Dialog.Overlay className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm" />
+                    <Dialog.Content className="fixed left-1/2 top-1/2 z-50 w-full max-w-md -translate-x-1/2 -translate-y-1/2 rounded-2xl border border-border bg-card p-6 shadow-xl">
+                      <Dialog.Title className="text-base font-semibold">
+                        Excluir parcela no cartao
+                      </Dialog.Title>
+                      <Dialog.Description className="mt-1 text-sm text-muted-foreground">
+                        {deleteInstallmentModal?.transaction.description}
+                      </Dialog.Description>
+                      <p className="mt-3 text-sm text-muted-foreground">
+                        Parcela {deleteInstallmentModal?.transaction.installmentIndex} de{" "}
+                        {deleteInstallmentModal?.transaction.installmentCount}. Escolha se remove
+                        apenas esta parcela ou tambem as parcelas futuras do mesmo plano.
+                      </p>
+                      <div className="mt-5 flex flex-col gap-2">
+                        <Button
+                          type="button"
+                          variant="destructive"
+                          onClick={() => {
+                            const tx = deleteInstallmentModal?.transaction
+                            if (!tx) return
+                            void removeTransaction(tx, "single")
+                          }}
+                        >
+                          Somente esta parcela
+                        </Button>
+                        <Button
+                          type="button"
+                          variant="outline"
+                          className="border-destructive/40 text-destructive hover:bg-destructive/10"
+                          disabled={installmentDeletePlanCount.future <= 1}
+                          onClick={() => {
+                            const tx = deleteInstallmentModal?.transaction
+                            if (!tx) return
+                            void removeTransaction(tx, "this_and_future")
+                          }}
+                        >
+                          Esta e as parcelas futuras
+                          {installmentDeletePlanCount.future > 1
+                            ? ` (${installmentDeletePlanCount.future})`
+                            : null}
+                        </Button>
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          onClick={() => setDeleteInstallmentModal(null)}
+                        >
+                          Cancelar
+                        </Button>
+                      </div>
+                    </Dialog.Content>
+                  </Dialog.Portal>
+                </Dialog.Root>
 
                 <Dialog.Root
                   open={returnModal !== null}

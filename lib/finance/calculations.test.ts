@@ -11,6 +11,7 @@ import {
   forecastFinancialTrend,
   formatCurrency,
   formatDate,
+  buildMonthlyEvolutionReport,
   monthlyEvolution,
   summarizeTransactions,
 } from "./calculations"
@@ -194,6 +195,52 @@ describe("monthlyEvolution", () => {
     const transactions = [tx({ kind: "income", amount: 999, date: "2020-01-01" })]
     const result = monthlyEvolution(transactions, 3)
     expect(result.every((m) => m.income === 0)).toBe(true)
+  })
+})
+
+describe("buildMonthlyEvolutionReport", () => {
+  it("adds ML order revenue to the matching month", () => {
+    const now = new Date()
+    const key = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`
+    const result = buildMonthlyEvolutionReport(
+      [],
+      [
+        {
+          dateCreated: `${key}-15T12:00:00.000Z`,
+          totalAmount: 180,
+          status: "paid",
+        },
+      ],
+      12,
+    )
+    const current = result[result.length - 1]
+    expect(current.income).toBe(180)
+    expect(current.result).toBe(180)
+  })
+
+  it("skips duplicate Venda online income when ML order exists", () => {
+    const now = new Date()
+    const key = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`
+    const result = buildMonthlyEvolutionReport(
+      [
+        tx({
+          kind: "income",
+          amount: 180,
+          date: `${key}-10`,
+          origin: "Venda online",
+        }),
+      ],
+      [
+        {
+          dateCreated: `${key}-15T12:00:00.000Z`,
+          totalAmount: 180,
+          status: "paid",
+        },
+      ],
+      12,
+    )
+    const current = result[result.length - 1]
+    expect(current.income).toBe(180)
   })
 })
 

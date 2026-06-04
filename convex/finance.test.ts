@@ -299,6 +299,71 @@ describe("finance", () => {
         }),
       ).rejects.toThrow("Lancamento nao encontrado")
     })
+
+    it("deletes only one credit installment when scope is single", async () => {
+      const t = convexTest(schema, modules)
+      const catId = await t.mutation(api.finance.addCategory, {
+        userId: "user1",
+        name: "Compras",
+        kind: "expense",
+      })
+      await t.mutation(api.finance.addExpenseWithPayment, {
+        userId: "user1",
+        amount: 300,
+        date: "2025-06-01",
+        description: "Compra parcelada",
+        categoryId: catId,
+        paymentMethod: "credit",
+        installmentCount: 3,
+        firstChargeDate: "2025-07-01",
+      })
+      const data = await t.query(api.finance.getDashboardData, { userId: "user1" })
+      const middle = data.transactions.find((tx) => tx.installmentIndex === 2)
+      expect(middle).toBeTruthy()
+
+      await t.mutation(api.finance.deleteTransaction, {
+        userId: "user1",
+        transactionId: middle!._id,
+        installmentScope: "single",
+      })
+
+      const after = await t.query(api.finance.getDashboardData, { userId: "user1" })
+      expect(after.transactions).toHaveLength(2)
+      expect(after.transactions.map((tx) => tx.installmentIndex).sort()).toEqual([1, 3])
+    })
+
+    it("deletes this and future credit installments when scope is this_and_future", async () => {
+      const t = convexTest(schema, modules)
+      const catId = await t.mutation(api.finance.addCategory, {
+        userId: "user1",
+        name: "Compras",
+        kind: "expense",
+      })
+      await t.mutation(api.finance.addExpenseWithPayment, {
+        userId: "user1",
+        amount: 300,
+        date: "2025-06-01",
+        description: "Compra parcelada",
+        categoryId: catId,
+        paymentMethod: "credit",
+        installmentCount: 3,
+        firstChargeDate: "2025-07-01",
+      })
+      const data = await t.query(api.finance.getDashboardData, { userId: "user1" })
+      const second = data.transactions.find((tx) => tx.installmentIndex === 2)
+      expect(second).toBeTruthy()
+
+      const result = await t.mutation(api.finance.deleteTransaction, {
+        userId: "user1",
+        transactionId: second!._id,
+        installmentScope: "this_and_future",
+      })
+      expect(result.deletedCount).toBe(2)
+
+      const after = await t.query(api.finance.getDashboardData, { userId: "user1" })
+      expect(after.transactions).toHaveLength(1)
+      expect(after.transactions[0]?.installmentIndex).toBe(1)
+    })
   })
 
   // ── addBill ───────────────────────────────────────────────────────

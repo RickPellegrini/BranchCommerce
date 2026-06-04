@@ -901,6 +901,50 @@ describe("stock", () => {
       expect(data.kanbanCards.some((card) => card.kanbanStatus === "completed")).toBe(true)
     })
 
+    it("creates new products from non-fulfillment listings", async () => {
+      const t = convexTest(schema, modules)
+      const result = await t.mutation(api.stock.syncFromMercadoLivre, {
+        userId: "user1",
+        listings: [
+          {
+            id: "MLB555",
+            title: "Catalogo Fralda Pampers",
+            price: 199,
+            availableQuantity: 5,
+            logisticType: "cross_docking",
+            status: "active",
+          },
+        ],
+      })
+      expect(result.created).toBe(1)
+      const data = await t.query(api.stock.getDashboardData, { userId: "user1" })
+      expect(data.products).toHaveLength(1)
+      expect(data.products[0].mlItemId).toBe("MLB555")
+      expect(data.products[0].stockSource).toBe("manual")
+      expect(data.products[0].kanbanStatus).toBe("completed")
+      expect(data.products[0].quantity).toBe(5)
+    })
+
+    it("skips creating products from paused non-fulfillment listings", async () => {
+      const t = convexTest(schema, modules)
+      const result = await t.mutation(api.stock.syncFromMercadoLivre, {
+        userId: "user1",
+        listings: [
+          {
+            id: "MLB556",
+            title: "Anuncio pausado antigo",
+            price: 99,
+            availableQuantity: 2,
+            logisticType: "cross_docking",
+            status: "paused",
+          },
+        ],
+      })
+      expect(result.created).toBe(0)
+      const data = await t.query(api.stock.getDashboardData, { userId: "user1" })
+      expect(data.products).toHaveLength(0)
+    })
+
     it("creates adjustment movement when quantity changes", async () => {
       const t = convexTest(schema, modules)
       await t.mutation(api.stock.syncFromMercadoLivre, {

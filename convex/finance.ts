@@ -238,10 +238,52 @@ async function deleteAttachmentsForTransaction(
   }
 }
 
+async function deleteOneTransaction(
+  ctx: MutationCtx,
+  userId: string,
+  transactionId: Id<"transactions">,
+) {
+  const transaction = await ctx.db.get(transactionId)
+  if (!transaction || transaction.userId !== userId) {
+    throw new Error("Lancamento nao encontrado.")
+  }
+
+  // Sales linked to stock movement must be managed in estoque module.
+  if (transaction.origin === "Venda online") {
+    throw new Error("Lancamentos de venda devem ser alterados no estoque.")
+  }
+
+  const asReturn = await ctx.db
+    .query("transactionReturns")
+    .withIndex("by_source_transaction", (q) =>
+      q.eq("userId", userId).eq("sourceTransactionId", transactionId),
+    )
+    .first()
+
+  if (asReturn) {
+    throw new Error(
+      "Este lancamento tem devolucao iniciada. Remova a devolucao antes de excluir o original.",
+    )
+  }
+
+  const creditOfReturn = await ctx.db
+    .query("transactionReturns")
+    .withIndex("by_credit_transaction", (q) => q.eq("creditTransactionId", transactionId))
+    .first()
+
+  if (creditOfReturn && creditOfReturn.userId === userId) {
+    await ctx.db.delete(creditOfReturn._id)
+  }
+
+  await deleteAttachmentsForTransaction(ctx, transactionId)
+  await ctx.db.delete(transactionId)
+}
+
 export const deleteTransaction = mutation({
   args: {
     userId: v.string(),
     transactionId: v.id("transactions"),
+    installmentScope: v.optional(v.union(v.literal("single"), v.literal("this_and_future"))),
   },
   handler: async (ctx, args) => {
     const transaction = await ctx.db.get(args.transactionId)
@@ -249,35 +291,35 @@ export const deleteTransaction = mutation({
       throw new Error("Lancamento nao encontrado.")
     }
 
-    // Sales linked to stock movement must be managed in estoque module.
-    if (transaction.origin === "Venda online") {
-      throw new Error("Lancamentos de venda devem ser alterados no estoque.")
+    const scope = args.installmentScope ?? "single"
+
+    if (scope === "this_and_future") {
+      const planId = transaction.installmentPlanId
+      const index = transaction.installmentIndex
+      if (!planId || index == null) {
+        throw new Error("Este lancamento nao faz parte de um parcelamento no cartao.")
+      }
+
+      const toDelete = await ctx.db
+        .query("transactions")
+        .withIndex("by_user", (q) => q.eq("userId", args.userId))
+        .filter((q) =>
+          q.and(
+            q.eq(q.field("installmentPlanId"), planId),
+            q.gte(q.field("installmentIndex"), index),
+          ),
+        )
+        .collect()
+
+      toDelete.sort((a, b) => (a.installmentIndex ?? 0) - (b.installmentIndex ?? 0))
+      for (const row of toDelete) {
+        await deleteOneTransaction(ctx, args.userId, row._id)
+      }
+      return { deletedCount: toDelete.length }
     }
 
-    const asReturn = await ctx.db
-      .query("transactionReturns")
-      .withIndex("by_source_transaction", (q) =>
-        q.eq("userId", args.userId).eq("sourceTransactionId", args.transactionId),
-      )
-      .first()
-
-    if (asReturn) {
-      throw new Error(
-        "Este lancamento tem devolucao iniciada. Remova a devolucao antes de excluir o original.",
-      )
-    }
-
-    const creditOfReturn = await ctx.db
-      .query("transactionReturns")
-      .withIndex("by_credit_transaction", (q) => q.eq("creditTransactionId", args.transactionId))
-      .first()
-
-    if (creditOfReturn && creditOfReturn.userId === args.userId) {
-      await ctx.db.delete(creditOfReturn._id)
-    }
-
-    await deleteAttachmentsForTransaction(ctx, args.transactionId)
-    await ctx.db.delete(args.transactionId)
+    await deleteOneTransaction(ctx, args.userId, args.transactionId)
+    return { deletedCount: 1 }
   },
 })
 

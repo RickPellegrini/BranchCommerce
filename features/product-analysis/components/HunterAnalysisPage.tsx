@@ -59,7 +59,6 @@ type ExtensionStockMap = Record<string, ExtensionStockResult>
 
 function requestExtensionStockScan(
   items: Array<{ itemId: string; url: string }>,
-  onPartial?: (result: ExtensionStockResult) => void,
 ): Promise<ExtensionStockResult[]> {
   return new Promise((resolve, reject) => {
     if (typeof window === "undefined") {
@@ -71,7 +70,7 @@ function requestExtensionStockScan(
     const timeout = window.setTimeout(() => {
       window.removeEventListener("message", onMessage)
       reject(new Error("Extensao Branch Hunter nao respondeu."))
-    }, 120000)
+    }, 240000)
 
     function onMessage(event: MessageEvent) {
       if (event.source !== window) return
@@ -79,18 +78,11 @@ function requestExtensionStockScan(
       if (
         !message ||
         message.source !== "branch-hunter-extension" ||
+        message.type !== "BRANCH_HUNTER_STOCK_SCAN_RESULT" ||
         message.requestId !== requestId
       ) {
         return
       }
-
-      if (message.type === "BRANCH_HUNTER_STOCK_SCAN_PARTIAL") {
-        const result = message.result as ExtensionStockResult | undefined
-        if (result?.itemId) onPartial?.(result)
-        return
-      }
-
-      if (message.type !== "BRANCH_HUNTER_STOCK_SCAN_RESULT") return
 
       window.clearTimeout(timeout)
       window.removeEventListener("message", onMessage)
@@ -150,24 +142,22 @@ function StatCard({
   )
 }
 
+function itemIdFromUrl(): string | null {
+  if (typeof window === "undefined") return null
+  const itemIdFromQuery = new URLSearchParams(window.location.search).get("itemId")
+  if (!itemIdFromQuery) return null
+  return parseMlId(itemIdFromQuery)
+}
+
 export function HunterAnalysisPage() {
-  const [searchInput, setSearchInput] = useState("")
-  const [activeItemId, setActiveItemId] = useState<string | null>(null)
+  const initialItemId = itemIdFromUrl()
+  const [searchInput, setSearchInput] = useState(initialItemId ?? "")
+  const [activeItemId, setActiveItemId] = useState<string | null>(initialItemId)
   const [recentSearches, setRecentSearches] = useState<RecentSearch[]>([])
   const [searchError, setSearchError] = useState<string | null>(null)
   const lastRecordedId = useRef<string | null>(null)
 
   const { phase, data, error, refresh } = useProductAnalysis(activeItemId)
-
-  useEffect(() => {
-    const params = new URLSearchParams(window.location.search)
-    const itemIdFromQuery = params.get("itemId")
-    if (!itemIdFromQuery) return
-    const parsed = parseMlId(itemIdFromQuery)
-    if (!parsed) return
-    setSearchInput(parsed)
-    setActiveItemId(parsed)
-  }, [])
 
   const handleAnalyze = useCallback(() => {
     setSearchError(null)
@@ -420,47 +410,43 @@ function AnalysisResults({
     extensionStockScanKeyRef.current = scanKey
 
     let cancelled = false
-    setExtensionStockStatus("scanning")
 
-    requestExtensionStockScan(pending, (result) => {
-      if (cancelled || !result.itemId) return
-      setExtensionStock((prev) => ({ ...prev, [result.itemId]: result }))
-    })
-      .then((results) => {
-        if (cancelled) return
-        const next: ExtensionStockMap = {}
-        for (const result of results) {
-          if (result?.itemId) next[result.itemId] = result
-        }
-        setExtensionStock(next)
-        setExtensionStockError(
-          results
-            .filter((result) => !result.ok)
-            .map((result) => result.error || result.status || "sem detalhe")
-            .find(Boolean) ?? null,
-        )
-        setExtensionStockStatus(
-          results.some((result) => result.ok && stockLabelFromExtension(result))
-            ? "success"
-            : "unavailable",
-        )
-      })
-      .catch((error) => {
-        if (!cancelled) {
-          setExtensionStockError(error instanceof Error ? error.message : String(error))
-          setExtensionStockStatus("error")
-        }
-      })
+    const scanTimer = window.setTimeout(() => {
+      if (cancelled) return
+      setExtensionStockStatus("scanning")
+      requestExtensionStockScan(pending)
+        .then((results) => {
+          if (cancelled) return
+          const next: ExtensionStockMap = {}
+          for (const result of results) {
+            if (result?.itemId) next[result.itemId] = result
+          }
+          setExtensionStock(next)
+          setExtensionStockError(
+            results
+              .filter((result) => !result.ok)
+              .map((result) => result.error || result.status || "sem detalhe")
+              .find(Boolean) ?? null,
+          )
+          setExtensionStockStatus(
+            results.some((result) => result.ok && stockLabelFromExtension(result))
+              ? "success"
+              : "unavailable",
+          )
+        })
+        .catch((error) => {
+          if (!cancelled) {
+            setExtensionStockError(error instanceof Error ? error.message : String(error))
+            setExtensionStockStatus("error")
+          }
+        })
+    }, 400)
 
     return () => {
       cancelled = true
+      window.clearTimeout(scanTimer)
     }
   }, [rawCompetitors, data.receivedId, data.fetchedAt])
-
-  const extensionStockResolvedIds = useMemo(
-    () => new Set(Object.keys(extensionStock)),
-    [extensionStock],
-  )
 
   const competitors = useMemo(
     () =>
@@ -732,8 +718,9 @@ function AnalysisResults({
               competitors={filtered}
               myPrice={item.price}
               winnerItemId={effectiveBuyBoxWinner}
-              extensionStockResolvedIds={extensionStockResolvedIds}
-              isStockFallbackLoading={extensionStockStatus === "scanning"}
+              isStockFallbackLoading={
+                extensionStockStatus === "waiting" || extensionStockStatus === "scanning"
+              }
             />
           )}
           {stockSource?.detail && (

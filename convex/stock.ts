@@ -462,6 +462,69 @@ function isMlFullStockProduct(product: { stockSource?: string; kanbanStatus?: st
   return stockSourceForProduct(product) === "ml_full"
 }
 
+function isMlListingActiveForStock(status?: string) {
+  return (status ?? "active").toLowerCase() === "active"
+}
+
+async function createStockProductFromMlListing(
+  ctx: MutationCtx,
+  params: {
+    userId: string
+    now: number
+    today: string
+    mlItemId: string
+    title: string
+    sku?: string
+    imageUrl?: string
+    price: number
+    quantity: number
+    isFull: boolean
+  },
+) {
+  const productId = await ctx.db.insert("stockProducts", {
+    userId: params.userId,
+    name: params.title,
+    sku: params.sku?.trim() || params.mlItemId,
+    mlItemId: params.mlItemId,
+    imageUrl: params.imageUrl,
+    category: "Mercado Livre",
+    quantity: params.quantity,
+    minStock: 0,
+    unitCost: 0,
+    stockSource: params.isFull ? "ml_full" : "manual",
+    sellingPrice: params.price,
+    kanbanStatus: params.isFull ? "fulfillment" : "completed",
+    createdAt: params.now,
+    updatedAt: params.now,
+  })
+
+  await upsertKanbanCardForStatus(ctx, {
+    userId: params.userId,
+    productId,
+    kanbanStatus: params.isFull ? "fulfillment" : "completed",
+    quantity: params.quantity,
+    note: params.isFull
+      ? `Anuncio ML ${params.mlItemId} importado (Full)`
+      : `Anuncio ML ${params.mlItemId} importado (estoque proprio)`,
+  })
+
+  if (params.quantity > 0) {
+    await ctx.db.insert("stockMovements", {
+      userId: params.userId,
+      productId,
+      type: "in",
+      quantity: params.quantity,
+      date: params.today,
+      note: params.isFull
+        ? "Importado do Mercado Livre (fulfillment)"
+        : "Importado do Mercado Livre (anuncio proprio)",
+      createdAt: params.now,
+    })
+  }
+
+  return productId
+}
+
 function buildMlAliasOwnerMap<T extends { mlItemAliases?: string[] }>(products: T[]) {
   const aliasOwner = new Map<string, T>()
   for (const product of products) {
@@ -920,6 +983,7 @@ export const syncFromMercadoLivre = mutation({
         thumbnail: v.optional(v.string()),
         sku: v.optional(v.string()),
         logisticType: v.optional(v.string()),
+        status: v.optional(v.string()),
       }),
     ),
   },
@@ -1058,36 +1122,22 @@ export const syncFromMercadoLivre = mutation({
         continue
       }
 
-      if (!isFull) continue
-
-      const productId = await ctx.db.insert("stockProducts", {
-        userId: args.userId,
-        name: listing.title,
-        sku: normalizedListingId,
-        mlItemId: normalizedListingId,
-        imageUrl: listing.thumbnail,
-        category: "Mercado Livre",
-        quantity: nextQuantity,
-        minStock: 0,
-        unitCost: 0,
-        stockSource: "ml_full",
-        sellingPrice: listing.price,
-        kanbanStatus: "fulfillment",
-        createdAt: now,
-        updatedAt: now,
-      })
-
-      if (nextQuantity > 0) {
-        await ctx.db.insert("stockMovements", {
-          userId: args.userId,
-          productId,
-          type: "in",
-          quantity: nextQuantity,
-          date: today,
-          note: "Importado do Mercado Livre (fulfillment)",
-          createdAt: now,
-        })
+      if (!isMlListingActiveForStock(listing.status)) {
+        continue
       }
+
+      await createStockProductFromMlListing(ctx, {
+        userId: args.userId,
+        now,
+        today,
+        mlItemId: normalizedListingId,
+        title: listing.title,
+        sku: listing.sku,
+        imageUrl: listing.thumbnail,
+        price: listing.price,
+        quantity: nextQuantity,
+        isFull,
+      })
 
       created += 1
     }
@@ -1184,6 +1234,8 @@ export const reconcileWithMlData = mutation({
         availableQuantity: v.number(),
         price: v.number(),
         logisticType: v.optional(v.string()),
+        status: v.optional(v.string()),
+        skipAutoCreate: v.optional(v.boolean()),
       }),
     ),
   },
@@ -1274,37 +1326,24 @@ export const reconcileWithMlData = mutation({
           continue
         }
 
-        if (!isFull) continue
-
         const nextQty = Math.max(0, Math.floor(item.availableQuantity))
-        const productId = await ctx.db.insert("stockProducts", {
-          userId: args.userId,
-          name: item.title,
-          sku: normalizedItemId,
-          mlItemId: normalizedItemId,
-          imageUrl: item.imageUrl,
-          category: "Mercado Livre",
-          quantity: nextQty,
-          minStock: 0,
-          unitCost: 0,
-          stockSource: "ml_full",
-          sellingPrice: item.price,
-          kanbanStatus: "fulfillment",
-          createdAt: now,
-          updatedAt: now,
-        })
-
-        if (nextQty > 0) {
-          await ctx.db.insert("stockMovements", {
-            userId: args.userId,
-            productId,
-            type: "in",
-            quantity: nextQty,
-            date: today,
-            note: "Criado via sync ML (fulfillment)",
-            createdAt: now,
-          })
+        const canAutoCreate = isMlListingActiveForStock(item.status) && item.skipAutoCreate !== true
+        if (!canAutoCreate) {
+          continue
         }
+
+        await createStockProductFromMlListing(ctx, {
+          userId: args.userId,
+          now,
+          today,
+          mlItemId: normalizedItemId,
+          title: item.title,
+          sku: item.sku,
+          imageUrl: item.imageUrl,
+          price: item.price,
+          quantity: nextQty,
+          isFull,
+        })
 
         created += 1
         continue

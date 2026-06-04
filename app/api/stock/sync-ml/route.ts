@@ -10,10 +10,19 @@ type MlItem = {
   title: string
   price: number
   available_quantity: number
+  status?: string
+  seller_id?: number
   seller_custom_field?: string
+  catalog_product_id?: string
+  catalog_listing?: boolean
   secure_thumbnail?: string
   thumbnail?: string
   shipping?: { logistic_type?: string }
+}
+
+/** Anuncio classico espelhado de um catalogo — nao vira produto novo no estoque. */
+function isClassicCatalogMirror(item: MlItem) {
+  return Boolean(item.catalog_product_id) && item.catalog_listing === false
 }
 
 export async function POST() {
@@ -24,9 +33,18 @@ export async function POST() {
     const allIds = await fetchAllUserItemIds(connection.accessToken, connection.mlUserId)
 
     const rawDetails = await fetchItemDetailsBatched<MlItem>(allIds, connection.accessToken)
-    const items = rawDetails.map((r) => r.body).filter((b): b is MlItem => Boolean(b))
+    const sellerId = Number(connection.mlUserId)
+    const items = rawDetails
+      .map((r) => r.body)
+      .filter((b): b is MlItem => Boolean(b))
+      .filter(
+        (item) =>
+          !Number.isFinite(sellerId) || item.seller_id == null || item.seller_id === sellerId,
+      )
 
-    console.log(`[sync-ml] ${items.length} items fetched (${allIds.length} IDs)`)
+    console.log(
+      `[sync-ml] mlUserId=${connection.mlUserId} items=${items.length} ids=${allIds.length}`,
+    )
 
     const convexUrl = process.env.NEXT_PUBLIC_CONVEX_URL
     if (!convexUrl) throw new Error("NEXT_PUBLIC_CONVEX_URL nao definido.")
@@ -40,6 +58,8 @@ export async function POST() {
       availableQuantity: item.available_quantity,
       price: item.price,
       logisticType: item.shipping?.logistic_type ?? undefined,
+      status: item.status ?? "active",
+      skipAutoCreate: isClassicCatalogMirror(item),
     }))
 
     const reconcileResult = await client.mutation(api.stock.reconcileWithMlData, {
@@ -64,7 +84,9 @@ export async function POST() {
     return Response.json({
       ok: true,
       data: {
+        mlUserId: connection.mlUserId,
         totalMlItems: items.length,
+        totalMlIdsSearched: allIds.length,
         ...reconcileResult,
         photosEnriched: enrichResult.enriched,
         mlIdsLinked: enrichResult.linked,

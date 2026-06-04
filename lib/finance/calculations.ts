@@ -168,6 +168,57 @@ export function monthlyEvolution(
   })
 }
 
+export type MonthlyEvolutionOrder = {
+  dateCreated: string
+  totalAmount: number
+  status: string
+}
+
+function monthKeysForLookback(monthsToShow: number) {
+  const now = new Date()
+  const keys: string[] = []
+  for (let index = monthsToShow - 1; index >= 0; index -= 1) {
+    const date = new Date(now.getFullYear(), now.getMonth() - index, 1)
+    keys.push(`${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}`)
+  }
+  return keys
+}
+
+export function enrichMonthlyEvolutionWithMlSales(
+  points: MonthlyEvolutionPoint[],
+  orders: MonthlyEvolutionOrder[],
+  monthsToShow: number,
+): MonthlyEvolutionPoint[] {
+  const keyToIndex = new Map(monthKeysForLookback(monthsToShow).map((key, index) => [key, index]))
+  const next = points.map((point) => ({ ...point }))
+
+  for (const order of orders) {
+    if (order.status.toLowerCase() === "cancelled") continue
+    const key = order.dateCreated.slice(0, 7)
+    const index = keyToIndex.get(key)
+    if (index === undefined) continue
+    const row = next[index]
+    if (!row) continue
+    row.income += Math.max(0, order.totalAmount)
+    row.result = row.income - row.expense
+  }
+
+  return next
+}
+
+/** Lancamentos manuais + vendas ML (sem duplicar receitas ja gravadas como Venda online). */
+export function buildMonthlyEvolutionReport(
+  transactions: FinancialTransaction[],
+  orders: MonthlyEvolutionOrder[],
+  monthsToShow = 12,
+): MonthlyEvolutionPoint[] {
+  const withoutOnlineSaleIncome = transactions.filter(
+    (item) => !(item.kind === "income" && item.origin === "Venda online"),
+  )
+  const base = monthlyEvolution(withoutOnlineSaleIncome, monthsToShow)
+  return enrichMonthlyEvolutionWithMlSales(base, orders, monthsToShow)
+}
+
 function periodKey(date: Date, period: FinancialPeriod) {
   if (period === "day") {
     return date.toISOString().slice(0, 10)
