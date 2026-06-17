@@ -3,7 +3,7 @@ import { v } from "convex/values"
 import { internal } from "./_generated/api"
 import { internalMutation } from "./_generated/server"
 import { upsertProductState } from "./branchNotifyDb"
-import { isAboveMaxPrice, isRestockMoment, precoPixFromLine } from "./monitor-logic"
+import { isAboveMaxPrice, isRestockMoment, precoPixFromLine } from "./monitorLogic"
 import { gerarPix } from "./pix"
 import type { VtexProductState } from "./vtex"
 

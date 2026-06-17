@@ -1,6 +1,6 @@
 import { expect, test } from "vitest"
 
-import { isAboveMaxPrice, isRestockMoment, lineTotalBrl, precoPixFromLine } from "./monitor-logic"
+import { isAboveMaxPrice, isRestockMoment, lineTotalBrl, precoPixFromLine } from "./monitorLogic"
 import type { VtexProductState } from "./vtex"
 
 const vtex = (o: Partial<VtexProductState>): VtexProductState => ({
