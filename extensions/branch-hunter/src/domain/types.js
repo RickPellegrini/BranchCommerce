@@ -46,6 +46,8 @@
    * @property {number|undefined} defaultShippingCost
    * @property {boolean|undefined} centralizeEnabled
    * @property {boolean|undefined} fullEnabled
+   * @property {number|undefined} fullShipmentUnits
+   * @property {number|undefined} fullCollectionCost
    */
 
   /**
@@ -67,6 +69,8 @@
    * @property {string} shippingModeDetail
    * @property {number} centralizeFixedCosts
    * @property {number} fullCosts
+   * @property {number} fullUnitCost
+   * @property {number} fullCollectionUnitCost
    * @property {number} totalCosts
    * @property {number} netProfit
    * @property {number} netMarginPercent
@@ -119,6 +123,8 @@
       defaultShippingCost: 12,
       centralizeEnabled: true,
       fullEnabled: false,
+      fullShipmentUnits: 100,
+      fullCollectionCost: 100,
     }
   }
 

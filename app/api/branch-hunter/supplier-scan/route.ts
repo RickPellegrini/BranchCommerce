@@ -2,6 +2,12 @@ import { NextRequest } from "next/server"
 
 import { requireAuthenticatedAppUserId } from "@/lib/auth/server"
 import { getAnyValidMlConnection, requestMlApi } from "@/lib/mercadolivre/storage"
+import {
+  calculateBranchHunterProfit,
+  createDefaultBranchHunterOperationSettings,
+  listingTypeFeePercent,
+  type BranchHunterOperationSettings,
+} from "@/features/product-analysis/utils/branch-hunter-profit"
 
 const ALLOWED_ORIGINS = [
   "chrome-extension://",
@@ -17,6 +23,8 @@ type SupplierRowInput = {
   gtin?: string
   cost?: number
 }
+
+type SupplierScanSettingsInput = Partial<BranchHunterOperationSettings>
 
 type ProductSearchResult = {
   id?: string
@@ -85,12 +93,6 @@ function getAttrValue(attrs: ProductSearchResult["attributes"], id: string): str
   return found.value_name ?? found.values?.[0]?.name ?? null
 }
 
-function listingFeePercent(listingTypeId: string | undefined) {
-  const value = String(listingTypeId ?? "").toLowerCase()
-  if (value.includes("gold_pro") || value.includes("premium")) return 16
-  return 12
-}
-
 function shouldRejectPackMismatch(supplierName: string, catalogName: string) {
   const supplierIsKit = /\bkit\b/i.test(supplierName)
   return !supplierIsKit && PACK_NAME_PATTERN.test(catalogName)
@@ -143,6 +145,7 @@ async function searchMatchingCatalogProduct(
 async function scanRow(
   row: Required<Pick<SupplierRowInput, "name" | "gtin" | "cost">> & { code: string | null },
   accessToken: string,
+  settings: BranchHunterOperationSettings,
 ) {
   const matchedProduct = await searchMatchingCatalogProduct(row, accessToken)
   if (!matchedProduct?.id || !matchedProduct.name) return null
@@ -162,10 +165,17 @@ async function scanRow(
   if (!cheapest?.item_id || !Number.isFinite(cheapest.price)) return null
 
   const salePrice = Number(cheapest.price)
-  const feePercent = listingFeePercent(cheapest.listing_type_id)
-  const feeAmount = (salePrice * feePercent) / 100
-  const netProfit = salePrice - row.cost - feeAmount
-  const netMargin = salePrice > 0 ? (netProfit / salePrice) * 100 : 0
+  const feePercent = listingTypeFeePercent(settings.listingType || cheapest.listing_type_id)
+  const calculation = calculateBranchHunterProfit(
+    {
+      salePrice,
+      saleFeePercent: feePercent,
+    },
+    {
+      ...settings,
+      productCost: row.cost,
+    },
+  )
   const grossMargin = salePrice > 0 ? ((salePrice - row.cost) / salePrice) * 100 : 0
 
   return {
@@ -177,13 +187,56 @@ async function scanRow(
     catalogProductId: matchedProduct.id,
     salePrice,
     feePercent,
-    feeAmount,
-    netProfit,
-    netMargin,
+    feeAmount: calculation.marketplaceFeeAmount,
+    shippingCostUsed: calculation.shippingCostUsed,
+    centralizeFixedCosts: calculation.centralizeFixedCosts,
+    fullCosts: calculation.fullCosts,
+    fullUnitCost: calculation.fullUnitCost,
+    fullCollectionUnitCost: calculation.fullCollectionUnitCost,
+    additionalCosts:
+      calculation.adsAmount +
+      calculation.riskAmount +
+      settings.packagingCost +
+      settings.otherFixedCosts,
+    totalCosts: calculation.totalCosts,
+    netProfit: calculation.netProfit,
+    netMargin: calculation.netMarginPercent,
     grossMargin,
     offers: offers.length,
     catalogLink: `https://www.mercadolivre.com.br/p/${matchedProduct.id}`,
     itemLink: `https://produto.mercadolivre.com.br/${cheapest.item_id}`,
+  }
+}
+
+function normalizeOperationSettings(
+  input: SupplierScanSettingsInput | undefined,
+): BranchHunterOperationSettings {
+  const defaults = createDefaultBranchHunterOperationSettings()
+
+  return {
+    listingType: input?.listingType === "premium" ? "premium" : defaults.listingType,
+    productCost: defaults.productCost,
+    shippingFallback: parseNumber(input?.shippingFallback) ?? defaults.shippingFallback,
+    forceManualShipping: Boolean(input?.forceManualShipping),
+    freeShippingEnabled:
+      input?.freeShippingEnabled === undefined
+        ? defaults.freeShippingEnabled
+        : Boolean(input.freeShippingEnabled),
+    freeShippingMinPrice: parseNumber(input?.freeShippingMinPrice) ?? defaults.freeShippingMinPrice,
+    freeShippingSubsidyPercent:
+      parseNumber(input?.freeShippingSubsidyPercent) ?? defaults.freeShippingSubsidyPercent,
+    defaultShippingCost: parseNumber(input?.defaultShippingCost) ?? defaults.defaultShippingCost,
+    centralizeEnabled:
+      input?.centralizeEnabled === undefined
+        ? defaults.centralizeEnabled
+        : Boolean(input.centralizeEnabled),
+    fullEnabled: Boolean(input?.fullEnabled),
+    fullShipmentUnits: parseNumber(input?.fullShipmentUnits) ?? defaults.fullShipmentUnits,
+    fullCollectionCost: parseNumber(input?.fullCollectionCost) ?? defaults.fullCollectionCost,
+    packagingCost: parseNumber(input?.packagingCost) ?? defaults.packagingCost,
+    otherFixedCosts: parseNumber(input?.otherFixedCosts) ?? defaults.otherFixedCosts,
+    adsPercent: parseNumber(input?.adsPercent) ?? defaults.adsPercent,
+    riskPercent: parseNumber(input?.riskPercent) ?? defaults.riskPercent,
   }
 }
 
@@ -214,10 +267,12 @@ export async function POST(request: NextRequest) {
     const body = (await request.json()) as {
       rows?: SupplierRowInput[]
       minMargin?: number
+      settings?: SupplierScanSettingsInput
     }
 
     const rows = Array.isArray(body.rows) ? body.rows : []
     const minMargin = parseNumber(body.minMargin) ?? 15
+    const settings = normalizeOperationSettings(body.settings)
 
     if (rows.length === 0) {
       return Response.json(
@@ -249,7 +304,7 @@ export async function POST(request: NextRequest) {
     const scanned = await Promise.all(
       normalizedRows.map(async (row) => {
         try {
-          return await scanRow(row, connection.accessToken)
+          return await scanRow(row, connection.accessToken, settings)
         } catch {
           return null
         }

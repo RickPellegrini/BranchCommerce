@@ -1,7 +1,8 @@
 ;(() => {
   const CENTRALIZE_FIXED_SHIPPING = 5
   const CENTRALIZE_FIXED_PACKAGING = 1.5
-  const FULL_COST_PER_UNIT = 3
+  const FULL_COST_PER_UNIT_UP_TO_100 = 2
+  const FULL_COST_PER_UNIT_ABOVE_100 = 1
 
   function toNumberOrZero(value) {
     const number = Number(value)
@@ -77,6 +78,29 @@
     return grossRevenue * (feePercent / 100)
   }
 
+  function resolveFullCosts(operation) {
+    const fullEnabled = Boolean(operation?.fullEnabled)
+    if (!fullEnabled) {
+      return {
+        fullCosts: 0,
+        fullUnitCost: 0,
+        fullCollectionUnitCost: 0,
+      }
+    }
+
+    const shipmentUnits = Math.max(1, toNumberOrZero(operation?.fullShipmentUnits))
+    const collectionCost = Math.max(0, toNumberOrZero(operation?.fullCollectionCost))
+    const fullUnitCost =
+      shipmentUnits > 100 ? FULL_COST_PER_UNIT_ABOVE_100 : FULL_COST_PER_UNIT_UP_TO_100
+    const fullCollectionUnitCost = collectionCost / shipmentUnits
+
+    return {
+      fullCosts: fullUnitCost + fullCollectionUnitCost,
+      fullUnitCost,
+      fullCollectionUnitCost,
+    }
+  }
+
   /**
    * Calculation core:
    * - separates marketplace dynamic data from seller operation costs
@@ -99,11 +123,10 @@
     const packagingCost = Math.max(0, toNumberOrZero(operation.packagingCost))
     const otherFixedCosts = Math.max(0, toNumberOrZero(operation.otherFixedCosts))
     const centralizeEnabled = Boolean(operation?.centralizeEnabled)
-    const fullEnabled = Boolean(operation?.fullEnabled)
     const centralizeFixedCosts = centralizeEnabled
       ? CENTRALIZE_FIXED_SHIPPING + CENTRALIZE_FIXED_PACKAGING
       : 0
-    const fullCosts = fullEnabled ? FULL_COST_PER_UNIT : 0
+    const { fullCosts, fullUnitCost, fullCollectionUnitCost } = resolveFullCosts(operation)
 
     const totalCosts =
       marketplaceFeeAmount +
@@ -133,6 +156,8 @@
       shippingModeDetail,
       centralizeFixedCosts,
       fullCosts,
+      fullUnitCost,
+      fullCollectionUnitCost,
       totalCosts,
       netProfit,
       netMarginPercent,

@@ -17,8 +17,19 @@ import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select"
 import { Textarea } from "@/components/ui/textarea"
 import { formatBrl } from "@/features/product-analysis/utils/money"
+import {
+  createDefaultBranchHunterOperationSettings,
+  type BranchHunterListingType,
+} from "@/features/product-analysis/utils/branch-hunter-profit"
 
 type SupplierRow = {
   code: string
@@ -37,6 +48,13 @@ type SupplierWinner = {
   salePrice: number
   feePercent: number
   feeAmount: number
+  shippingCostUsed: number
+  centralizeFixedCosts: number
+  fullCosts: number
+  fullUnitCost: number
+  fullCollectionUnitCost: number
+  additionalCosts: number
+  totalCosts: number
   netProfit: number
   netMargin: number
   grossMargin: number
@@ -175,8 +193,27 @@ function SummaryMetric({
 }
 
 export function SupplierAnalysisPanel() {
+  const defaultSettings = createDefaultBranchHunterOperationSettings()
   const [rawTable, setRawTable] = useState("")
   const [minMargin, setMinMargin] = useState("15")
+  const [listingType, setListingType] = useState<BranchHunterListingType>(
+    defaultSettings.listingType,
+  )
+  const [freeShippingEnabled, setFreeShippingEnabled] = useState(
+    defaultSettings.freeShippingEnabled,
+  )
+  const [forceManualShipping, setForceManualShipping] = useState(
+    defaultSettings.forceManualShipping,
+  )
+  const [shippingFallback, setShippingFallback] = useState(String(defaultSettings.shippingFallback))
+  const [centralizeEnabled, setCentralizeEnabled] = useState(defaultSettings.centralizeEnabled)
+  const [fullEnabled, setFullEnabled] = useState(defaultSettings.fullEnabled)
+  const [fullShipmentUnits, setFullShipmentUnits] = useState(
+    String(defaultSettings.fullShipmentUnits),
+  )
+  const [fullCollectionCost, setFullCollectionCost] = useState(
+    String(defaultSettings.fullCollectionCost),
+  )
   const [status, setStatus] = useState(
     "Importe a tabela do fornecedor e eu ja cruzo tudo com o Mercado Livre.",
   )
@@ -216,6 +253,26 @@ export function SupplierAnalysisPanel() {
         body: JSON.stringify({
           rows,
           minMargin: parseLocaleNumber(minMargin) ?? 15,
+          settings: {
+            listingType,
+            freeShippingEnabled,
+            forceManualShipping,
+            shippingFallback:
+              parseLocaleNumber(shippingFallback) ?? defaultSettings.shippingFallback,
+            defaultShippingCost: defaultSettings.defaultShippingCost,
+            freeShippingMinPrice: defaultSettings.freeShippingMinPrice,
+            freeShippingSubsidyPercent: defaultSettings.freeShippingSubsidyPercent,
+            centralizeEnabled,
+            fullEnabled,
+            fullShipmentUnits:
+              parseLocaleNumber(fullShipmentUnits) ?? defaultSettings.fullShipmentUnits,
+            fullCollectionCost:
+              parseLocaleNumber(fullCollectionCost) ?? defaultSettings.fullCollectionCost,
+            packagingCost: 0,
+            otherFixedCosts: 0,
+            adsPercent: 0,
+            riskPercent: 0,
+          },
         }),
       })
 
@@ -342,6 +399,101 @@ export function SupplierAnalysisPanel() {
             <div className="space-y-2">
               <label className="text-sm font-medium">Margem minima (%)</label>
               <Input value={minMargin} onChange={(event) => setMinMargin(event.target.value)} />
+            </div>
+
+            <div className="space-y-2">
+              <label className="text-sm font-medium">Tipo de anuncio</label>
+              <Select
+                value={listingType}
+                onValueChange={(value) => setListingType(value as BranchHunterListingType)}
+              >
+                <SelectTrigger className="h-10 w-full rounded-2xl px-3 text-sm">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="gold_special">Classico</SelectItem>
+                  <SelectItem value="premium">Premium</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+
+            <div className="space-y-3 rounded-2xl border bg-muted/20 p-3">
+              <div className="text-xs font-semibold uppercase tracking-[0.16em] text-muted-foreground">
+                Calculadora
+              </div>
+
+              <label className="flex items-center gap-2 text-sm">
+                <input
+                  type="checkbox"
+                  checked={freeShippingEnabled}
+                  onChange={(event) => setFreeShippingEnabled(event.target.checked)}
+                />
+                Frete gratis
+              </label>
+
+              <label className="flex items-center gap-2 text-sm">
+                <input
+                  type="checkbox"
+                  checked={forceManualShipping}
+                  onChange={(event) => setForceManualShipping(event.target.checked)}
+                />
+                Frete manual
+              </label>
+
+              <div className="space-y-2">
+                <label className="text-sm font-medium">Frete manual / fallback (R$)</label>
+                <Input
+                  value={shippingFallback}
+                  onChange={(event) => setShippingFallback(event.target.value)}
+                  disabled={!forceManualShipping}
+                />
+              </div>
+
+              <label className="flex items-center gap-2 text-sm">
+                <input
+                  type="checkbox"
+                  checked={centralizeEnabled}
+                  onChange={(event) => {
+                    const checked = event.target.checked
+                    setCentralizeEnabled(checked)
+                    if (checked) setFullEnabled(false)
+                  }}
+                />
+                Centralize
+              </label>
+
+              <label className="flex items-center gap-2 text-sm">
+                <input
+                  type="checkbox"
+                  checked={fullEnabled}
+                  onChange={(event) => {
+                    const checked = event.target.checked
+                    setFullEnabled(checked)
+                    if (checked) setCentralizeEnabled(false)
+                  }}
+                />
+                Full
+              </label>
+
+              {fullEnabled && (
+                <>
+                  <div className="space-y-2">
+                    <label className="text-sm font-medium">Qtd. enviada ao Full</label>
+                    <Input
+                      value={fullShipmentUnits}
+                      onChange={(event) => setFullShipmentUnits(event.target.value)}
+                    />
+                  </div>
+
+                  <div className="space-y-2">
+                    <label className="text-sm font-medium">Custo coleta Full (R$)</label>
+                    <Input
+                      value={fullCollectionCost}
+                      onChange={(event) => setFullCollectionCost(event.target.value)}
+                    />
+                  </div>
+                </>
+              )}
             </div>
 
             <div className="space-y-2">
@@ -478,28 +630,69 @@ export function SupplierAnalysisPanel() {
                         </div>
                         <div className="rounded-xl bg-muted/30 px-3 py-2">
                           <div className="text-[11px] uppercase tracking-wide text-muted-foreground">
-                            Links
+                            Custos extras
                           </div>
-                          <div className="mt-1 flex flex-col gap-1.5">
-                            <a
-                              href={row.catalogLink}
-                              target="_blank"
-                              rel="noreferrer"
-                              className="inline-flex items-center gap-1 text-sm font-medium text-blue-600 hover:underline"
-                            >
-                              <Link2 className="size-4" />
-                              catalogo
-                            </a>
-                            <a
-                              href={row.itemLink}
-                              target="_blank"
-                              rel="noreferrer"
-                              className="inline-flex items-center gap-1 text-sm font-medium text-blue-600 hover:underline"
-                            >
-                              <Upload className="size-4" />
-                              anuncio
-                            </a>
+                          <div className="mt-1 font-semibold">
+                            {formatBrl(
+                              row.shippingCostUsed +
+                                row.centralizeFixedCosts +
+                                row.fullCosts +
+                                row.additionalCosts,
+                            )}
                           </div>
+                        </div>
+                      </div>
+
+                      <div className="mt-3 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+                        <div className="rounded-xl bg-muted/20 px-3 py-2 text-sm">
+                          Frete: <strong>{formatBrl(row.shippingCostUsed)}</strong>
+                        </div>
+                        <div className="rounded-xl bg-muted/20 px-3 py-2 text-sm">
+                          Centralize: <strong>{formatBrl(row.centralizeFixedCosts)}</strong>
+                        </div>
+                        <div className="rounded-xl bg-muted/20 px-3 py-2 text-sm">
+                          Full: <strong>{formatBrl(row.fullCosts)}</strong>
+                        </div>
+                        <div className="rounded-xl bg-muted/20 px-3 py-2 text-sm">
+                          Total custos: <strong>{formatBrl(row.totalCosts)}</strong>
+                        </div>
+                      </div>
+
+                      {fullEnabled && (
+                        <div className="mt-3 grid gap-3 sm:grid-cols-2">
+                          <div className="rounded-xl bg-muted/20 px-3 py-2 text-sm">
+                            Full por unidade: <strong>{formatBrl(row.fullUnitCost)}</strong>
+                          </div>
+                          <div className="rounded-xl bg-muted/20 px-3 py-2 text-sm">
+                            Coleta diluida/un:{" "}
+                            <strong>{formatBrl(row.fullCollectionUnitCost)}</strong>
+                          </div>
+                        </div>
+                      )}
+
+                      <div className="mt-3 rounded-xl bg-muted/30 px-3 py-2">
+                        <div className="text-[11px] uppercase tracking-wide text-muted-foreground">
+                          Links
+                        </div>
+                        <div className="mt-1 flex flex-col gap-1.5">
+                          <a
+                            href={row.catalogLink}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="inline-flex items-center gap-1 text-sm font-medium text-blue-600 hover:underline"
+                          >
+                            <Link2 className="size-4" />
+                            catalogo
+                          </a>
+                          <a
+                            href={row.itemLink}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="inline-flex items-center gap-1 text-sm font-medium text-blue-600 hover:underline"
+                          >
+                            <Upload className="size-4" />
+                            anuncio
+                          </a>
                         </div>
                       </div>
                     </div>

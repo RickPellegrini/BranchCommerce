@@ -482,6 +482,14 @@
                 <input id="bh-full-toggle" type="checkbox"> Ativo
               </label>
             </div>
+            <div id="bh-full-config-wrap" style="display:none; margin-top:6px; gap:6px;">
+              <label>Qtd enviada ao Full
+                <input id="bh-full-shipment-units" type="number" step="1" min="1" value="100" style="padding:4px 6px;font-size:12px; border-radius:4px">
+              </label>
+              <label>Custo coleta Full (R$)
+                <input id="bh-full-collection-cost" type="number" step="0.01" min="0" value="100" style="padding:4px 6px;font-size:12px; border-radius:4px">
+              </label>
+            </div>
           </div>
         </div>
 
@@ -490,6 +498,7 @@
             <div class="result-row"><span class="row-label"><svg class="row-icon" viewBox="0 0 24 24" fill="none"><path d="M3 17h18M5 17l2-6h10l2 6" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>Frete usado</span><strong id="bh-result-shipping">R$ 0,00</strong></div>
             <div class="result-row"><span class="row-label"><svg class="row-icon" viewBox="0 0 24 24" fill="none"><path d="M4 6h16M4 12h16M4 18h10" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>Centralize fixo</span><strong id="bh-result-centralize">R$ 0,00</strong></div>
             <div class="result-row"><span class="row-label"><svg class="row-icon" viewBox="0 0 24 24" fill="none"><path d="M12 3v18M3 12h18" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>Custo Full</span><strong id="bh-result-full">R$ 0,00</strong></div>
+            <div class="result-row"><span class="row-label"><svg class="row-icon" viewBox="0 0 24 24" fill="none"><path d="M4 12h16M12 4v16" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>Coleta/un</span><strong id="bh-result-full-collection-unit">R$ 0,00</strong></div>
           </div>
         </div>
       </section>
@@ -530,6 +539,10 @@
       headerChip: $("bh-header-chip"),
       centralizeToggle: $("bh-centralize-toggle"),
       fullToggle: $("bh-full-toggle"),
+      fullConfigWrap: $("bh-full-config-wrap"),
+      fullShipmentUnits: $("bh-full-shipment-units"),
+      fullCollectionCost: $("bh-full-collection-cost"),
+      resultFullCollectionUnit: $("bh-result-full-collection-unit"),
       openCatalogAnalysis: $("bh-open-catalog-analysis"),
     }
   }
@@ -571,6 +584,8 @@
       defaultShippingCost: 12,
       centralizeEnabled: Boolean(elements.centralizeToggle.checked),
       fullEnabled: Boolean(elements.fullToggle.checked),
+      fullShipmentUnits: toNumber(elements.fullShipmentUnits?.value, 100),
+      fullCollectionCost: toNumber(elements.fullCollectionCost?.value, 100),
     }
   }
 
@@ -592,6 +607,9 @@
     if (!elements.centralizeBody) return
     const on = Boolean(elements.centralizeToggle?.checked)
     elements.centralizeBody.classList.toggle("muted", !on)
+    if (elements.fullConfigWrap) {
+      elements.fullConfigWrap.style.display = elements.fullToggle?.checked ? "grid" : "none"
+    }
   }
 
   function writeMarketplaceDynamicSection(elements, marketplaceData) {
@@ -609,6 +627,11 @@
     elements.resultShipping.textContent = formatMoney(calculationResult.shippingCostUsed)
     elements.resultCentralize.textContent = formatMoney(calculationResult.centralizeFixedCosts)
     elements.resultFull.textContent = formatMoney(calculationResult.fullCosts || 0)
+    if (elements.resultFullCollectionUnit) {
+      elements.resultFullCollectionUnit.textContent = formatMoney(
+        calculationResult.fullCollectionUnitCost || 0,
+      )
+    }
     elements.resultTotalCosts.textContent = formatMoney(calculationResult.totalCosts)
     elements.resultProfit.textContent = formatMoney(calculationResult.netProfit)
     elements.resultMargin.textContent = formatPercent(calculationResult.netMarginPercent)
@@ -743,6 +766,12 @@
     }
     elements.freeShippingToggle.checked = values.freeShippingEnabled ?? true
     elements.shippingFallback.value = String(values.shippingFallback ?? 12)
+    if (elements.fullShipmentUnits) {
+      elements.fullShipmentUnits.value = String(values.fullShipmentUnits ?? 100)
+    }
+    if (elements.fullCollectionCost) {
+      elements.fullCollectionCost.value = String(values.fullCollectionCost ?? 100)
+    }
     elements.shippingManualToggle.checked = Boolean(values.forceManualShipping)
     elements.salePriceManualToggle.checked = Boolean(values.forceManualSalePrice)
     elements.salePriceManualInput.value = String(values.manualSalePrice ?? 0)
@@ -843,6 +872,8 @@
       elements.productCost,
       elements.shippingFallback,
       elements.salePriceManualInput,
+      elements.fullShipmentUnits,
+      elements.fullCollectionCost,
     ]
 
     for (const input of inputFields) {
