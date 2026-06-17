@@ -15,10 +15,20 @@ type SupplierRow = {
 
 type OpenAiFileResponse = {
   id?: string
+  error?: {
+    message?: string
+    type?: string
+    code?: string
+  }
 }
 
 type OpenAiResponsesApiResponse = {
   output_text?: string
+  error?: {
+    message?: string
+    type?: string
+    code?: string
+  }
 }
 
 function normalizeText(value: unknown) {
@@ -49,6 +59,17 @@ function rowsToTabbedText(rows: SupplierRow[]) {
   return [header, ...body].join("\n")
 }
 
+function formatOpenAiError(
+  payload: { error?: { message?: string; type?: string; code?: string } } | null,
+  fallback: string,
+) {
+  const message = payload?.error?.message?.trim()
+  const code = payload?.error?.code?.trim()
+  const type = payload?.error?.type?.trim()
+  const details = [message, code, type].filter(Boolean).join(" | ")
+  return details ? `${fallback} ${details}` : fallback
+}
+
 async function uploadFileToOpenAi(file: File, apiKey: string) {
   const formData = new FormData()
   formData.append("purpose", "user_data")
@@ -72,9 +93,7 @@ async function uploadFileToOpenAi(file: File, apiKey: string) {
 
   if (!response.ok || !payload?.id) {
     throw new Error(
-      payload && "error" in payload && typeof payload.error === "string"
-        ? payload.error
-        : `OpenAI file upload falhou com HTTP ${response.status}.`,
+      formatOpenAiError(payload, `OpenAI file upload falhou com HTTP ${response.status}.`),
     )
   }
 
@@ -176,7 +195,9 @@ async function extractSupplierRowsWithOpenAi(fileId: string, fileName: string, a
   }
 
   if (!response.ok || !payload?.output_text) {
-    throw new Error(`OpenAI extraction falhou com HTTP ${response.status}.`)
+    throw new Error(
+      formatOpenAiError(payload, `OpenAI extraction falhou com HTTP ${response.status}.`),
+    )
   }
 
   try {
