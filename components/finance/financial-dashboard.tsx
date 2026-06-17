@@ -130,7 +130,6 @@ import { BranchNotifyPage } from "@/components/branchnotify/branch-notify-page"
  * Valor fixo só quando a API de saldo está indisponível: referência de garantia.
  * Saldo estimado não usa complemento manual — alinha com líquido do MP (taxas).
  */
-const MP_SALDO_ESTIMADO_GARANTIA_MANUAL_BRL = 250
 
 export type ModuleKey =
   | "home"
