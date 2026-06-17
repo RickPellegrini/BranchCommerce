@@ -88,7 +88,7 @@
 
     const grossRevenue = Math.max(0, toNumberOrZero(marketplace.salePrice))
     const marketplaceFeeAmount = resolveMarketplaceFeeAmount(grossRevenue, marketplace)
-    const taxAmount = grossRevenue * toPercentValue(operation.taxPercent)
+    const taxAmount = 0
     const adsAmount = grossRevenue * toPercentValue(operation.adsPercent)
     const riskAmount = grossRevenue * toPercentValue(operation.riskPercent)
 

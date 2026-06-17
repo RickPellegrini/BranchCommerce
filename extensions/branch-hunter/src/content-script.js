@@ -226,6 +226,7 @@
           gap: 8px;
         }
         .section-operation { border-color: #c7d2fe; background: #f8f9ff; }
+        .section-adv-inline { border-color: #c7d2fe; background: #f8f9ff; padding: 7px; gap: 6px; }
         .section-centralize { border-color: #fdba74; background: #fff7ed; }
         .section-result { border-color: #bbf7d0; background: #f0fdf4; }
         .header {
@@ -268,17 +269,27 @@
         .grid { display: grid; gap: 8px; }
         .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
         .freight-box {
-          border: 1px solid #dbeafe; background: #eff6ff;
-          border-radius: 10px; padding: 8px; display: grid; gap: 8px;
+          border: 1px solid #bfdbfe; background: #f8fbff;
+          border-radius: 8px; padding: 5px; display: grid; gap: 4px;
+        }
+        .freight-compact-grid {
+          display: grid; grid-template-columns: 1fr 1fr; gap: 5px;
         }
         .freight-card {
-          border: 1px solid #d1d5db; border-radius: 10px;
-          background: #ffffff; padding: 10px; display: grid; gap: 6px;
+          border: 1px solid #d1d5db; border-radius: 6px;
+          background: #ffffff; padding: 5px 6px; display: grid; gap: 3px;
         }
         .freight-card.green { border-color: #bbf7d0; background: #f0fdf4; }
         .freight-card.blue { border-color: #bfdbfe; background: #eff6ff; }
+        .freight-title { font-size: 10px; font-weight: 700; color: #111827; margin: 0; }
+        .freight-hint-tiny { font-size: 8px; line-height: 1.2; color: #4b5563; margin: 0; }
+        .switch-min { font-size: 10px; }
+        .switch-min input { width: 14px; height: 14px; }
+        .section-centralize { padding: 8px; }
+        .centralize-body { display: grid; gap: 4px; }
+        .centralize-body.muted { opacity: 0.5; }
         .switch-row {
-          display: flex; align-items: center; justify-content: space-between; gap: 8px;
+          display: flex; align-items: center; justify-content: space-between; gap: 4px;
         }
         .switch-inline {
           display: inline-flex; align-items: center; gap: 6px;
@@ -286,6 +297,7 @@
         }
         .switch-green input { accent-color: #16a34a; }
         .switch-blue input { accent-color: #2563eb; }
+        .freight-hint { font-size: 8px; line-height: 1.2; color: #4b5563; }
         label { display: grid; gap: 4px; font-size: 12px; color: #374151; }
         input {
           width: 100%; border: 1px solid #d1d5db; border-radius: 8px;
@@ -397,55 +409,80 @@
         </button>
 
         <div id="bh-details" class="collapsible">
-        <div class="section section-operation grid">
+          <div class="section section-dynamic">
+            <div class="section-title-row">
+              <span class="section-icon" aria-hidden="true"><svg width="12" height="12" viewBox="0 0 24 24" fill="none"><path d="M4 6h16M4 12h16M4 18h10" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg></span>
+              <p class="section-title">Dados dinamicos Mercado Livre</p>
+            </div>
+            <div class="dynamic-row"><span class="row-label"><svg class="row-icon" viewBox="0 0 24 24" fill="none"><path d="M4 7h16M4 12h10M4 17h7" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>Tipo anuncio</span><div><strong id="bh-dyn-listing-type">--</strong> <small id="bh-src-listing-type">(indisponivel)</small></div></div>
+            <div class="dynamic-row"><span class="row-label"><svg class="row-icon" viewBox="0 0 24 24" fill="none"><path d="M3 10h18M7 6h10M7 14h10M7 18h6" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>Taxa ML</span><div><strong id="bh-dyn-fee">--</strong> <small id="bh-src-fee">(indisponivel)</small></div></div>
+            <div class="dynamic-row"><span class="row-label"><svg class="row-icon" viewBox="0 0 24 24" fill="none"><path d="M4 5h16v14H4zM8 9h8" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>Categoria</span><div><strong id="bh-dyn-category">--</strong></div></div>
+            <div class="dynamic-row"><span class="row-label"><svg class="row-icon" viewBox="0 0 24 24" fill="none"><path d="M3 16h18M5 16l2-6h10l2 6" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>Frete estimado</span><div><strong id="bh-dyn-shipping-estimated">--</strong> <small id="bh-src-shipping-estimated">(indisponivel)</small></div></div>
+            <div class="dynamic-row"><span class="row-label"><svg class="row-icon" viewBox="0 0 24 24" fill="none"><path d="M4 17h16M7 17V7h10v10" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>Frete real</span><div><strong id="bh-dyn-shipping-real">--</strong> <small id="bh-src-shipping-real">(indisponivel)</small></div></div>
+            <div class="dynamic-row"><span class="row-label"><svg class="row-icon" viewBox="0 0 24 24" fill="none"><path d="M3 12h18M12 3v18" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>Modo envio</span><div><strong id="bh-dyn-shipping-mode">--</strong></div></div>
+          </div>
+
+          <div class="section section-adv-inline">
             <div class="section-title-row">
               <span class="section-icon" aria-hidden="true"><svg width="12" height="12" viewBox="0 0 24 24" fill="none"><path d="M3 6h18v12H3zM8 10h8" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg></span>
               <p class="section-title">Frete</p>
             </div>
             <div class="freight-box">
-              <div class="freight-card green">
-                <div class="switch-row">
-                  <p class="section-title">Frete Gratis</p>
-                  <label class="switch-inline switch-green">
-                    <input id="bh-free-shipping-toggle" type="checkbox" checked> ML
-                  </label>
+              <div class="freight-compact-grid">
+                <div class="freight-card green">
+                  <div class="switch-row">
+                    <div style="min-width:0">
+                      <p class="freight-title">Gratis (ML)</p>
+                      <p id="bh-free-shipping-hint" class="freight-hint-tiny">A partir R$ 79</p>
+                    </div>
+                    <label class="switch-inline switch-green switch-min" title="Modo frete grátis do ML">
+                      <input id="bh-free-shipping-toggle" type="checkbox" checked aria-label="Frete grátis ML" />
+                    </label>
+                  </div>
                 </div>
-              </div>
-              <div class="freight-card blue">
-                <div class="switch-row">
-                  <p class="section-title">Frete Manual</p>
-                  <label class="switch-inline switch-blue">
-                    <input id="bh-shipping-manual-toggle" type="checkbox"> Manual
-                  </label>
-                </div>
-                <div id="bh-shipping-fallback-wrap" style="display:none;">
-                  <label>Valor do frete (R$)<input id="bh-shipping-fallback" type="number" step="0.01" min="0" value="12"></label>
+                <div id="bh-custom-shipping-card" class="freight-card blue">
+                  <div class="switch-row">
+                    <div style="min-width:0">
+                      <p class="freight-title">Custom</p>
+                      <p id="bh-custom-shipping-hint" class="freight-hint-tiny">Padrao R$ 12</p>
+                    </div>
+                    <label class="switch-inline switch-blue switch-min" title="Frete manual">
+                      <input id="bh-shipping-manual-toggle" type="checkbox" aria-label="Frete manual" />
+                    </label>
+                  </div>
+                  <div id="bh-shipping-fallback-wrap" style="display:none;">
+                    <input id="bh-shipping-fallback" type="number" step="0.01" min="0" value="12" style="padding:4px 6px;font-size:12px; border-radius:4px" title="Valor do frete (R$)">
+                  </div>
                 </div>
               </div>
             </div>
         </div>
 
         <div class="section section-centralize">
-            <div class="section-title-row">
-              <span class="section-icon" aria-hidden="true"><svg width="12" height="12" viewBox="0 0 24 24" fill="none"><path d="M4 6h16M4 12h16M4 18h10" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg></span>
-              <p class="section-title">Centralize / Full</p>
+          <div class="section-title-row">
+            <span class="section-icon" aria-hidden="true"><svg width="12" height="12" viewBox="0 0 24 24" fill="none"><path d="M4 6h16M4 12h16M4 18h10" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg></span>
+            <p class="section-title">Centralize / Full</p>
+          </div>
+          <div id="bh-centralize-body" class="centralize-body">
+            <div class="dynamic-row" style="font-size:11px"><span>Envio</span><strong>R$ 5,00</strong></div>
+            <div class="dynamic-row" style="font-size:11px"><span>Embalagem</span><strong>R$ 1,50</strong></div>
+          </div>
+          <div class="freight-card">
+            <div class="switch-row">
+              <p class="section-title">Centralize</p>
+              <label class="switch-inline switch-blue">
+                <input id="bh-centralize-toggle" type="checkbox" checked> Ativo
+              </label>
             </div>
-            <div class="freight-card">
-              <div class="switch-row">
-                <p class="section-title">Centralize</p>
-                <label class="switch-inline switch-blue">
-                  <input id="bh-centralize-toggle" type="checkbox" checked> Ativo
-                </label>
-              </div>
+          </div>
+          <div class="freight-card">
+            <div class="switch-row">
+              <p class="section-title">Full</p>
+              <label class="switch-inline switch-green">
+                <input id="bh-full-toggle" type="checkbox"> Ativo
+              </label>
             </div>
-            <div class="freight-card">
-              <div class="switch-row">
-                <p class="section-title">Full</p>
-                <label class="switch-inline switch-green">
-                  <input id="bh-full-toggle" type="checkbox"> Ativo
-                </label>
-              </div>
-            </div>
+          </div>
         </div>
 
           <div style="display:grid;gap:6px;">
@@ -469,8 +506,12 @@
       salePriceManualWrap: $("bh-sale-price-manual-wrap"),
       salePriceManualInput: $("bh-sale-price-manual-input"),
       productCost: $("bh-product-cost"),
+      centralizeToggle: $("bh-centralize-toggle"),
+      centralizeBody: $("bh-centralize-body"),
       freeShippingToggle: $("bh-free-shipping-toggle"),
+      freeShippingHint: $("bh-free-shipping-hint"),
       shippingManualToggle: $("bh-shipping-manual-toggle"),
+      customShippingHint: $("bh-custom-shipping-hint"),
       shippingFallbackWrap: $("bh-shipping-fallback-wrap"),
       shippingFallback: $("bh-shipping-fallback"),
       resultGross: $("bh-result-gross"),
@@ -537,7 +578,20 @@
     const manual = Boolean(elements.shippingManualToggle.checked)
     elements.shippingFallback.disabled = !manual
     elements.shippingFallbackWrap.style.display = manual ? "block" : "none"
+    const minP = formatMoney(Number(state.shippingConfig.freeShippingMinPrice ?? 79))
+    if (elements.customShippingHint) {
+      elements.customShippingHint.textContent = manual ? "Val. manual" : "Pad. R$ 12"
+    }
+    if (elements.freeShippingHint) {
+      elements.freeShippingHint.textContent = `De ${minP}`
+    }
     elements.freeShippingToggle.disabled = manual
+  }
+
+  function applyCentralizeUiState(elements) {
+    if (!elements.centralizeBody) return
+    const on = Boolean(elements.centralizeToggle?.checked)
+    elements.centralizeBody.classList.toggle("muted", !on)
   }
 
   function writeMarketplaceDynamicSection(elements, marketplaceData) {
@@ -683,6 +737,10 @@
 
   function setOperationInputs(elements, values) {
     elements.productCost.value = String(values.productCost ?? 0)
+    if (elements.centralizeToggle) {
+      elements.centralizeToggle.checked =
+        values.centralizeEnabled === undefined ? true : Boolean(values.centralizeEnabled)
+    }
     elements.freeShippingToggle.checked = values.freeShippingEnabled ?? true
     elements.shippingFallback.value = String(values.shippingFallback ?? 12)
     elements.shippingManualToggle.checked = Boolean(values.forceManualShipping)
@@ -699,6 +757,7 @@
     }
     applySalePriceUiState(elements)
     applyShippingUiState(elements)
+    applyCentralizeUiState(elements)
   }
 
   function applyLogisticModeUiState(elements, changedMode) {
@@ -799,6 +858,12 @@
       applyShippingUiState(elements)
       void recalcAndPersist()
     })
+    if (elements.centralizeToggle) {
+      elements.centralizeToggle.addEventListener("change", () => {
+        applyCentralizeUiState(elements)
+        void recalcAndPersist()
+      })
+    }
     elements.salePriceManualToggle.addEventListener("change", () => {
       applySalePriceUiState(elements)
       if (elements.salePriceManualToggle.checked && state.marketplaceDataCache?.salePrice) {

@@ -356,4 +356,54 @@ export default defineSchema({
     .index("by_user_created_at", ["userId", "createdAt"])
     .index("by_user_item", ["userId", "itemId"])
     .index("by_user_catalog", ["userId", "catalogProductId"]),
+  /** BranchNotify (Eletro Club / VTEX) — doc branchcommerce-docs/03 */
+  products: defineTable({
+    userId: v.string(),
+    sku: v.string(),
+    nome: v.string(),
+    quantidade: v.number(),
+    precoMaximo: v.optional(v.number()),
+    ativo: v.boolean(),
+    createdAt: v.number(),
+  })
+    .index("by_user", ["userId"])
+    .index("by_sku", ["sku"])
+    .index("by_user_sku", ["userId", "sku"])
+    .index("by_user_ativo", ["userId", "ativo"]),
+
+  productState: defineTable({
+    userId: v.string(),
+    sku: v.string(),
+    disponivel: v.boolean(),
+    preco: v.number(),
+    precoOriginal: v.number(),
+    imagemUrl: v.optional(v.string()),
+    link: v.optional(v.string()),
+    nomeProduto: v.optional(v.string()),
+    ultimaChecagem: v.number(),
+  }).index("by_user_sku", ["userId", "sku"]),
+
+  notifications: defineTable({
+    userId: v.string(),
+    productId: v.id("products"),
+    sku: v.string(),
+    nome: v.string(),
+    preco: v.number(),
+    precoPix: v.number(),
+    pixCode: v.string(),
+    enviadoEm: v.number(),
+    sucesso: v.boolean(),
+    erro: v.optional(v.string()),
+  })
+    .index("by_user", ["userId"])
+    .index("by_user_enviado", ["userId", "enviadoEm"]),
+
+  notifySettings: defineTable({
+    userId: v.string(),
+    telegramChatId: v.optional(v.string()),
+    telegramEnabled: v.boolean(),
+    pixChave: v.optional(v.string()),
+    pixNome: v.optional(v.string()),
+    pixCidade: v.optional(v.string()),
+  }).index("by_user", ["userId"]),
 })

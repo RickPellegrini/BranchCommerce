@@ -12,7 +12,6 @@
     },
     defaults: {
       productCost: 0,
-      taxPercent: 0,
       freeShippingEnabled: true,
       freeShippingMinPrice: 79,
       freeShippingSubsidyPercent: 50,

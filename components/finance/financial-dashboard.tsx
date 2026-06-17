@@ -7,6 +7,7 @@ import { useMutation, useQuery } from "convex/react"
 import {
   AlertCircle,
   BarChart3,
+  Bell,
   Briefcase,
   CalendarDays,
   CheckCircle2,
@@ -123,6 +124,13 @@ import type { KanbanColumnId, KanbanProduct, KanbanStatus } from "@/components/e
 import type { ProductSuggestionCandidate } from "@/lib/stock/product-name-suggestions"
 import { normalizeMercadoLibreItemId } from "@/lib/mercadolivre/item-id"
 import { suggestUnitCostFromInventory, type ProductCostLookup } from "@/lib/stock/suggest-unit-cost"
+import { BranchNotifyPage } from "@/components/branchnotify/branch-notify-page"
+
+/**
+ * Valor fixo só quando a API de saldo está indisponível: referência de garantia.
+ * Saldo estimado não usa complemento manual — alinha com líquido do MP (taxas).
+ */
+const MP_SALDO_ESTIMADO_GARANTIA_MANUAL_BRL = 250
 
 export type ModuleKey =
   | "home"
@@ -132,6 +140,7 @@ export type ModuleKey =
   | "branchhunter"
   | "connections"
   | "administrative"
+  | "branchnotify"
 type FinanceSection =
   | "overview"
   | "abc"
@@ -1408,6 +1417,7 @@ const moduleRoutes: Record<ModuleKey, string> = {
   branchhunter: "/branch-hunter",
   connections: "/ti",
   administrative: "/administrativo",
+  branchnotify: "/dashboard",
 }
 
 export function FinancialDashboard({
@@ -5507,6 +5517,19 @@ export function FinancialDashboard({
               Administrativo
             </Link>
           </Button>
+          <Button
+            size="sm"
+            variant="outline"
+            className={cn(
+              activeModule === "branchnotify"
+                ? "border-violet-600 bg-violet-600 text-white hover:bg-violet-700"
+                : "border-violet-500 text-violet-800 dark:text-violet-300 hover:bg-violet-50 dark:hover:bg-violet-950/40",
+            )}
+            onClick={() => setActiveModule("branchnotify")}
+          >
+            <Bell className="size-4" />
+            BranchNotify
+          </Button>
         </div>
         <Separator />
         {activeModule === "finance" && (
@@ -5627,6 +5650,11 @@ export function FinancialDashboard({
               onClick={() => setActiveHunterSection("analise-anuncio")}
             />
           </>
+        )}
+        {activeModule === "branchnotify" && (
+          <p className="text-xs text-muted-foreground">
+            Alertas Eletro Club (restock) e copia de Pix. Configure Telegram opcional.
+          </p>
         )}
       </aside>
 
@@ -11326,6 +11354,12 @@ export function FinancialDashboard({
 
         {activeModule === "branchhunter" && activeHunterSection === "analise-anuncio" && (
           <HunterAnalysisPage />
+        )}
+
+        {activeModule === "branchnotify" && (
+          <div className="mx-auto max-w-4xl">
+            {userId ? <BranchNotifyPage userId={userId} /> : <p>Carregue sessao (login).</p>}
+          </div>
         )}
 
         {activeModule === "mercadolivre" && analysisItemId && (
