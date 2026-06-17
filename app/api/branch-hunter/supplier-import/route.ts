@@ -13,6 +13,14 @@ type SupplierRow = {
   cost: number
 }
 
+type OpenAiFileResponse = {
+  id?: string
+}
+
+type OpenAiResponsesApiResponse = {
+  output_text?: string
+}
+
 function normalizeText(value: unknown) {
   return String(value ?? "").trim()
 }
@@ -39,6 +47,143 @@ function rowsToTabbedText(rows: SupplierRow[]) {
   const header = "codigo\tdescricao\tgtin\tcusto"
   const body = rows.map((row) => `${row.code}\t${row.name}\t${row.gtin}\t${row.cost.toFixed(2)}`)
   return [header, ...body].join("\n")
+}
+
+async function uploadFileToOpenAi(file: File, apiKey: string) {
+  const formData = new FormData()
+  formData.append("purpose", "user_data")
+  formData.append("file", file)
+
+  const response = await fetch("https://api.openai.com/v1/files", {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${apiKey}`,
+    },
+    body: formData,
+  })
+
+  const rawResponse = await response.text()
+  let payload: OpenAiFileResponse | null = null
+  try {
+    payload = JSON.parse(rawResponse) as OpenAiFileResponse
+  } catch {
+    payload = null
+  }
+
+  if (!response.ok || !payload?.id) {
+    throw new Error(
+      payload && "error" in payload && typeof payload.error === "string"
+        ? payload.error
+        : `OpenAI file upload falhou com HTTP ${response.status}.`,
+    )
+  }
+
+  return payload.id
+}
+
+async function deleteOpenAiFile(fileId: string, apiKey: string) {
+  try {
+    await fetch(`https://api.openai.com/v1/files/${fileId}`, {
+      method: "DELETE",
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+      },
+    })
+  } catch {
+    // limpeza best effort
+  }
+}
+
+async function extractSupplierRowsWithOpenAi(fileId: string, fileName: string, apiKey: string) {
+  const model = String(process.env.OPENAI_SUPPLIER_EXTRACTION_MODEL ?? "gpt-4o-mini").trim()
+
+  const response = await fetch("https://api.openai.com/v1/responses", {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${apiKey}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      model,
+      input: [
+        {
+          role: "system",
+          content: [
+            {
+              type: "input_text",
+              text: [
+                "Voce extrai listas de fornecedores brasileiros.",
+                "Leia o arquivo e retorne apenas itens de produto estruturados.",
+                "Converta custo para numero decimal usando ponto.",
+                "Mantenha gtin apenas com digitos.",
+                "Se uma linha estiver ambigua ou incompleta, descarte.",
+                "Nao invente dados.",
+              ].join(" "),
+            },
+          ],
+        },
+        {
+          role: "user",
+          content: [
+            {
+              type: "input_text",
+              text: `Extraia do arquivo ${fileName} uma lista JSON com colunas codigo, name, gtin e cost.`,
+            },
+            {
+              type: "input_file",
+              file_id: fileId,
+            },
+          ],
+        },
+      ],
+      text: {
+        format: {
+          type: "json_schema",
+          name: "supplier_rows",
+          strict: true,
+          schema: {
+            type: "object",
+            properties: {
+              rows: {
+                type: "array",
+                items: {
+                  type: "object",
+                  properties: {
+                    code: { type: "string" },
+                    name: { type: "string" },
+                    gtin: { type: "string" },
+                    cost: { type: "number" },
+                  },
+                  required: ["code", "name", "gtin", "cost"],
+                  additionalProperties: false,
+                },
+              },
+            },
+            required: ["rows"],
+            additionalProperties: false,
+          },
+        },
+      },
+    }),
+  })
+
+  const rawResponse = await response.text()
+  let payload: OpenAiResponsesApiResponse | null = null
+  try {
+    payload = JSON.parse(rawResponse) as OpenAiResponsesApiResponse
+  } catch {
+    payload = null
+  }
+
+  if (!response.ok || !payload?.output_text) {
+    throw new Error(`OpenAI extraction falhou com HTTP ${response.status}.`)
+  }
+
+  try {
+    return JSON.parse(payload.output_text) as { rows?: unknown[] }
+  } catch {
+    throw new Error("OpenAI retornou um payload invalido na extracao do fornecedor.")
+  }
 }
 
 function normalizeSupplierRows(payload: unknown): SupplierRow[] {
@@ -70,15 +215,12 @@ export async function POST(request: NextRequest) {
   try {
     await requireAuthenticatedAppUserId()
 
-    const doclingUrl = String(
-      process.env.DOCLING_SUPPLIER_EXTRACT_URL ?? process.env.EXTEND_SUPPLIER_EXTRACT_URL ?? "",
-    ).trim()
-    if (!doclingUrl) {
+    const apiKey = String(process.env.OPENAI_API_KEY ?? "").trim()
+    if (!apiKey) {
       return Response.json(
         {
           ok: false,
-          error:
-            "Configure DOCLING_SUPPLIER_EXTRACT_URL para usar a extracao do fornecedor via Docling.",
+          error: "Configure OPENAI_API_KEY para usar a extracao do fornecedor com OpenAI.",
         },
         { status: 500 },
       )
@@ -90,51 +232,15 @@ export async function POST(request: NextRequest) {
       return Response.json({ ok: false, error: "Arquivo obrigatorio." }, { status: 400 })
     }
 
-    const upstreamFormData = new FormData()
-    upstreamFormData.append("file", file)
-
-    const apiKey = String(
-      process.env.DOCLING_SUPPLIER_EXTRACT_API_KEY ??
-        process.env.EXTEND_SUPPLIER_EXTRACT_API_KEY ??
-        "",
-    ).trim()
-    const authToken = String(
-      process.env.DOCLING_SUPPLIER_EXTRACT_BEARER_TOKEN ??
-        process.env.EXTEND_SUPPLIER_EXTRACT_BEARER_TOKEN ??
-        "",
-    ).trim()
-
-    const headers = new Headers()
-    if (apiKey) headers.set("x-api-key", apiKey)
-    if (authToken) headers.set("Authorization", `Bearer ${authToken}`)
-
-    const upstreamResponse = await fetch(doclingUrl, {
-      method: "POST",
-      headers,
-      body: upstreamFormData,
-    })
-
-    const rawResponse = await upstreamResponse.text()
-    let payload: unknown = null
+    const fileId = await uploadFileToOpenAi(file, apiKey)
+    let extractedPayload: unknown = null
     try {
-      payload = JSON.parse(rawResponse)
-    } catch {
-      payload = null
+      extractedPayload = await extractSupplierRowsWithOpenAi(fileId, file.name, apiKey)
+    } finally {
+      await deleteOpenAiFile(fileId, apiKey)
     }
 
-    if (!upstreamResponse.ok) {
-      return Response.json(
-        {
-          ok: false,
-          error:
-            (payload as { error?: string })?.error ||
-            `Docling respondeu HTTP ${upstreamResponse.status}.`,
-        },
-        { status: upstreamResponse.status },
-      )
-    }
-
-    const rows = normalizeSupplierRows(payload)
+    const rows = normalizeSupplierRows(extractedPayload)
     const sourceType = file.name.toLowerCase().endsWith(".pdf") ? "pdf" : "text"
 
     return Response.json({
@@ -151,9 +257,7 @@ export async function POST(request: NextRequest) {
       {
         ok: false,
         error:
-          error instanceof Error
-            ? error.message
-            : "Erro ao importar arquivo pela extracao Docling.",
+          error instanceof Error ? error.message : "Erro ao importar arquivo pela extracao OpenAI.",
       },
       { status: 500 },
     )

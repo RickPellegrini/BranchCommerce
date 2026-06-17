@@ -18,8 +18,8 @@ export function BranchHunterSupplierPage() {
         <div>
           <h1 className="text-2xl font-bold tracking-tight">Analise de Fornecedor</h1>
           <p className="mt-1 text-sm text-muted-foreground">
-            Envie o arquivo do fornecedor para o extractor externo e deixe o Branch Hunter cuidar
-            apenas do cruzamento com o catalogo do Mercado Livre.
+            Envie o arquivo do fornecedor, deixe a OpenAI extrair os dados e depois o Branch Hunter
+            faz o cruzamento com o catalogo do Mercado Livre.
           </p>
         </div>
         <Button
@@ -40,8 +40,8 @@ export function BranchHunterSupplierPage() {
         </div>
         <h3 className="text-lg font-semibold">Importe o fornecedor e analise a margem</h3>
         <p className="mt-1 max-w-2xl text-sm text-muted-foreground">
-          Essa aba e separada da analise de anuncio. Aqui voce envia o arquivo para a extracao
-          externa, revisa o retorno e gera a lista final dos produtos aprovados.
+          Essa aba e separada da analise de anuncio. Aqui voce envia o arquivo para a OpenAI, revisa
+          o retorno e gera a lista final dos produtos aprovados.
         </p>
       </div>
 

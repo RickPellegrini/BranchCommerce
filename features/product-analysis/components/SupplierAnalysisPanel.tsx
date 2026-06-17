@@ -122,7 +122,7 @@ export function SupplierAnalysisPanel() {
     setRawTable("")
     setResults([])
     setSummary(null)
-    setStatus("Enviando arquivo para o extractor Docling...")
+    setStatus("Enviando arquivo para a extracao com OpenAI...")
 
     try {
       const formData = new FormData()
@@ -138,7 +138,7 @@ export function SupplierAnalysisPanel() {
           payload?.error ||
             buildApiErrorMessage(
               response,
-              "Erro ao importar o arquivo no extractor Docling.",
+              "Erro ao importar o arquivo na extracao OpenAI.",
               rawResponse,
             ),
         )
@@ -146,13 +146,13 @@ export function SupplierAnalysisPanel() {
       setImportedRows(payload.data.rows)
       setRawTable(payload.data.rawText)
       setStatus(
-        `${payload.data.rows.length} itens retornados pelo extractor Docling. Agora clique em Analisar lista do fornecedor.`,
+        `${payload.data.rows.length} itens extraidos pela OpenAI. Agora clique em Analisar lista do fornecedor.`,
       )
     } catch (error) {
       setImportedRows([])
       setRawTable("")
       setStatus(
-        error instanceof Error ? error.message : "Erro ao importar arquivo no extractor Docling.",
+        error instanceof Error ? error.message : "Erro ao importar arquivo na extracao OpenAI.",
       )
     }
   }
@@ -161,7 +161,7 @@ export function SupplierAnalysisPanel() {
     if (importedRows.length === 0) {
       setResults([])
       setSummary(null)
-      setStatus("Nenhuma linha foi retornada pelo extractor Docling.")
+      setStatus("Nenhuma linha foi retornada pela extracao OpenAI.")
       return
     }
 
@@ -228,8 +228,8 @@ export function SupplierAnalysisPanel() {
           Analise de Fornecedor
         </CardTitle>
         <p className="text-sm text-muted-foreground">
-          Envie o arquivo do fornecedor para extracao via Docling e encontre produtos de catalogo
-          com margem minima acima do que voce definir.
+          Envie o arquivo do fornecedor para extracao via OpenAI e encontre produtos de catalogo com
+          margem minima acima do que voce definir.
         </p>
       </CardHeader>
       <CardContent className="space-y-4">
@@ -245,8 +245,8 @@ export function SupplierAnalysisPanel() {
               }
             />
             <p className="text-xs text-muted-foreground">
-              O Branch Hunter nao faz mais parsing local. Esse preview mostra apenas o que voltar do
-              extractor Docling.
+              O preview mostra exatamente as linhas que a OpenAI extraiu do arquivo antes da busca
+              no Mercado Livre.
             </p>
           </div>
 
@@ -256,7 +256,7 @@ export function SupplierAnalysisPanel() {
               <Input value={minMargin} onChange={(event) => setMinMargin(event.target.value)} />
             </div>
             <div className="space-y-2">
-              <label className="text-sm font-medium">Importar arquivo via Docling</label>
+              <label className="text-sm font-medium">Importar arquivo via OpenAI</label>
               <Input
                 type="file"
                 accept=".pdf,.csv,.txt,.xlsx,.xls,application/pdf,text/csv,text/plain,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
