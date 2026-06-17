@@ -74,6 +74,17 @@ type SupplierScanResponse = {
   }
 }
 
+type AnalysisSettingsSnapshot = {
+  listingType: BranchHunterListingType
+  freeShippingEnabled: boolean
+  forceManualShipping: boolean
+  shippingFallback: number
+  centralizeEnabled: boolean
+  fullEnabled: boolean
+  fullShipmentUnits: number
+  fullCollectionCost: number
+}
+
 type SupplierImportResponse = {
   ok: boolean
   error?: string
@@ -226,10 +237,24 @@ export function SupplierAnalysisPanel() {
     matched: number
     minMargin: number
   } | null>(null)
+  const [analysisSettings, setAnalysisSettings] = useState<AnalysisSettingsSnapshot | null>(null)
 
   const extractedRows = importedRows.length > 0 ? importedRows : parseSupplierRowsFromText(rawTable)
   const isBusy = loadingPhase !== "idle"
   const hasImport = extractedRows.length > 0
+  const currentSettingsSnapshot: AnalysisSettingsSnapshot = {
+    listingType,
+    freeShippingEnabled,
+    forceManualShipping,
+    shippingFallback: parseLocaleNumber(shippingFallback) ?? defaultSettings.shippingFallback,
+    centralizeEnabled,
+    fullEnabled,
+    fullShipmentUnits: parseLocaleNumber(fullShipmentUnits) ?? defaultSettings.fullShipmentUnits,
+    fullCollectionCost: parseLocaleNumber(fullCollectionCost) ?? defaultSettings.fullCollectionCost,
+  }
+  const hasPendingSettingsChange =
+    analysisSettings !== null &&
+    JSON.stringify(analysisSettings) !== JSON.stringify(currentSettingsSnapshot)
 
   async function runSupplierScan(rows: SupplierRow[]) {
     if (rows.length === 0) {
@@ -243,6 +268,7 @@ export function SupplierAnalysisPanel() {
     setResults([])
     setSummary(null)
     setStatus(`Analisando ${rows.length} itens no catalogo do Mercado Livre...`)
+    const requestSettings = currentSettingsSnapshot
 
     try {
       const response = await fetch("/api/branch-hunter/supplier-scan", {
@@ -254,20 +280,17 @@ export function SupplierAnalysisPanel() {
           rows,
           minMargin: parseLocaleNumber(minMargin) ?? 15,
           settings: {
-            listingType,
-            freeShippingEnabled,
-            forceManualShipping,
-            shippingFallback:
-              parseLocaleNumber(shippingFallback) ?? defaultSettings.shippingFallback,
+            listingType: requestSettings.listingType,
+            freeShippingEnabled: requestSettings.freeShippingEnabled,
+            forceManualShipping: requestSettings.forceManualShipping,
+            shippingFallback: requestSettings.shippingFallback,
             defaultShippingCost: defaultSettings.defaultShippingCost,
             freeShippingMinPrice: defaultSettings.freeShippingMinPrice,
             freeShippingSubsidyPercent: defaultSettings.freeShippingSubsidyPercent,
-            centralizeEnabled,
-            fullEnabled,
-            fullShipmentUnits:
-              parseLocaleNumber(fullShipmentUnits) ?? defaultSettings.fullShipmentUnits,
-            fullCollectionCost:
-              parseLocaleNumber(fullCollectionCost) ?? defaultSettings.fullCollectionCost,
+            centralizeEnabled: requestSettings.centralizeEnabled,
+            fullEnabled: requestSettings.fullEnabled,
+            fullShipmentUnits: requestSettings.fullShipmentUnits,
+            fullCollectionCost: requestSettings.fullCollectionCost,
             packagingCost: 0,
             otherFixedCosts: 0,
             adsPercent: 0,
@@ -286,6 +309,7 @@ export function SupplierAnalysisPanel() {
       }
 
       setResults(payload.data.winners)
+      setAnalysisSettings(requestSettings)
       setSummary({
         scanned: payload.data.scanned,
         matched: payload.data.matched,
@@ -297,6 +321,7 @@ export function SupplierAnalysisPanel() {
     } catch (error) {
       setResults([])
       setSummary(null)
+      setAnalysisSettings(null)
       setStatus(error instanceof Error ? error.message : "Erro ao analisar a lista do fornecedor.")
     } finally {
       setLoadingPhase("idle")
@@ -312,6 +337,7 @@ export function SupplierAnalysisPanel() {
     setRawTable("")
     setResults([])
     setSummary(null)
+    setAnalysisSettings(null)
     setLoadingPhase("importing")
     setStatus("Extraindo produtos do arquivo com OpenAI...")
 
@@ -566,6 +592,12 @@ export function SupplierAnalysisPanel() {
                   <p className="text-sm text-muted-foreground">
                     Mostrando apenas os itens que passaram pela margem minima definida.
                   </p>
+                  {hasPendingSettingsChange && (
+                    <p className="mt-1 text-xs font-medium text-amber-700">
+                      Os filtros/custos foram alterados depois do ultimo processamento. Clique em
+                      "Reprocessar analise" para atualizar os valores.
+                    </p>
+                  )}
                 </div>
 
                 <div className="flex gap-2">
@@ -658,7 +690,7 @@ export function SupplierAnalysisPanel() {
                         </div>
                       </div>
 
-                      {fullEnabled && (
+                      {analysisSettings?.fullEnabled && (
                         <div className="mt-3 grid gap-3 sm:grid-cols-2">
                           <div className="rounded-xl bg-muted/20 px-3 py-2 text-sm">
                             Full por unidade: <strong>{formatBrl(row.fullUnitCost)}</strong>
