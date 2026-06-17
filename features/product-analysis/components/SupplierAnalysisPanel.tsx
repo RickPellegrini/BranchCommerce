@@ -17,14 +17,6 @@ import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table"
 import { Textarea } from "@/components/ui/textarea"
 import { formatBrl } from "@/features/product-analysis/utils/money"
 
@@ -439,66 +431,79 @@ export function SupplierAnalysisPanel() {
               </div>
 
               {results.length > 0 ? (
-                <div className="overflow-x-auto">
-                  <Table>
-                    <TableHeader>
-                      <TableRow>
-                        <TableHead>Produto</TableHead>
-                        <TableHead>Custo</TableHead>
-                        <TableHead>Venda</TableHead>
-                        <TableHead>Taxa ML</TableHead>
-                        <TableHead>Lucro</TableHead>
-                        <TableHead>Margem</TableHead>
-                        <TableHead>Links</TableHead>
-                      </TableRow>
-                    </TableHeader>
-                    <TableBody>
-                      {results.map((row) => (
-                        <TableRow key={`${row.catalogProductId}-${row.gtin}`}>
-                          <TableCell className="min-w-[280px] align-top">
-                            <div className="space-y-1">
-                              <div className="font-medium">{row.supplierName}</div>
-                              <div className="text-xs text-muted-foreground">{row.catalogName}</div>
-                              <div className="text-xs text-muted-foreground">GTIN {row.gtin}</div>
-                            </div>
-                          </TableCell>
-                          <TableCell className="align-top">{formatBrl(row.supplierCost)}</TableCell>
-                          <TableCell className="align-top">{formatBrl(row.salePrice)}</TableCell>
-                          <TableCell className="align-top">{formatBrl(row.feeAmount)}</TableCell>
-                          <TableCell className="align-top font-medium text-foreground">
-                            {formatBrl(row.netProfit)}
-                          </TableCell>
-                          <TableCell className="align-top">
-                            <span className="rounded-full bg-emerald-100 px-2.5 py-1 text-xs font-semibold text-emerald-800">
-                              {formatPercent(row.netMargin)}
-                            </span>
-                          </TableCell>
-                          <TableCell className="align-top">
-                            <div className="flex flex-col gap-2">
-                              <a
-                                href={row.catalogLink}
-                                target="_blank"
-                                rel="noreferrer"
-                                className="inline-flex items-center gap-1 text-sm font-medium text-blue-600 hover:underline"
-                              >
-                                <Link2 className="size-4" />
-                                catalogo
-                              </a>
-                              <a
-                                href={row.itemLink}
-                                target="_blank"
-                                rel="noreferrer"
-                                className="inline-flex items-center gap-1 text-sm font-medium text-blue-600 hover:underline"
-                              >
-                                <Upload className="size-4" />
-                                anuncio
-                              </a>
-                            </div>
-                          </TableCell>
-                        </TableRow>
-                      ))}
-                    </TableBody>
-                  </Table>
+                <div className="space-y-3 px-4 py-4 sm:px-5">
+                  {results.map((row) => (
+                    <div
+                      key={`${row.catalogProductId}-${row.gtin}`}
+                      className="rounded-2xl border bg-white p-4"
+                    >
+                      <div className="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
+                        <div className="min-w-0 flex-1 space-y-1">
+                          <div className="font-medium leading-snug">{row.supplierName}</div>
+                          <div className="text-sm text-muted-foreground">{row.catalogName}</div>
+                          <div className="text-xs text-muted-foreground">GTIN {row.gtin}</div>
+                        </div>
+
+                        <div className="flex shrink-0 items-start xl:justify-end">
+                          <span className="rounded-full bg-emerald-100 px-3 py-1 text-sm font-semibold text-emerald-800">
+                            {formatPercent(row.netMargin)}
+                          </span>
+                        </div>
+                      </div>
+
+                      <div className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
+                        <div className="rounded-xl bg-muted/30 px-3 py-2">
+                          <div className="text-[11px] uppercase tracking-wide text-muted-foreground">
+                            Custo
+                          </div>
+                          <div className="mt-1 font-semibold">{formatBrl(row.supplierCost)}</div>
+                        </div>
+                        <div className="rounded-xl bg-muted/30 px-3 py-2">
+                          <div className="text-[11px] uppercase tracking-wide text-muted-foreground">
+                            Venda
+                          </div>
+                          <div className="mt-1 font-semibold">{formatBrl(row.salePrice)}</div>
+                        </div>
+                        <div className="rounded-xl bg-muted/30 px-3 py-2">
+                          <div className="text-[11px] uppercase tracking-wide text-muted-foreground">
+                            Taxa ML
+                          </div>
+                          <div className="mt-1 font-semibold">{formatBrl(row.feeAmount)}</div>
+                        </div>
+                        <div className="rounded-xl bg-muted/30 px-3 py-2">
+                          <div className="text-[11px] uppercase tracking-wide text-muted-foreground">
+                            Lucro
+                          </div>
+                          <div className="mt-1 font-semibold">{formatBrl(row.netProfit)}</div>
+                        </div>
+                        <div className="rounded-xl bg-muted/30 px-3 py-2">
+                          <div className="text-[11px] uppercase tracking-wide text-muted-foreground">
+                            Links
+                          </div>
+                          <div className="mt-1 flex flex-col gap-1.5">
+                            <a
+                              href={row.catalogLink}
+                              target="_blank"
+                              rel="noreferrer"
+                              className="inline-flex items-center gap-1 text-sm font-medium text-blue-600 hover:underline"
+                            >
+                              <Link2 className="size-4" />
+                              catalogo
+                            </a>
+                            <a
+                              href={row.itemLink}
+                              target="_blank"
+                              rel="noreferrer"
+                              className="inline-flex items-center gap-1 text-sm font-medium text-blue-600 hover:underline"
+                            >
+                              <Upload className="size-4" />
+                              anuncio
+                            </a>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  ))}
                 </div>
               ) : (
                 <div className="flex min-h-56 flex-col items-center justify-center px-6 py-10 text-center">

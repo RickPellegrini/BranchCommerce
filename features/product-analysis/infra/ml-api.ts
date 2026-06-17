@@ -112,6 +112,34 @@ export async function getProductItems(
   )
 }
 
+export async function getAllProductItems(
+  productId: string,
+  token: string,
+  maxItems: number = 200,
+): Promise<CatalogCompetitor[]> {
+  const firstPage = await getProductItems(productId, token)
+  const firstResults = Array.isArray(firstPage.results) ? firstPage.results : []
+  const paging = firstPage.paging ?? {}
+  const total = Math.max(Number(paging.total ?? firstResults.length), firstResults.length)
+  const pageLimit = Math.max(Number(paging.limit ?? firstResults.length), firstResults.length, 1)
+
+  if (firstResults.length >= total || firstResults.length >= maxItems) {
+    return firstResults.slice(0, maxItems)
+  }
+
+  const pages: CatalogCompetitor[][] = [firstResults]
+  for (let offset = firstResults.length; offset < total && offset < maxItems; offset += pageLimit) {
+    const page = await fetchMl<CatalogProductItemsResponse>(
+      `/products/${productId}/items?offset=${offset}&limit=${pageLimit}`,
+      `GET /products/${productId}/items?offset=${offset}&limit=${pageLimit}`,
+      token,
+    )
+    pages.push(Array.isArray(page.results) ? page.results : [])
+  }
+
+  return pages.flat().slice(0, maxItems)
+}
+
 /** Batch-fetch seller info: nicknames, reputation, power_seller_status. */
 export async function getSellersBatch(
   token: string,

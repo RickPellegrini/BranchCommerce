@@ -13,7 +13,7 @@ import { createAnalysisLogger } from "@/features/product-analysis/infra/logger"
 import {
   getItem,
   getProduct,
-  getProductItems,
+  getAllProductItems,
   getSellersBatch,
   getItemsReferenceStockBatch,
   getCompetitorVisits,
@@ -259,10 +259,10 @@ async function resolveId(
   const catalogT0 = Date.now()
   try {
     const [itemsRes, product] = await Promise.all([
-      getProductItems(rawId, token),
+      getAllProductItems(rawId, token),
       getProduct(rawId, token),
     ])
-    const listings = itemsRes.results ?? []
+    const listings = itemsRes ?? []
     recordSource("catalog_product_items", listings.length > 0 ? "success" : "unavailable", {
       endpoint: `/products/${rawId}/items`,
       count: listings.length,
@@ -423,8 +423,8 @@ export async function getProductAnalysis(token: string, receivedId: string): Pro
       logger.log("discover", `Item has catalog_product_id=${catalogProductId}, fetching listings`)
       const discoverT0 = Date.now()
       try {
-        const res = await getProductItems(catalogProductId, token)
-        allListings = res.results ?? []
+        const res = await getAllProductItems(catalogProductId, token)
+        allListings = res ?? []
         dataSources.record(
           "catalog_product_items",
           allListings.length > 0 ? "success" : "unavailable",
