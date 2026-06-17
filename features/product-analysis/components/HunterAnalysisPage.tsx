@@ -319,6 +319,8 @@ export function HunterAnalysisPage() {
               )}
             </CardContent>
           </Card>
+
+          <SupplierAnalysisPanel />
         </>
       )}
 
@@ -337,6 +339,8 @@ export function HunterAnalysisPage() {
           phase === "no_competitors" ||
           phase === "not_catalog") &&
         data && <AnalysisResults data={data} refresh={refresh} phase={phase} />}
+
+      {isShowingResults && <SupplierAnalysisPanel />}
     </div>
   )
 }
@@ -773,8 +777,6 @@ function AnalysisResults({
           />
         </TabsContent>
       </Tabs>
-
-      <SupplierAnalysisPanel />
     </div>
   )
 }
