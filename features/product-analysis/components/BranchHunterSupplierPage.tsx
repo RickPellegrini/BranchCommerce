@@ -1,6 +1,6 @@
 "use client"
 
-import { FileSearch, Upload } from "lucide-react"
+import { Upload } from "lucide-react"
 
 import { Button } from "@/components/ui/button"
 import { SupplierAnalysisPanel } from "./SupplierAnalysisPanel"
@@ -33,18 +33,6 @@ export function BranchHunterSupplierPage() {
           Baixar extensao
         </Button>
       </div>
-
-      <div className="flex flex-col items-center justify-center py-10 text-center">
-        <div className="mb-4 rounded-2xl bg-blue-50 p-5 dark:bg-blue-950/30">
-          <FileSearch className="size-10 text-blue-600" />
-        </div>
-        <h3 className="text-lg font-semibold">Importe o fornecedor e analise a margem</h3>
-        <p className="mt-1 max-w-2xl text-sm text-muted-foreground">
-          Essa aba e separada da analise de anuncio. Aqui voce envia o arquivo para a OpenAI, revisa
-          o retorno e gera a lista final dos produtos aprovados.
-        </p>
-      </div>
-
       <SupplierAnalysisPanel />
     </div>
   )

@@ -5,6 +5,7 @@ import { requireAuthenticatedAppUserId } from "@/lib/auth/server"
 export const dynamic = "force-dynamic"
 export const revalidate = 0
 export const runtime = "nodejs"
+export const maxDuration = 300
 
 type SupplierRow = {
   code: string
@@ -78,6 +79,13 @@ function formatOpenAiError(
   return details ? `${fallback} ${details}` : fallback
 }
 
+function formatHttpFailureMessage(status: number, fallback: string) {
+  if (status === 504) {
+    return `${fallback} A chamada para a OpenAI excedeu o tempo limite (HTTP 504).`
+  }
+  return `${fallback} HTTP ${status}.`
+}
+
 function extractJsonTextFromOpenAiResponse(payload: OpenAiResponsesApiResponse | null) {
   if (!payload) return null
 
@@ -122,7 +130,10 @@ async function uploadFileToOpenAi(file: File, apiKey: string) {
 
   if (!response.ok || !payload?.id) {
     throw new Error(
-      formatOpenAiError(payload, `OpenAI file upload falhou com HTTP ${response.status}.`),
+      formatOpenAiError(
+        payload,
+        formatHttpFailureMessage(response.status, "OpenAI file upload falhou."),
+      ),
     )
   }
 
@@ -227,7 +238,10 @@ async function extractSupplierRowsWithOpenAi(fileId: string, fileName: string, a
 
   if (!response.ok || !extractedJson) {
     throw new Error(
-      formatOpenAiError(payload, `OpenAI extraction falhou com HTTP ${response.status}.`),
+      formatOpenAiError(
+        payload,
+        formatHttpFailureMessage(response.status, "OpenAI extraction falhou."),
+      ),
     )
   }
 
