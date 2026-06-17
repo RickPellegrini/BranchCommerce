@@ -113,6 +113,7 @@ import {
 } from "@/components/finance/anexos-lancamento-modal"
 import { cn } from "@/lib/utils"
 import { AnalysisModal } from "@/features/product-analysis/components/AnalysisModal"
+import { BranchHunterSupplierPage } from "@/features/product-analysis/components/BranchHunterSupplierPage"
 import { HunterAnalysisPage } from "@/features/product-analysis/components/HunterAnalysisPage"
 import { AdministrativePage } from "@/components/administrativo/administrative-page"
 import type { AdminDocumentCategory } from "@/lib/administrativo/documents"
@@ -158,6 +159,7 @@ type MlSection = "overview" | "anuncios" | "catalogo" | "orders" | "intelligence
 type HunterSection =
   | "padrao"
   | "analise-anuncio"
+  | "analise-fornecedor"
   | "quirografados"
   | "concorrentes"
   | "metricas-analise"
@@ -2132,7 +2134,11 @@ export function FinancialDashboard({
 
     if (moduleParam === "branchhunter") {
       setActiveModule("branchhunter")
-      if (hunterSectionParam === "analise-anuncio" || hunterSectionParam === "padrao") {
+      if (
+        hunterSectionParam === "analise-anuncio" ||
+        hunterSectionParam === "analise-fornecedor" ||
+        hunterSectionParam === "padrao"
+      ) {
         setActiveHunterSection(hunterSectionParam)
       }
     }
@@ -5647,6 +5653,12 @@ export function FinancialDashboard({
               label="Analise de Anuncio"
               isActive={activeHunterSection === "analise-anuncio"}
               onClick={() => setActiveHunterSection("analise-anuncio")}
+            />
+            <SidebarButton
+              icon={Store}
+              label="Analise de Fornecedor"
+              isActive={activeHunterSection === "analise-fornecedor"}
+              onClick={() => setActiveHunterSection("analise-fornecedor")}
             />
           </>
         )}
@@ -11353,6 +11365,10 @@ export function FinancialDashboard({
 
         {activeModule === "branchhunter" && activeHunterSection === "analise-anuncio" && (
           <HunterAnalysisPage />
+        )}
+
+        {activeModule === "branchhunter" && activeHunterSection === "analise-fornecedor" && (
+          <BranchHunterSupplierPage />
         )}
 
         {activeModule === "branchnotify" && (

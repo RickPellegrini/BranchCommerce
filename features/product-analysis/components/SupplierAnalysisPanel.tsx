@@ -1,13 +1,14 @@
 "use client"
 
 import { useMemo, useState } from "react"
-import { Upload, Store, Link2, ScanSearch, Copy } from "lucide-react"
+import { Upload, Store, Link2, ScanSearch, Copy, FileText } from "lucide-react"
 
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
 import { Textarea } from "@/components/ui/textarea"
 import { formatBrl } from "@/features/product-analysis/utils/money"
+import { parseSupplierTable } from "@/lib/branch-hunter/supplier-parser"
 
 type SupplierRow = {
   code: string
@@ -45,6 +46,17 @@ type SupplierScanResponse = {
   }
 }
 
+type SupplierImportResponse = {
+  ok: boolean
+  error?: string
+  data?: {
+    fileName: string
+    rows: SupplierRow[]
+    rawText: string
+    sourceType: "pdf" | "text"
+  }
+}
+
 function parseLocaleNumber(value: string) {
   const sanitized = String(value ?? "")
     .trim()
@@ -56,61 +68,6 @@ function parseLocaleNumber(value: string) {
     : sanitized
   const parsed = Number(normalized)
   return Number.isFinite(parsed) ? parsed : null
-}
-
-function normalizeHeader(value: string) {
-  return String(value ?? "")
-    .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "")
-    .trim()
-    .toLowerCase()
-}
-
-function splitLine(line: string, delimiter: string) {
-  return line.split(delimiter).map((value) => value.trim())
-}
-
-function detectDelimiter(text: string) {
-  const sample = text.split(/\r?\n/).find((line) => line.trim()) ?? ""
-  if (sample.includes("\t")) return "\t"
-  if (sample.includes(";")) return ";"
-  return ","
-}
-
-function parseSupplierTable(text: string): SupplierRow[] {
-  const trimmed = String(text ?? "").trim()
-  if (!trimmed) return []
-
-  const delimiter = detectDelimiter(trimmed)
-  const lines = trimmed.split(/\r?\n/).filter((line) => line.trim())
-  if (lines.length < 2) return []
-
-  const headers = splitLine(lines[0], delimiter).map(normalizeHeader)
-  const codeIndex = headers.findIndex((header) => ["codigo", "cod", "sku"].includes(header))
-  const nameIndex = headers.findIndex((header) => ["descricao", "produto", "nome"].includes(header))
-  const gtinIndex = headers.findIndex((header) =>
-    ["gtin", "ean", "codigo de barras", "codigo universal de produto"].includes(header),
-  )
-  const costIndex = headers.findIndex((header) =>
-    ["r$ unit.", "r$ unit", "r$ unitario", "unitario", "custo", "preco", "preco custo"].includes(
-      header,
-    ),
-  )
-
-  if (nameIndex === -1 || gtinIndex === -1 || costIndex === -1) {
-    return []
-  }
-
-  return lines
-    .slice(1)
-    .map((line) => splitLine(line, delimiter))
-    .map((cols) => ({
-      code: codeIndex >= 0 ? (cols[codeIndex] ?? "") : "",
-      name: cols[nameIndex] ?? "",
-      gtin: (cols[gtinIndex] ?? "").replace(/\D/g, ""),
-      cost: parseLocaleNumber(cols[costIndex] ?? ""),
-    }))
-    .filter((row): row is SupplierRow => Boolean(row.name && row.gtin) && row.cost !== null)
 }
 
 function formatPercent(value: number) {
@@ -125,6 +82,7 @@ export function SupplierAnalysisPanel() {
   )
   const [isLoading, setIsLoading] = useState(false)
   const [results, setResults] = useState<SupplierWinner[]>([])
+  const [importedFileName, setImportedFileName] = useState<string | null>(null)
   const [summary, setSummary] = useState<{
     scanned: number
     matched: number
@@ -136,6 +94,35 @@ export function SupplierAnalysisPanel() {
   async function handleFileChange(event: React.ChangeEvent<HTMLInputElement>) {
     const file = event.target.files?.[0]
     if (!file) return
+
+    const lowerName = file.name.toLowerCase()
+    setImportedFileName(file.name)
+
+    if (lowerName.endsWith(".pdf")) {
+      const formData = new FormData()
+      formData.append("file", file)
+      setStatus("Lendo PDF do fornecedor...")
+
+      try {
+        const response = await fetch("/api/branch-hunter/supplier-import", {
+          method: "POST",
+          body: formData,
+        })
+        const payload = (await response.json()) as SupplierImportResponse
+        if (!response.ok || !payload.ok || !payload.data) {
+          throw new Error(payload.error || `HTTP ${response.status}`)
+        }
+        setRawTable(payload.data.rawText)
+        setStatus(
+          `${payload.data.rows.length} itens extraidos do PDF. Agora clique em Analisar lista do fornecedor.`,
+        )
+      } catch (error) {
+        setRawTable("")
+        setStatus(error instanceof Error ? error.message : "Erro ao importar o PDF do fornecedor.")
+      }
+      return
+    }
+
     const text = await file.text()
     setRawTable(text)
     setStatus("Arquivo carregado. Agora clique em Analisar lista do fornecedor.")
@@ -208,8 +195,8 @@ export function SupplierAnalysisPanel() {
           Analise de Fornecedor
         </CardTitle>
         <p className="text-sm text-muted-foreground">
-          Cole a lista do fornecedor e encontre produtos de catalogo com margem minima acima do que
-          voce definir.
+          Envie PDF, CSV ou texto do fornecedor e encontre produtos de catalogo com margem minima
+          acima do que voce definir.
         </p>
       </CardHeader>
       <CardContent className="space-y-4">
@@ -225,8 +212,8 @@ export function SupplierAnalysisPanel() {
               }
             />
             <p className="text-xs text-muted-foreground">
-              Aceita planilha colada do Excel/Sheets ou CSV com colunas `codigo`, `descricao`,
-              `gtin/ean` e `custo`.
+              Aceita planilha colada do Excel/Sheets, CSV/TXT e PDF com colunas `codigo`,
+              `descricao`, `gtin/ean` e `custo`.
             </p>
           </div>
 
@@ -236,13 +223,19 @@ export function SupplierAnalysisPanel() {
               <Input value={minMargin} onChange={(event) => setMinMargin(event.target.value)} />
             </div>
             <div className="space-y-2">
-              <label className="text-sm font-medium">Importar CSV</label>
+              <label className="text-sm font-medium">Importar PDF ou CSV</label>
               <Input
                 type="file"
-                accept=".csv,.txt,text/csv,text/plain"
+                accept=".pdf,.csv,.txt,application/pdf,text/csv,text/plain"
                 onChange={handleFileChange}
               />
             </div>
+            {importedFileName && (
+              <div className="flex items-center gap-2 rounded-lg border bg-background px-3 py-2 text-xs text-muted-foreground">
+                <FileText className="size-4" />
+                {importedFileName}
+              </div>
+            )}
             <Button onClick={handleRunScan} disabled={isLoading} className="w-full gap-2">
               <ScanSearch className="size-4" />
               {isLoading ? "Analisando..." : "Analisar lista do fornecedor"}
