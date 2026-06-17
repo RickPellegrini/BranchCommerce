@@ -1,5 +1,6 @@
 import { NextRequest } from "next/server"
 
+import { requireAuthenticatedAppUserId } from "@/lib/auth/server"
 import { getAnyValidMlConnection, requestMlApi } from "@/lib/mercadolivre/storage"
 
 const ALLOWED_ORIGINS = [
@@ -196,19 +197,18 @@ export async function OPTIONS(request: NextRequest) {
 export async function POST(request: NextRequest) {
   try {
     const syncKey = String(process.env.BRANCH_HUNTER_SYNC_KEY ?? "").trim()
-    if (!syncKey) {
-      return Response.json(
-        { ok: false, error: "BRANCH_HUNTER_SYNC_KEY nao configurado." },
-        { status: 500, headers: corsHeaders(request) },
-      )
-    }
-
     const providedKey = String(request.headers.get("x-branch-hunter-key") ?? "").trim()
-    if (!providedKey || providedKey !== syncKey) {
-      return Response.json(
-        { ok: false, error: "Chave de sincronizacao invalida." },
-        { status: 401, headers: corsHeaders(request) },
-      )
+    const keyIsValid = Boolean(syncKey) && providedKey === syncKey
+
+    if (!keyIsValid) {
+      try {
+        await requireAuthenticatedAppUserId()
+      } catch {
+        return Response.json(
+          { ok: false, error: "Nao autenticado para usar a analise de fornecedor." },
+          { status: 401, headers: corsHeaders(request) },
+        )
+      }
     }
 
     const body = (await request.json()) as {

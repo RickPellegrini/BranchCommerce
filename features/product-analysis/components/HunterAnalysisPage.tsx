@@ -33,6 +33,7 @@ import { AnalysisEmpty } from "./AnalysisEmpty"
 import { CatalogOverview } from "./CatalogOverview"
 import { CompetitorTable } from "./CompetitorTable"
 import { AnalysisDiagnostics } from "./AnalysisDiagnostics"
+import { SupplierAnalysisPanel } from "./SupplierAnalysisPanel"
 import type { CompetitorEntry } from "@/features/product-analysis/domain/types"
 
 function parseMlId(input: string): string | null {
@@ -772,6 +773,8 @@ function AnalysisResults({
           />
         </TabsContent>
       </Tabs>
+
+      <SupplierAnalysisPanel />
     </div>
   )
 }
