@@ -70,10 +70,16 @@ export async function POST(request: NextRequest) {
   try {
     await requireAuthenticatedAppUserId()
 
-    const extendUrl = String(process.env.EXTEND_SUPPLIER_EXTRACT_URL ?? "").trim()
-    if (!extendUrl) {
+    const doclingUrl = String(
+      process.env.DOCLING_SUPPLIER_EXTRACT_URL ?? process.env.EXTEND_SUPPLIER_EXTRACT_URL ?? "",
+    ).trim()
+    if (!doclingUrl) {
       return Response.json(
-        { ok: false, error: "Configure EXTEND_SUPPLIER_EXTRACT_URL para usar a extracao externa." },
+        {
+          ok: false,
+          error:
+            "Configure DOCLING_SUPPLIER_EXTRACT_URL para usar a extracao do fornecedor via Docling.",
+        },
         { status: 500 },
       )
     }
@@ -87,14 +93,22 @@ export async function POST(request: NextRequest) {
     const upstreamFormData = new FormData()
     upstreamFormData.append("file", file)
 
-    const apiKey = String(process.env.EXTEND_SUPPLIER_EXTRACT_API_KEY ?? "").trim()
-    const authToken = String(process.env.EXTEND_SUPPLIER_EXTRACT_BEARER_TOKEN ?? "").trim()
+    const apiKey = String(
+      process.env.DOCLING_SUPPLIER_EXTRACT_API_KEY ??
+        process.env.EXTEND_SUPPLIER_EXTRACT_API_KEY ??
+        "",
+    ).trim()
+    const authToken = String(
+      process.env.DOCLING_SUPPLIER_EXTRACT_BEARER_TOKEN ??
+        process.env.EXTEND_SUPPLIER_EXTRACT_BEARER_TOKEN ??
+        "",
+    ).trim()
 
     const headers = new Headers()
     if (apiKey) headers.set("x-api-key", apiKey)
     if (authToken) headers.set("Authorization", `Bearer ${authToken}`)
 
-    const upstreamResponse = await fetch(extendUrl, {
+    const upstreamResponse = await fetch(doclingUrl, {
       method: "POST",
       headers,
       body: upstreamFormData,
@@ -114,7 +128,7 @@ export async function POST(request: NextRequest) {
           ok: false,
           error:
             (payload as { error?: string })?.error ||
-            `Extractor externo respondeu HTTP ${upstreamResponse.status}.`,
+            `Docling respondeu HTTP ${upstreamResponse.status}.`,
         },
         { status: upstreamResponse.status },
       )
@@ -139,7 +153,7 @@ export async function POST(request: NextRequest) {
         error:
           error instanceof Error
             ? error.message
-            : "Erro ao importar arquivo pelo extractor externo.",
+            : "Erro ao importar arquivo pela extracao Docling.",
       },
       { status: 500 },
     )
