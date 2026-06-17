@@ -11,6 +11,19 @@ export const dynamic = "force-dynamic"
 export const revalidate = 0
 export const runtime = "nodejs"
 
+async function ensurePdfNodeGlobals() {
+  if (typeof globalThis.DOMMatrix !== "undefined") return
+  const nodeRequire = eval("require") as (id: string) => {
+    DOMMatrix: typeof globalThis.DOMMatrix
+    ImageData: typeof globalThis.ImageData
+    Path2D: typeof globalThis.Path2D
+  }
+  const canvas = nodeRequire("@napi-rs/canvas")
+  globalThis.DOMMatrix = canvas.DOMMatrix as typeof globalThis.DOMMatrix
+  globalThis.ImageData = canvas.ImageData as typeof globalThis.ImageData
+  globalThis.Path2D = canvas.Path2D as typeof globalThis.Path2D
+}
+
 export async function POST(request: NextRequest) {
   try {
     await requireAuthenticatedAppUserId()
@@ -28,6 +41,7 @@ export async function POST(request: NextRequest) {
     let rows = []
 
     if (file.type === "application/pdf" || lowerName.endsWith(".pdf")) {
+      await ensurePdfNodeGlobals()
       const { PDFParse } = await import("pdf-parse")
       const parser = new PDFParse({ data: buffer })
       const result = await parser.getText()
