@@ -30,6 +30,26 @@ function splitLine(line: string, delimiter: string) {
   return line.split(delimiter).map((value) => value.trim())
 }
 
+function parsePdfStyleRow(line: string): SupplierRow | null {
+  const normalizedLine = String(line ?? "")
+    .replace(/\s+/g, " ")
+    .trim()
+  if (!normalizedLine) return null
+
+  const match = normalizedLine.match(/^(\d+)\s+(.+?)\s+(\d{8,14})\s+(?:R\$\s*)?(\d+[.,]\d{2})$/i)
+  if (!match) return null
+
+  const cost = parseLocaleNumber(match[4])
+  if (cost === null) return null
+
+  return {
+    code: match[1],
+    name: match[2].trim(),
+    gtin: match[3],
+    cost,
+  }
+}
+
 function detectDelimiter(text: string) {
   const sample = text.split(/\r?\n/).find((line) => line.trim()) ?? ""
   if (sample.includes("\t")) return "\t"
@@ -58,7 +78,10 @@ export function parseSupplierTable(text: string): SupplierRow[] {
   )
 
   if (nameIndex === -1 || gtinIndex === -1 || costIndex === -1) {
-    return []
+    return lines
+      .slice(1)
+      .map(parsePdfStyleRow)
+      .filter((row): row is SupplierRow => row !== null)
   }
 
   return lines
@@ -80,20 +103,26 @@ export function parseSupplierPdfText(text: string): SupplierRow[] {
     .filter(Boolean)
 
   const rows: SupplierRow[] = []
-  const rowPattern =
-    /^(\d+)\s+(.+?)\s+(\d{8,14})\s+R\$(\d+[.,]\d{2})\s+\d+\s+\d+\s+\d{8,14}\s+R\$\d+[.,]\d{2}$/i
 
   for (const line of lines) {
-    const match = line.match(rowPattern)
-    if (!match) continue
+    const parsedRow = parsePdfStyleRow(line)
+    if (parsedRow) {
+      rows.push(parsedRow)
+      continue
+    }
 
-    const cost = parseLocaleNumber(match[4])
+    const richMatch = line.match(
+      /^(\d+)\s+(.+?)\s+(\d{8,14})\s+R\$(\d+[.,]\d{2})\s+\d+\s+\d+\s+\d{8,14}\s+R\$\d+[.,]\d{2}$/i,
+    )
+    if (!richMatch) continue
+
+    const cost = parseLocaleNumber(richMatch[4])
     if (cost === null) continue
 
     rows.push({
-      code: match[1],
-      name: match[2].trim(),
-      gtin: match[3],
+      code: richMatch[1],
+      name: richMatch[2].trim(),
+      gtin: richMatch[3],
       cost,
     })
   }
