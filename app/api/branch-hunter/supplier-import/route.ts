@@ -24,6 +24,14 @@ type OpenAiFileResponse = {
 
 type OpenAiResponsesApiResponse = {
   output_text?: string
+  output?: Array<{
+    type?: string
+    content?: Array<{
+      type?: string
+      text?: string
+      json?: unknown
+    }>
+  }>
   error?: {
     message?: string
     type?: string
@@ -68,6 +76,27 @@ function formatOpenAiError(
   const type = payload?.error?.type?.trim()
   const details = [message, code, type].filter(Boolean).join(" | ")
   return details ? `${fallback} ${details}` : fallback
+}
+
+function extractJsonTextFromOpenAiResponse(payload: OpenAiResponsesApiResponse | null) {
+  if (!payload) return null
+
+  if (typeof payload.output_text === "string" && payload.output_text.trim()) {
+    return payload.output_text
+  }
+
+  for (const outputItem of payload.output ?? []) {
+    for (const contentItem of outputItem.content ?? []) {
+      if (typeof contentItem.text === "string" && contentItem.text.trim()) {
+        return contentItem.text
+      }
+      if (contentItem.json !== undefined) {
+        return JSON.stringify(contentItem.json)
+      }
+    }
+  }
+
+  return null
 }
 
 async function uploadFileToOpenAi(file: File, apiKey: string) {
@@ -194,14 +223,16 @@ async function extractSupplierRowsWithOpenAi(fileId: string, fileName: string, a
     payload = null
   }
 
-  if (!response.ok || !payload?.output_text) {
+  const extractedJson = extractJsonTextFromOpenAiResponse(payload)
+
+  if (!response.ok || !extractedJson) {
     throw new Error(
       formatOpenAiError(payload, `OpenAI extraction falhou com HTTP ${response.status}.`),
     )
   }
 
   try {
-    return JSON.parse(payload.output_text) as { rows?: unknown[] }
+    return JSON.parse(extractedJson) as { rows?: unknown[] }
   } catch {
     throw new Error("OpenAI retornou um payload invalido na extracao do fornecedor.")
   }

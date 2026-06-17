@@ -93,6 +93,43 @@ function parseLocaleNumber(value: string) {
   return Number.isFinite(parsed) ? parsed : null
 }
 
+function parseSupplierRowsFromText(rawText: string): SupplierRow[] {
+  const lines = rawText
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean)
+
+  if (lines.length === 0) return []
+
+  const maybeHeader = lines[0]?.toLowerCase() ?? ""
+  const dataLines =
+    maybeHeader.includes("codigo") &&
+    maybeHeader.includes("descricao") &&
+    maybeHeader.includes("gtin") &&
+    maybeHeader.includes("custo")
+      ? lines.slice(1)
+      : lines
+
+  return dataLines
+    .map((line) => {
+      const [code = "", name = "", gtin = "", costText = ""] = line.split("\t")
+      const cost = parseLocaleNumber(costText)
+      return {
+        code: code.trim(),
+        name: name.trim(),
+        gtin: gtin.replace(/\D/g, "").trim(),
+        cost,
+      }
+    })
+    .filter((row): row is SupplierRow => Boolean(row.name && row.gtin) && row.cost !== null)
+    .map((row) => ({
+      code: row.code,
+      name: row.name,
+      gtin: row.gtin,
+      cost: row.cost,
+    }))
+}
+
 function formatPercent(value: number) {
   return `${value.toFixed(1)}%`
 }
@@ -112,6 +149,7 @@ export function SupplierAnalysisPanel() {
     matched: number
     minMargin: number
   } | null>(null)
+  const extractedRows = importedRows.length > 0 ? importedRows : parseSupplierRowsFromText(rawTable)
 
   async function handleFileChange(event: React.ChangeEvent<HTMLInputElement>) {
     const file = event.target.files?.[0]
@@ -143,10 +181,14 @@ export function SupplierAnalysisPanel() {
             ),
         )
       }
-      setImportedRows(payload.data.rows)
+      const normalizedRows =
+        payload.data.rows.length > 0
+          ? payload.data.rows
+          : parseSupplierRowsFromText(payload.data.rawText)
+      setImportedRows(normalizedRows)
       setRawTable(payload.data.rawText)
       setStatus(
-        `${payload.data.rows.length} itens extraidos pela OpenAI. Agora clique em Analisar lista do fornecedor.`,
+        `${normalizedRows.length} itens extraidos pela OpenAI. Agora clique em Analisar lista do fornecedor.`,
       )
     } catch (error) {
       setImportedRows([])
@@ -158,7 +200,7 @@ export function SupplierAnalysisPanel() {
   }
 
   async function handleRunScan() {
-    if (importedRows.length === 0) {
+    if (extractedRows.length === 0) {
       setResults([])
       setSummary(null)
       setStatus("Nenhuma linha foi retornada pela extracao OpenAI.")
@@ -166,7 +208,7 @@ export function SupplierAnalysisPanel() {
     }
 
     setIsLoading(true)
-    setStatus(`Analisando ${importedRows.length} itens no catalogo do Mercado Livre...`)
+    setStatus(`Analisando ${extractedRows.length} itens no catalogo do Mercado Livre...`)
     setResults([])
 
     try {
@@ -176,7 +218,7 @@ export function SupplierAnalysisPanel() {
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
-          rows: importedRows,
+          rows: extractedRows,
           minMargin: parseLocaleNumber(minMargin) ?? 15,
         }),
       })
@@ -274,7 +316,7 @@ export function SupplierAnalysisPanel() {
               {isLoading ? "Analisando..." : "Analisar lista do fornecedor"}
             </Button>
             <div className="rounded-lg border bg-background px-3 py-2 text-xs text-muted-foreground">
-              {importedRows.length} linhas extraidas detectadas
+              {extractedRows.length} linhas extraidas detectadas
             </div>
           </div>
         </div>
