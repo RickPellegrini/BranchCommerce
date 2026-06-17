@@ -63,6 +63,17 @@ type SupplierWinner = {
   itemLink: string
 }
 
+type ServerSettingsUsed = {
+  centralizeEnabled?: boolean
+  fullEnabled?: boolean
+  fullShipmentUnits?: number
+  fullCollectionCost?: number
+  forceManualShipping?: boolean
+  freeShippingEnabled?: boolean
+  shippingFallback?: number
+  listingType?: string
+}
+
 type SupplierScanResponse = {
   ok: boolean
   error?: string
@@ -70,6 +81,8 @@ type SupplierScanResponse = {
     scanned: number
     matched: number
     minMargin: number
+    settingsUsed?: ServerSettingsUsed
+    allResults?: SupplierWinner[]
     winners: SupplierWinner[]
   }
 }
@@ -231,17 +244,21 @@ export function SupplierAnalysisPanel() {
   const [loadingPhase, setLoadingPhase] = useState<LoadingPhase>("idle")
   const [importedRows, setImportedRows] = useState<SupplierRow[]>([])
   const [results, setResults] = useState<SupplierWinner[]>([])
+  const [allResults, setAllResults] = useState<SupplierWinner[]>([])
   const [importedFileName, setImportedFileName] = useState<string | null>(null)
   const [summary, setSummary] = useState<{
     scanned: number
     matched: number
     minMargin: number
   } | null>(null)
+  const [serverSettingsUsed, setServerSettingsUsed] = useState<ServerSettingsUsed | null>(null)
   const [analysisSettings, setAnalysisSettings] = useState<AnalysisSettingsSnapshot | null>(null)
+  const [showAllResults, setShowAllResults] = useState(false)
 
   const extractedRows = importedRows.length > 0 ? importedRows : parseSupplierRowsFromText(rawTable)
   const isBusy = loadingPhase !== "idle"
   const hasImport = extractedRows.length > 0
+  const visibleResults = showAllResults ? allResults : results
   const currentSettingsSnapshot: AnalysisSettingsSnapshot = {
     listingType,
     freeShippingEnabled,
@@ -259,6 +276,7 @@ export function SupplierAnalysisPanel() {
   async function runSupplierScan(rows: SupplierRow[]) {
     if (rows.length === 0) {
       setResults([])
+      setAllResults([])
       setSummary(null)
       setStatus("Nenhuma linha valida foi retornada pela extracao OpenAI.")
       return
@@ -266,6 +284,7 @@ export function SupplierAnalysisPanel() {
 
     setLoadingPhase("scanning")
     setResults([])
+    setAllResults([])
     setSummary(null)
     setStatus(`Analisando ${rows.length} itens no catalogo do Mercado Livre...`)
     const requestSettings = currentSettingsSnapshot
@@ -309,7 +328,9 @@ export function SupplierAnalysisPanel() {
       }
 
       setResults(payload.data.winners)
+      setAllResults(payload.data.allResults ?? payload.data.winners)
       setAnalysisSettings(requestSettings)
+      setServerSettingsUsed(payload.data.settingsUsed ?? null)
       setSummary({
         scanned: payload.data.scanned,
         matched: payload.data.matched,
@@ -320,8 +341,10 @@ export function SupplierAnalysisPanel() {
       )
     } catch (error) {
       setResults([])
+      setAllResults([])
       setSummary(null)
       setAnalysisSettings(null)
+      setServerSettingsUsed(null)
       setStatus(error instanceof Error ? error.message : "Erro ao analisar a lista do fornecedor.")
     } finally {
       setLoadingPhase("idle")
@@ -336,8 +359,10 @@ export function SupplierAnalysisPanel() {
     setImportedRows([])
     setRawTable("")
     setResults([])
+    setAllResults([])
     setSummary(null)
     setAnalysisSettings(null)
+    setServerSettingsUsed(null)
     setLoadingPhase("importing")
     setStatus("Extraindo produtos do arquivo com OpenAI...")
 
@@ -375,6 +400,7 @@ export function SupplierAnalysisPanel() {
       setImportedRows([])
       setRawTable("")
       setResults([])
+      setAllResults([])
       setSummary(null)
       setLoadingPhase("idle")
       setStatus(
@@ -384,8 +410,8 @@ export function SupplierAnalysisPanel() {
   }
 
   async function handleCopySummary() {
-    if (results.length === 0) return
-    const text = results
+    if (visibleResults.length === 0) return
+    const text = visibleResults
       .map(
         (row) =>
           `${row.supplierName} | custo ${formatBrl(row.supplierCost)} | venda ${formatBrl(row.salePrice)} | taxa ${formatBrl(row.feeAmount)} | lucro ${formatBrl(row.netProfit)} | margem ${formatPercent(row.netMargin)} | ${row.catalogLink}`,
@@ -559,6 +585,15 @@ export function SupplierAnalysisPanel() {
                 Status
               </div>
               <p className="mt-2 text-sm text-foreground">{status}</p>
+              {serverSettingsUsed && (
+                <p className="mt-2 text-xs text-emerald-900/80">
+                  Ultimo scan:{" "}
+                  {serverSettingsUsed.centralizeEnabled ? "Centralize on" : "Centralize off"} |{" "}
+                  {serverSettingsUsed.fullEnabled ? "Full on" : "Full off"} | qtd full{" "}
+                  {serverSettingsUsed.fullShipmentUnits ?? 0} | coleta{" "}
+                  {formatBrl(serverSettingsUsed.fullCollectionCost ?? 0)}
+                </p>
+              )}
             </div>
           </div>
 
@@ -567,8 +602,8 @@ export function SupplierAnalysisPanel() {
               <SummaryMetric label="Itens extraidos" value={String(extractedRows.length)} />
               <SummaryMetric label="Catalogos encontrados" value={String(summary?.matched ?? 0)} />
               <SummaryMetric
-                label="Produtos aprovados"
-                value={String(results.length)}
+                label={showAllResults ? "Produtos visiveis" : "Produtos aprovados"}
+                value={String(visibleResults.length)}
                 tone="success"
               />
               <SummaryMetric
@@ -581,16 +616,20 @@ export function SupplierAnalysisPanel() {
               <div className="flex flex-wrap items-center justify-between gap-3 border-b px-5 py-4">
                 <div>
                   <div className="flex items-center gap-2">
-                    <h3 className="text-base font-semibold">Produtos aprovados</h3>
-                    {results.length > 0 && (
+                    <h3 className="text-base font-semibold">
+                      {showAllResults ? "Todos os catalogos encontrados" : "Produtos aprovados"}
+                    </h3>
+                    {visibleResults.length > 0 && (
                       <Badge className="rounded-full bg-emerald-100 text-emerald-800 hover:bg-emerald-100">
                         <CheckCircle2 className="mr-1 size-3.5" />
-                        {results.length} encontrados
+                        {visibleResults.length} encontrados
                       </Badge>
                     )}
                   </div>
                   <p className="text-sm text-muted-foreground">
-                    Mostrando apenas os itens que passaram pela margem minima definida.
+                    {showAllResults
+                      ? "Mostrando todos os itens encontrados no catalogo, inclusive margens negativas."
+                      : "Mostrando apenas os itens que passaram pela margem minima definida."}
                   </p>
                   {hasPendingSettingsChange && (
                     <p className="mt-1 text-xs font-medium text-amber-700">
@@ -602,10 +641,19 @@ export function SupplierAnalysisPanel() {
 
                 <div className="flex gap-2">
                   <Button
+                    variant={showAllResults ? "default" : "outline"}
+                    size="sm"
+                    onClick={() => setShowAllResults((current) => !current)}
+                    disabled={allResults.length === 0}
+                    className="rounded-full"
+                  >
+                    {showAllResults ? "So aprovados" : "Ver tudo"}
+                  </Button>
+                  <Button
                     variant="outline"
                     size="sm"
                     onClick={handleCopySummary}
-                    disabled={results.length === 0}
+                    disabled={visibleResults.length === 0}
                     className="gap-2 rounded-full"
                   >
                     <Copy className="size-4" />
@@ -614,9 +662,9 @@ export function SupplierAnalysisPanel() {
                 </div>
               </div>
 
-              {results.length > 0 ? (
+              {visibleResults.length > 0 ? (
                 <div className="space-y-3 px-4 py-4 sm:px-5">
-                  {results.map((row) => (
+                  {visibleResults.map((row) => (
                     <div
                       key={`${row.catalogProductId}-${row.gtin}`}
                       className="rounded-2xl border bg-white p-4"
@@ -629,7 +677,16 @@ export function SupplierAnalysisPanel() {
                         </div>
 
                         <div className="flex shrink-0 items-start xl:justify-end">
-                          <span className="rounded-full bg-emerald-100 px-3 py-1 text-sm font-semibold text-emerald-800">
+                          <span
+                            className={
+                              row.netMargin >=
+                              (summary?.minMargin ?? parseLocaleNumber(minMargin) ?? 15)
+                                ? "rounded-full bg-emerald-100 px-3 py-1 text-sm font-semibold text-emerald-800"
+                                : row.netMargin >= 0
+                                  ? "rounded-full bg-amber-100 px-3 py-1 text-sm font-semibold text-amber-800"
+                                  : "rounded-full bg-rose-100 px-3 py-1 text-sm font-semibold text-rose-800"
+                            }
+                          >
                             {formatPercent(row.netMargin)}
                           </span>
                         </div>

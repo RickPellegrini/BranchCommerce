@@ -409,19 +409,6 @@
         </button>
 
         <div id="bh-details" class="collapsible">
-          <div class="section section-dynamic">
-            <div class="section-title-row">
-              <span class="section-icon" aria-hidden="true"><svg width="12" height="12" viewBox="0 0 24 24" fill="none"><path d="M4 6h16M4 12h16M4 18h10" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg></span>
-              <p class="section-title">Dados dinamicos Mercado Livre</p>
-            </div>
-            <div class="dynamic-row"><span class="row-label"><svg class="row-icon" viewBox="0 0 24 24" fill="none"><path d="M4 7h16M4 12h10M4 17h7" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>Tipo anuncio</span><div><strong id="bh-dyn-listing-type">--</strong> <small id="bh-src-listing-type">(indisponivel)</small></div></div>
-            <div class="dynamic-row"><span class="row-label"><svg class="row-icon" viewBox="0 0 24 24" fill="none"><path d="M3 10h18M7 6h10M7 14h10M7 18h6" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>Taxa ML</span><div><strong id="bh-dyn-fee">--</strong> <small id="bh-src-fee">(indisponivel)</small></div></div>
-            <div class="dynamic-row"><span class="row-label"><svg class="row-icon" viewBox="0 0 24 24" fill="none"><path d="M4 5h16v14H4zM8 9h8" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>Categoria</span><div><strong id="bh-dyn-category">--</strong></div></div>
-            <div class="dynamic-row"><span class="row-label"><svg class="row-icon" viewBox="0 0 24 24" fill="none"><path d="M3 16h18M5 16l2-6h10l2 6" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>Frete estimado</span><div><strong id="bh-dyn-shipping-estimated">--</strong> <small id="bh-src-shipping-estimated">(indisponivel)</small></div></div>
-            <div class="dynamic-row"><span class="row-label"><svg class="row-icon" viewBox="0 0 24 24" fill="none"><path d="M4 17h16M7 17V7h10v10" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>Frete real</span><div><strong id="bh-dyn-shipping-real">--</strong> <small id="bh-src-shipping-real">(indisponivel)</small></div></div>
-            <div class="dynamic-row"><span class="row-label"><svg class="row-icon" viewBox="0 0 24 24" fill="none"><path d="M3 12h18M12 3v18" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>Modo envio</span><div><strong id="bh-dyn-shipping-mode">--</strong></div></div>
-          </div>
-
           <div class="section section-adv-inline">
             <div class="section-title-row">
               <span class="section-icon" aria-hidden="true"><svg width="12" height="12" viewBox="0 0 24 24" fill="none"><path d="M3 6h18v12H3zM8 10h8" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg></span>
@@ -456,9 +443,9 @@
                 </div>
               </div>
             </div>
-        </div>
+          </div>
 
-        <div class="section section-centralize">
+          <div class="section section-centralize">
           <div class="section-title-row">
             <span class="section-icon" aria-hidden="true"><svg width="12" height="12" viewBox="0 0 24 24" fill="none"><path d="M4 6h16M4 12h16M4 18h10" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg></span>
             <p class="section-title">Centralize / Full</p>
@@ -491,7 +478,7 @@
               </label>
             </div>
           </div>
-        </div>
+          </div>
 
           <div style="display:grid;gap:6px;">
             <div class="result-row"><span class="row-label"><svg class="row-icon" viewBox="0 0 24 24" fill="none"><path d="M4 12h16M12 4v16" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>Receita bruta</span><strong id="bh-result-gross">R$ 0,00</strong></div>

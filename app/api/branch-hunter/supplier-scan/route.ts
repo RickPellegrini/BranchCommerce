@@ -315,6 +315,7 @@ export async function POST(request: NextRequest) {
     const winners = matches
       .filter((row) => row.netMargin >= minMargin)
       .sort((left, right) => right.netMargin - left.netMargin)
+    const allResults = [...matches].sort((left, right) => right.netMargin - left.netMargin)
 
     return Response.json(
       {
@@ -323,6 +324,8 @@ export async function POST(request: NextRequest) {
           scanned: normalizedRows.length,
           matched: matches.length,
           minMargin,
+          settingsUsed: settings,
+          allResults,
           winners,
         },
       },
