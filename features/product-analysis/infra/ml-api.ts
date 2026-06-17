@@ -8,6 +8,7 @@ import type {
   MlPriceToWinResult,
   MlVisitsEntry,
   CatalogProductItemsResponse,
+  CatalogCompetitor,
 } from "@/features/product-analysis/domain/types"
 
 // ─── Upstream error ────────────────────────────────────────────────
