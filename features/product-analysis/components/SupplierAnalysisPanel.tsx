@@ -6,6 +6,14 @@ import { Upload, Store, Link2, ScanSearch, Copy, FileText } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table"
 import { Textarea } from "@/components/ui/textarea"
 import { formatBrl } from "@/features/product-analysis/utils/money"
 import { parseSupplierTable } from "@/lib/branch-hunter/supplier-parser"
@@ -81,6 +89,7 @@ export function SupplierAnalysisPanel() {
     "Cole a lista do fornecedor para procurar produtos de catalogo com margem boa.",
   )
   const [isLoading, setIsLoading] = useState(false)
+  const [importedRows, setImportedRows] = useState<SupplierRow[]>([])
   const [results, setResults] = useState<SupplierWinner[]>([])
   const [importedFileName, setImportedFileName] = useState<string | null>(null)
   const [summary, setSummary] = useState<{
@@ -89,7 +98,10 @@ export function SupplierAnalysisPanel() {
     minMargin: number
   } | null>(null)
 
-  const parsedRows = useMemo(() => parseSupplierTable(rawTable), [rawTable])
+  const parsedRows = useMemo(
+    () => (importedRows.length > 0 ? importedRows : parseSupplierTable(rawTable)),
+    [importedRows, rawTable],
+  )
 
   async function handleFileChange(event: React.ChangeEvent<HTMLInputElement>) {
     const file = event.target.files?.[0]
@@ -112,11 +124,13 @@ export function SupplierAnalysisPanel() {
         if (!response.ok || !payload.ok || !payload.data) {
           throw new Error(payload.error || `HTTP ${response.status}`)
         }
+        setImportedRows(payload.data.rows)
         setRawTable(payload.data.rawText)
         setStatus(
           `${payload.data.rows.length} itens extraidos do PDF. Agora clique em Analisar lista do fornecedor.`,
         )
       } catch (error) {
+        setImportedRows([])
         setRawTable("")
         setStatus(error instanceof Error ? error.message : "Erro ao importar o PDF do fornecedor.")
       }
@@ -124,6 +138,7 @@ export function SupplierAnalysisPanel() {
     }
 
     const text = await file.text()
+    setImportedRows([])
     setRawTable(text)
     setStatus("Arquivo carregado. Agora clique em Analisar lista do fornecedor.")
   }
@@ -206,7 +221,10 @@ export function SupplierAnalysisPanel() {
             <Textarea
               rows={10}
               value={rawTable}
-              onChange={(event) => setRawTable(event.target.value)}
+              onChange={(event) => {
+                setImportedRows([])
+                setRawTable(event.target.value)
+              }}
               placeholder={
                 "codigo\tdescricao\tgtin\tcusto\n2485\tACHOCOLATADO PO TODDY 370G\t7892840819507\t8,99"
               }
@@ -267,52 +285,57 @@ export function SupplierAnalysisPanel() {
         )}
 
         {results.length > 0 && (
-          <div className="grid gap-3">
-            {results.map((row) => (
-              <div
-                key={`${row.catalogProductId}-${row.gtin}`}
-                className="rounded-xl border bg-background p-4"
-              >
-                <div className="flex flex-wrap items-start justify-between gap-3">
-                  <div className="space-y-1">
-                    <h3 className="font-semibold">{row.supplierName}</h3>
-                    <p className="text-sm text-muted-foreground">{row.catalogName}</p>
-                  </div>
-                  <div className="rounded-full bg-emerald-100 px-3 py-1 text-sm font-semibold text-emerald-700">
-                    {formatPercent(row.netMargin)}
-                  </div>
-                </div>
-
-                <div className="mt-3 flex flex-wrap gap-4 text-sm text-muted-foreground">
-                  <span>Custo {formatBrl(row.supplierCost)}</span>
-                  <span>Venda {formatBrl(row.salePrice)}</span>
-                  <span>Lucro {formatBrl(row.netProfit)}</span>
-                  <span>Taxa {formatPercent(row.feePercent)}</span>
-                  <span>Ofertas {row.offers}</span>
-                </div>
-
-                <div className="mt-3 flex flex-wrap gap-3">
-                  <a
-                    href={row.catalogLink}
-                    target="_blank"
-                    rel="noreferrer"
-                    className="inline-flex items-center gap-1 text-sm font-medium text-blue-600 hover:underline"
-                  >
-                    <Link2 className="size-4" />
-                    Abrir catalogo
-                  </a>
-                  <a
-                    href={row.itemLink}
-                    target="_blank"
-                    rel="noreferrer"
-                    className="inline-flex items-center gap-1 text-sm font-medium text-blue-600 hover:underline"
-                  >
-                    <Upload className="size-4" />
-                    Abrir anuncio
-                  </a>
-                </div>
-              </div>
-            ))}
+          <div className="overflow-hidden rounded-xl border bg-background">
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Produto</TableHead>
+                  <TableHead>Custo</TableHead>
+                  <TableHead>Menor preco catalogo</TableHead>
+                  <TableHead>Margem est.</TableHead>
+                  <TableHead>Link</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {results.map((row) => (
+                  <TableRow key={`${row.catalogProductId}-${row.gtin}`}>
+                    <TableCell className="align-top">
+                      <div className="space-y-1">
+                        <div className="font-medium">{row.supplierName}</div>
+                        <div className="text-xs text-muted-foreground">{row.catalogName}</div>
+                      </div>
+                    </TableCell>
+                    <TableCell className="align-top">{formatBrl(row.supplierCost)}</TableCell>
+                    <TableCell className="align-top">{formatBrl(row.salePrice)}</TableCell>
+                    <TableCell className="align-top font-semibold text-emerald-700">
+                      {formatPercent(row.netMargin)}
+                    </TableCell>
+                    <TableCell className="align-top">
+                      <div className="flex flex-col gap-2">
+                        <a
+                          href={row.catalogLink}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="inline-flex items-center gap-1 text-sm font-medium text-blue-600 hover:underline"
+                        >
+                          <Link2 className="size-4" />
+                          catalogo
+                        </a>
+                        <a
+                          href={row.itemLink}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="inline-flex items-center gap-1 text-sm font-medium text-blue-600 hover:underline"
+                        >
+                          <Upload className="size-4" />
+                          anuncio
+                        </a>
+                      </div>
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
           </div>
         )}
       </CardContent>
