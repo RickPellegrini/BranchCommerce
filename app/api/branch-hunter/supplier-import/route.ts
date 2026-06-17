@@ -1,5 +1,4 @@
 import { NextRequest } from "next/server"
-import { PDFParse } from "pdf-parse"
 
 import { requireAuthenticatedAppUserId } from "@/lib/auth/server"
 import {
@@ -10,6 +9,7 @@ import {
 
 export const dynamic = "force-dynamic"
 export const revalidate = 0
+export const runtime = "nodejs"
 
 export async function POST(request: NextRequest) {
   try {
@@ -28,6 +28,7 @@ export async function POST(request: NextRequest) {
     let rows = []
 
     if (file.type === "application/pdf" || lowerName.endsWith(".pdf")) {
+      const { PDFParse } = await import("pdf-parse")
       const parser = new PDFParse({ data: buffer })
       const result = await parser.getText()
       extractedText = result.text
