@@ -1,6 +1,6 @@
 "use client"
 
-import { useMemo, useState } from "react"
+import { useState } from "react"
 import { Upload, Store, Link2, ScanSearch, Copy, FileText } from "lucide-react"
 
 import { Button } from "@/components/ui/button"
@@ -16,7 +16,6 @@ import {
 } from "@/components/ui/table"
 import { Textarea } from "@/components/ui/textarea"
 import { formatBrl } from "@/features/product-analysis/utils/money"
-import { parseSupplierTable } from "@/lib/branch-hunter/supplier-parser"
 
 type SupplierRow = {
   code: string
@@ -114,65 +113,60 @@ export function SupplierAnalysisPanel() {
     minMargin: number
   } | null>(null)
 
-  const parsedRows = useMemo(
-    () => (importedRows.length > 0 ? importedRows : parseSupplierTable(rawTable)),
-    [importedRows, rawTable],
-  )
-
   async function handleFileChange(event: React.ChangeEvent<HTMLInputElement>) {
     const file = event.target.files?.[0]
     if (!file) return
 
-    const lowerName = file.name.toLowerCase()
     setImportedFileName(file.name)
+    setImportedRows([])
+    setRawTable("")
+    setResults([])
+    setSummary(null)
+    setStatus("Enviando arquivo para o extractor externo...")
 
-    if (lowerName.endsWith(".pdf")) {
+    try {
       const formData = new FormData()
       formData.append("file", file)
-      setStatus("Lendo PDF do fornecedor...")
-
-      try {
-        const response = await fetch("/api/branch-hunter/supplier-import", {
-          method: "POST",
-          body: formData,
-        })
-        const rawResponse = await response.text()
-        const payload = parseJsonResponse<SupplierImportResponse>(rawResponse)
-        if (!response.ok || !payload?.ok || !payload.data) {
-          throw new Error(
-            payload?.error ||
-              buildApiErrorMessage(response, "Erro ao importar o PDF do fornecedor.", rawResponse),
-          )
-        }
-        setImportedRows(payload.data.rows)
-        setRawTable(payload.data.rawText)
-        setStatus(
-          `${payload.data.rows.length} itens extraidos do PDF. Agora clique em Analisar lista do fornecedor.`,
+      const response = await fetch("/api/branch-hunter/supplier-import", {
+        method: "POST",
+        body: formData,
+      })
+      const rawResponse = await response.text()
+      const payload = parseJsonResponse<SupplierImportResponse>(rawResponse)
+      if (!response.ok || !payload?.ok || !payload.data) {
+        throw new Error(
+          payload?.error ||
+            buildApiErrorMessage(
+              response,
+              "Erro ao importar o arquivo no extractor externo.",
+              rawResponse,
+            ),
         )
-      } catch (error) {
-        setImportedRows([])
-        setRawTable("")
-        setStatus(error instanceof Error ? error.message : "Erro ao importar o PDF do fornecedor.")
       }
-      return
+      setImportedRows(payload.data.rows)
+      setRawTable(payload.data.rawText)
+      setStatus(
+        `${payload.data.rows.length} itens retornados pelo extractor externo. Agora clique em Analisar lista do fornecedor.`,
+      )
+    } catch (error) {
+      setImportedRows([])
+      setRawTable("")
+      setStatus(
+        error instanceof Error ? error.message : "Erro ao importar arquivo no extractor externo.",
+      )
     }
-
-    const text = await file.text()
-    setImportedRows([])
-    setRawTable(text)
-    setStatus("Arquivo carregado. Agora clique em Analisar lista do fornecedor.")
   }
 
   async function handleRunScan() {
-    if (parsedRows.length === 0) {
+    if (importedRows.length === 0) {
       setResults([])
       setSummary(null)
-      setStatus("Nao consegui ler a planilha. Use colunas codigo, descricao, gtin/ean e custo.")
+      setStatus("Nenhuma linha foi retornada pelo extractor externo.")
       return
     }
 
     setIsLoading(true)
-    setStatus(`Analisando ${parsedRows.length} itens no catalogo do Mercado Livre...`)
+    setStatus(`Analisando ${importedRows.length} itens no catalogo do Mercado Livre...`)
     setResults([])
 
     try {
@@ -182,7 +176,7 @@ export function SupplierAnalysisPanel() {
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
-          rows: parsedRows,
+          rows: importedRows,
           minMargin: parseLocaleNumber(minMargin) ?? 15,
         }),
       })
@@ -234,28 +228,25 @@ export function SupplierAnalysisPanel() {
           Analise de Fornecedor
         </CardTitle>
         <p className="text-sm text-muted-foreground">
-          Envie PDF, CSV ou texto do fornecedor e encontre produtos de catalogo com margem minima
-          acima do que voce definir.
+          Envie o arquivo do fornecedor para extracao externa e encontre produtos de catalogo com
+          margem minima acima do que voce definir.
         </p>
       </CardHeader>
       <CardContent className="space-y-4">
         <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_220px]">
           <div className="space-y-2">
-            <label className="text-sm font-medium">Lista do fornecedor</label>
+            <label className="text-sm font-medium">Itens extraidos</label>
             <Textarea
               rows={10}
               value={rawTable}
-              onChange={(event) => {
-                setImportedRows([])
-                setRawTable(event.target.value)
-              }}
+              readOnly
               placeholder={
                 "codigo\tdescricao\tgtin\tcusto\n2485\tACHOCOLATADO PO TODDY 370G\t7892840819507\t8,99"
               }
             />
             <p className="text-xs text-muted-foreground">
-              Aceita planilha colada do Excel/Sheets, CSV/TXT e PDF com colunas `codigo`,
-              `descricao`, `gtin/ean` e `custo`.
+              O Branch Hunter nao faz mais parsing local. Esse preview mostra apenas o que voltar do
+              extractor externo.
             </p>
           </div>
 
@@ -265,10 +256,10 @@ export function SupplierAnalysisPanel() {
               <Input value={minMargin} onChange={(event) => setMinMargin(event.target.value)} />
             </div>
             <div className="space-y-2">
-              <label className="text-sm font-medium">Importar PDF ou CSV</label>
+              <label className="text-sm font-medium">Importar arquivo via extractor</label>
               <Input
                 type="file"
-                accept=".pdf,.csv,.txt,application/pdf,text/csv,text/plain"
+                accept=".pdf,.csv,.txt,.xlsx,.xls,application/pdf,text/csv,text/plain,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
                 onChange={handleFileChange}
               />
             </div>
@@ -283,7 +274,7 @@ export function SupplierAnalysisPanel() {
               {isLoading ? "Analisando..." : "Analisar lista do fornecedor"}
             </Button>
             <div className="rounded-lg border bg-background px-3 py-2 text-xs text-muted-foreground">
-              {parsedRows.length} linhas validas detectadas
+              {importedRows.length} linhas extraidas detectadas
             </div>
           </div>
         </div>
