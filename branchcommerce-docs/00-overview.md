@@ -6,17 +6,17 @@ Bot que monitora SKUs específicos da **Eletro Club** e envia notificação no *
 
 ## Stack
 
-| Camada | Tecnologia | Motivo |
-|---|---|---|
-| Frontend | Next.js 15 (App Router) | Dashboard pra gerenciar SKUs |
-| UI | shadcn/ui + Tailwind | Componentes prontos e estilizáveis |
-| Ícones | lucide-react | Padrão moderno, leve |
-| Auth | Clerk | Setup rápido, integra nativo com Convex |
-| Backend + DB + Cron | Convex | Loop roda aqui, banco reativo, cron sem limite de plano free |
-| Notificação | Telegram Bot API | Latência <1s vs 5s-1min do Discord |
-| Pix | Geração local (BR Code EMV) | Sem dependência externa, funciona offline |
-| Testes | Vitest | Cobertura completa das funcionalidades |
-| Hospedagem | Vercel (front) + Convex Cloud (back) | Deploy em segundos, ambos free tier |
+| Camada              | Tecnologia                           | Motivo                                                       |
+| ------------------- | ------------------------------------ | ------------------------------------------------------------ |
+| Frontend            | Next.js 15 (App Router)              | Dashboard pra gerenciar SKUs                                 |
+| UI                  | shadcn/ui + Tailwind                 | Componentes prontos e estilizáveis                           |
+| Ícones              | lucide-react                         | Padrão moderno, leve                                         |
+| Auth                | Clerk                                | Setup rápido, integra nativo com Convex                      |
+| Backend + DB + Cron | Convex                               | Loop roda aqui, banco reativo, cron sem limite de plano free |
+| Notificação         | Telegram Bot API                     | Latência <1s vs 5s-1min do Discord                           |
+| Pix                 | Geração local (BR Code EMV)          | Sem dependência externa, funciona offline                    |
+| Testes              | Vitest                               | Cobertura completa das funcionalidades                       |
+| Hospedagem          | Vercel (front) + Convex Cloud (back) | Deploy em segundos, ambos free tier                          |
 
 ## Por que essa stack ganhou
 

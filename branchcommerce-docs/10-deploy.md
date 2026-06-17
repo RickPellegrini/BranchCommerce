@@ -21,6 +21,7 @@ npx convex deploy
 ```
 
 Isso cria um deployment **production** separado. Anote a URL:
+
 ```
 https://xxx-prod.convex.cloud
 ```
@@ -51,17 +52,17 @@ gh repo create branchcommerce --private --source=. --push
 3. Framework: **Next.js** (auto-detectado)
 4. Adicionar env vars:
 
-| Variable | Valor | Onde pegar |
-|---|---|---|
-| `NEXT_PUBLIC_CONVEX_URL` | `https://xxx-prod.convex.cloud` | Convex Dashboard → Settings |
-| `CONVEX_DEPLOY_KEY` | `prod:xxx\|...` | Convex Dashboard → Settings → Deploy Keys |
-| `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY` | `pk_live_...` | Clerk Dashboard (criar instância **Production**) |
-| `CLERK_SECRET_KEY` | `sk_live_...` | Clerk Dashboard |
-| `NEXT_PUBLIC_CLERK_SIGN_IN_URL` | `/sign-in` | constante |
-| `NEXT_PUBLIC_CLERK_SIGN_UP_URL` | `/sign-up` | constante |
-| `NEXT_PUBLIC_CLERK_AFTER_SIGN_IN_URL` | `/dashboard` | constante |
-| `NEXT_PUBLIC_CLERK_AFTER_SIGN_UP_URL` | `/dashboard` | constante |
-| `CLERK_JWT_ISSUER_DOMAIN` | `https://xxx.clerk.accounts.dev` | Clerk JWT Templates → convex |
+| Variable                              | Valor                            | Onde pegar                                       |
+| ------------------------------------- | -------------------------------- | ------------------------------------------------ |
+| `NEXT_PUBLIC_CONVEX_URL`              | `https://xxx-prod.convex.cloud`  | Convex Dashboard → Settings                      |
+| `CONVEX_DEPLOY_KEY`                   | `prod:xxx\|...`                  | Convex Dashboard → Settings → Deploy Keys        |
+| `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY`   | `pk_live_...`                    | Clerk Dashboard (criar instância **Production**) |
+| `CLERK_SECRET_KEY`                    | `sk_live_...`                    | Clerk Dashboard                                  |
+| `NEXT_PUBLIC_CLERK_SIGN_IN_URL`       | `/sign-in`                       | constante                                        |
+| `NEXT_PUBLIC_CLERK_SIGN_UP_URL`       | `/sign-up`                       | constante                                        |
+| `NEXT_PUBLIC_CLERK_AFTER_SIGN_IN_URL` | `/dashboard`                     | constante                                        |
+| `NEXT_PUBLIC_CLERK_AFTER_SIGN_UP_URL` | `/dashboard`                     | constante                                        |
+| `CLERK_JWT_ISSUER_DOMAIN`             | `https://xxx.clerk.accounts.dev` | Clerk JWT Templates → convex                     |
 
 5. **Build Command:** `npx convex deploy --cmd 'pnpm build'`
    Esse comando garante que o Convex faz deploy **antes** do Next.js buildar (necessário pra `_generated` estar atualizado).
@@ -71,6 +72,7 @@ gh repo create branchcommerce --private --source=. --push
 ### c. Configurar Clerk pra produção
 
 No Clerk Dashboard:
+
 1. Criar **Production instance** (separada da dev)
 2. Em **Domains**, adicionar `seu-dominio.vercel.app`
 3. Em **JWT Templates**, criar template "convex" (igual ao dev)
@@ -94,6 +96,7 @@ No Clerk Dashboard:
 ### b. Testar restock
 
 Difícil testar restock real (depende do produto esgotar). Para validar end-to-end:
+
 1. Adicionar SKU que está **esgotado**
 2. Aguardar primeira execução do cron (30s)
 3. Manualmente via Convex Dashboard, editar `productState.disponivel = false`
@@ -106,6 +109,7 @@ Ou: usar um SKU que você sabe que vai voltar (acompanha um restock anunciado).
 ### c. Monitorar uptime
 
 Configurar **UptimeRobot** (gratuito):
+
 1. Criar monitor HTTP no endpoint `https://seu-dominio.vercel.app`
 2. Intervalo de 5 min
 3. Alerta por email se cair
@@ -114,13 +118,13 @@ Para o Convex, criar endpoint `/api/health` que retorna `{ ok: true, lastCheck: 
 
 ## 4. Custos esperados
 
-| Serviço | Plano | Limite | Custo |
-|---|---|---|---|
-| Convex | Free | 1M function calls/mês | $0 |
-| Vercel | Hobby | 100GB bandwidth | $0 |
-| Clerk | Free | 10k MAU | $0 |
-| Telegram | — | Ilimitado | $0 |
-| **Total** | | | **$0/mês** |
+| Serviço   | Plano | Limite                | Custo      |
+| --------- | ----- | --------------------- | ---------- |
+| Convex    | Free  | 1M function calls/mês | $0         |
+| Vercel    | Hobby | 100GB bandwidth       | $0         |
+| Clerk     | Free  | 10k MAU               | $0         |
+| Telegram  | —     | Ilimitado             | $0         |
+| **Total** |       |                       | **$0/mês** |
 
 ### Quando vai precisar pagar
 
@@ -151,6 +155,7 @@ npx convex run --prod monitor:verificarTodosOsProdutos
 ### Backup do banco Convex
 
 Convex faz backups automáticos diários. Pra exportar manualmente:
+
 ```bash
 npx convex export --prod backup-$(date +%Y%m%d).zip
 ```

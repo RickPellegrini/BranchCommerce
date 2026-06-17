@@ -6,12 +6,12 @@ Cobertura completa das **funcionalidades core** (não da UI). Garantir que Pix, 
 
 ## Escopo dos testes
 
-| Módulo | Tipo | Por quê |
-|---|---|---|
-| `convex/pix.ts` | Unitário puro | Função determinística, falha aqui = Pix inválido = perde compra |
-| `convex/vtex.ts` (parser) | Unitário puro | Mudança no formato da API VTEX precisa ser detectada |
-| `convex/monitor.ts` (lógica) | Unitário com mocks | Detecção de restock é o coração do sistema |
-| `convex/telegram.ts` | Integração com mock fetch | Garantir que payloads HTTP estão corretos |
+| Módulo                       | Tipo                      | Por quê                                                         |
+| ---------------------------- | ------------------------- | --------------------------------------------------------------- |
+| `convex/pix.ts`              | Unitário puro             | Função determinística, falha aqui = Pix inválido = perde compra |
+| `convex/vtex.ts` (parser)    | Unitário puro             | Mudança no formato da API VTEX precisa ser detectada            |
+| `convex/monitor.ts` (lógica) | Unitário com mocks        | Detecção de restock é o coração do sistema                      |
+| `convex/telegram.ts`         | Integração com mock fetch | Garantir que payloads HTTP estão corretos                       |
 
 **Fora de escopo:** componentes React, páginas, navegação. Cobrir UI traria custo alto e baixo retorno pra esse projeto.
 
@@ -112,26 +112,34 @@ describe("parseVtexResponse", () => {
   })
 
   it("usa Price como fallback quando ListPrice ausente", () => {
-    const data = [{
-      productName: "Test",
-      items: [{
-        itemId: "123",
-        sellers: [{ commertialOffer: { IsAvailable: true, Price: 100 } }]
-      }]
-    }]
+    const data = [
+      {
+        productName: "Test",
+        items: [
+          {
+            itemId: "123",
+            sellers: [{ commertialOffer: { IsAvailable: true, Price: 100 } }],
+          },
+        ],
+      },
+    ]
     const r = parseVtexResponse("123", data)
     expect(r.precoOriginal).toBe(100)
   })
 
   it("retorna imagemUrl null quando não há imagens", () => {
-    const data = [{
-      productName: "Test",
-      items: [{
-        itemId: "123",
-        images: [],
-        sellers: [{ commertialOffer: { IsAvailable: true, Price: 50 } }]
-      }]
-    }]
+    const data = [
+      {
+        productName: "Test",
+        items: [
+          {
+            itemId: "123",
+            images: [],
+            sellers: [{ commertialOffer: { IsAvailable: true, Price: 50 } }],
+          },
+        ],
+      },
+    ]
     const r = parseVtexResponse("123", data)
     expect(r.imagemUrl).toBeNull()
   })
@@ -156,7 +164,7 @@ export type ProdutoConfig = { precoMaximo?: number }
 export function detectarRestock(
   anterior: EstadoAnterior,
   atual: EstadoAtual,
-  config: ProdutoConfig
+  config: ProdutoConfig,
 ): { restock: boolean; motivo?: string } {
   // primeira execução assume disponível pra evitar falso positivo
   const eraDisponivel = anterior?.disponivel ?? true
@@ -179,38 +187,22 @@ import { detectarRestock } from "@/convex/monitor-logic"
 
 describe("detectarRestock", () => {
   it("detecta restock quando estado muda de false → true", () => {
-    const r = detectarRestock(
-      { disponivel: false },
-      { disponivel: true, preco: 100 },
-      {}
-    )
+    const r = detectarRestock({ disponivel: false }, { disponivel: true, preco: 100 }, {})
     expect(r.restock).toBe(true)
   })
 
   it("não detecta restock se já estava disponível", () => {
-    const r = detectarRestock(
-      { disponivel: true },
-      { disponivel: true, preco: 100 },
-      {}
-    )
+    const r = detectarRestock({ disponivel: true }, { disponivel: true, preco: 100 }, {})
     expect(r.restock).toBe(false)
   })
 
   it("não detecta restock se ainda está esgotado", () => {
-    const r = detectarRestock(
-      { disponivel: false },
-      { disponivel: false, preco: 0 },
-      {}
-    )
+    const r = detectarRestock({ disponivel: false }, { disponivel: false, preco: 0 }, {})
     expect(r.restock).toBe(false)
   })
 
   it("não detecta restock no primeiro check (anterior null)", () => {
-    const r = detectarRestock(
-      null,
-      { disponivel: true, preco: 100 },
-      {}
-    )
+    const r = detectarRestock(null, { disponivel: true, preco: 100 }, {})
     expect(r.restock).toBe(false)
     expect(r.motivo).toBe("já estava disponível")
   })
@@ -219,7 +211,7 @@ describe("detectarRestock", () => {
     const r = detectarRestock(
       { disponivel: false },
       { disponivel: true, preco: 600 },
-      { precoMaximo: 500 }
+      { precoMaximo: 500 },
     )
     expect(r.restock).toBe(false)
     expect(r.motivo).toContain("acima do máximo")
@@ -229,7 +221,7 @@ describe("detectarRestock", () => {
     const r = detectarRestock(
       { disponivel: false },
       { disponivel: true, preco: 500 },
-      { precoMaximo: 500 }
+      { precoMaximo: 500 },
     )
     expect(r.restock).toBe(true)
   })

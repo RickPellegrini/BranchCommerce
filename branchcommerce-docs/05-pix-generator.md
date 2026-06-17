@@ -15,19 +15,19 @@ Função pura que recebe `{ chave, nome, cidade, valor }` e devolve o Pix copia-
 
 O Pix copia-e-cola é uma string TLV (Tag-Length-Value) com checksum CRC16-CCITT no final.
 
-| Tag | Conteúdo | Exemplo |
-|---|---|---|
-| 00 | Payload Format Indicator | `01` |
-| 01 | Point of Initiation | `12` (reutilizável) |
-| 26 | Merchant Account Info (GUI + chave) | `0014BR.GOV.BCB.PIX0114teste@email.com` |
-| 52 | Merchant Category Code | `0000` |
-| 53 | Currency | `986` (BRL) |
-| 54 | Amount | `113.91` |
-| 58 | Country | `BR` |
-| 59 | Merchant Name | `Joao Silva` (max 25) |
-| 60 | Merchant City | `Sao Paulo` (max 15, sem acentos) |
-| 62 | Additional Data | `0503***` ou txid |
-| 63 | CRC16 | `9068` (calculado por último) |
+| Tag | Conteúdo                            | Exemplo                                 |
+| --- | ----------------------------------- | --------------------------------------- |
+| 00  | Payload Format Indicator            | `01`                                    |
+| 01  | Point of Initiation                 | `12` (reutilizável)                     |
+| 26  | Merchant Account Info (GUI + chave) | `0014BR.GOV.BCB.PIX0114teste@email.com` |
+| 52  | Merchant Category Code              | `0000`                                  |
+| 53  | Currency                            | `986` (BRL)                             |
+| 54  | Amount                              | `113.91`                                |
+| 58  | Country                             | `BR`                                    |
+| 59  | Merchant Name                       | `Joao Silva` (max 25)                   |
+| 60  | Merchant City                       | `Sao Paulo` (max 15, sem acentos)       |
+| 62  | Additional Data                     | `0503***` ou txid                       |
+| 63  | CRC16                               | `9068` (calculado por último)           |
 
 ## Arquivo: `convex/pix.ts`
 
@@ -37,7 +37,7 @@ function crc16(data: string): string {
   for (const char of data) {
     crc ^= char.charCodeAt(0) << 8
     for (let i = 0; i < 8; i++) {
-      crc = (crc & 0x8000) ? ((crc << 1) ^ 0x1021) : (crc << 1)
+      crc = crc & 0x8000 ? (crc << 1) ^ 0x1021 : crc << 1
       crc &= 0xffff
     }
   }
@@ -59,8 +59,14 @@ export type PixInput = {
 
 export function gerarPix({ chave, nome, cidade, valor, txid = "***" }: PixInput): string {
   // Sanitização
-  const nomeSafe = nome.normalize("NFD").replace(/[\u0300-\u036f]/g, "").slice(0, 25)
-  const cidadeSafe = cidade.normalize("NFD").replace(/[\u0300-\u036f]/g, "").slice(0, 15)
+  const nomeSafe = nome
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .slice(0, 25)
+  const cidadeSafe = cidade
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .slice(0, 15)
   const valorSafe = valor.toFixed(2)
   const txidSafe = txid.slice(0, 25)
 
@@ -136,6 +142,7 @@ describe("gerarPix", () => {
 ## Validação manual final
 
 Antes de marcar como pronto, **gerar um Pix real e validar em**:
+
 - https://validacaobrcode.com — confere se o BR Code é parseável
 - App de banco real — copiar e colar deve mostrar o valor correto
 

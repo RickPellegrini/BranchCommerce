@@ -65,6 +65,22 @@ type SupplierImportResponse = {
   }
 }
 
+function parseJsonResponse<T>(rawResponse: string) {
+  try {
+    return JSON.parse(rawResponse) as T
+  } catch {
+    return null
+  }
+}
+
+function buildApiErrorMessage(response: Response, fallbackMessage: string, rawResponse: string) {
+  const preview = rawResponse.trim().slice(0, 120)
+  if (preview.startsWith("<")) {
+    return `${fallbackMessage} A API respondeu HTML em vez de JSON (HTTP ${response.status}).`
+  }
+  return `${fallbackMessage} HTTP ${response.status}.`
+}
+
 function parseLocaleNumber(value: string) {
   const sanitized = String(value ?? "")
     .trim()
@@ -120,9 +136,13 @@ export function SupplierAnalysisPanel() {
           method: "POST",
           body: formData,
         })
-        const payload = (await response.json()) as SupplierImportResponse
-        if (!response.ok || !payload.ok || !payload.data) {
-          throw new Error(payload.error || `HTTP ${response.status}`)
+        const rawResponse = await response.text()
+        const payload = parseJsonResponse<SupplierImportResponse>(rawResponse)
+        if (!response.ok || !payload?.ok || !payload.data) {
+          throw new Error(
+            payload?.error ||
+              buildApiErrorMessage(response, "Erro ao importar o PDF do fornecedor.", rawResponse),
+          )
         }
         setImportedRows(payload.data.rows)
         setRawTable(payload.data.rawText)
@@ -167,9 +187,13 @@ export function SupplierAnalysisPanel() {
         }),
       })
 
-      const payload = (await response.json()) as SupplierScanResponse
-      if (!response.ok || !payload.ok || !payload.data) {
-        throw new Error(payload.error || `HTTP ${response.status}`)
+      const rawResponse = await response.text()
+      const payload = parseJsonResponse<SupplierScanResponse>(rawResponse)
+      if (!response.ok || !payload?.ok || !payload.data) {
+        throw new Error(
+          payload?.error ||
+            buildApiErrorMessage(response, "Erro ao analisar a lista do fornecedor.", rawResponse),
+        )
       }
 
       setResults(payload.data.winners)

@@ -141,12 +141,12 @@ export const enviarRestockAlert = internalAction({
 
 ## Casos de erro a tratar
 
-| Erro Telegram | Causa | Tratamento |
-|---|---|---|
-| `400 chat not found` | chatId errado ou não deu /start | Marcar config como inválida, alertar no dashboard |
-| `403 bot was blocked` | Usuário bloqueou o bot | Pausar monitoramento, marcar config |
-| `429 too many requests` | Rate limit | Backoff exponencial |
-| `5xx` | Telegram fora do ar | Retry 3x com backoff |
+| Erro Telegram           | Causa                           | Tratamento                                        |
+| ----------------------- | ------------------------------- | ------------------------------------------------- |
+| `400 chat not found`    | chatId errado ou não deu /start | Marcar config como inválida, alertar no dashboard |
+| `403 bot was blocked`   | Usuário bloqueou o bot          | Pausar monitoramento, marcar config               |
+| `429 too many requests` | Rate limit                      | Backoff exponencial                               |
+| `5xx`                   | Telegram fora do ar             | Retry 3x com backoff                              |
 
 ## Critério de aceite
 

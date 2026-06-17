@@ -34,8 +34,8 @@ import { internalAction } from "./_generated/server"
 import { internal } from "./_generated/api"
 import { gerarPix } from "./pix"
 
-const DESCONTO_PIX = 0.05  // Eletro Club dá 5% off no Pix
-const CONCORRENCIA = 5     // máx 5 requests VTEX simultâneos
+const DESCONTO_PIX = 0.05 // Eletro Club dá 5% off no Pix
+const CONCORRENCIA = 5 // máx 5 requests VTEX simultâneos
 
 export const verificarTodosOsProdutos = internalAction({
   args: {},
@@ -49,9 +49,7 @@ export const verificarTodosOsProdutos = internalAction({
     // Processa em batches para não estourar rate limit
     for (let i = 0; i < produtos.length; i += CONCORRENCIA) {
       const batch = produtos.slice(i, i + CONCORRENCIA)
-      const results = await Promise.all(
-        batch.map((p) => verificarUmProduto(ctx, p))
-      )
+      const results = await Promise.all(batch.map((p) => verificarUmProduto(ctx, p)))
       checados += results.length
       restocks += results.filter((r) => r === "restock").length
     }
@@ -61,14 +59,17 @@ export const verificarTodosOsProdutos = internalAction({
   },
 })
 
-async function verificarUmProduto(ctx: any, produto: any): Promise<"restock" | "sem_mudanca" | "erro"> {
+async function verificarUmProduto(
+  ctx: any,
+  produto: any,
+): Promise<"restock" | "sem_mudanca" | "erro"> {
   // 1. Consulta VTEX
   const dados = await ctx.runAction(internal.vtex.consultarSku, { sku: produto.sku })
   if (!dados) return "erro"
 
   // 2. Lê estado anterior
   const anterior = await ctx.runQuery(internal.products.getEstado, { sku: produto.sku })
-  const eraDisponivel = anterior?.disponivel ?? true  // primeiro check assume true (evita falso positivo no boot)
+  const eraDisponivel = anterior?.disponivel ?? true // primeiro check assume true (evita falso positivo no boot)
 
   // 3. Atualiza estado
   await ctx.runMutation(internal.products.upsertEstado, {
@@ -88,7 +89,9 @@ async function verificarUmProduto(ctx: any, produto: any): Promise<"restock" | "
 
   // 5. Valida preço máximo
   if (produto.precoMaximo && dados.preco > produto.precoMaximo) {
-    console.log(`[Monitor] ${produto.sku}: preço R$${dados.preco} > máx R$${produto.precoMaximo}, ignorando`)
+    console.log(
+      `[Monitor] ${produto.sku}: preço R$${dados.preco} > máx R$${produto.precoMaximo}, ignorando`,
+    )
     return "sem_mudanca"
   }
 
@@ -149,11 +152,7 @@ import { internal } from "./_generated/api"
 
 const crons = cronJobs()
 
-crons.interval(
-  "monitor de restock",
-  { seconds: 30 },
-  internal.monitor.verificarTodosOsProdutos
-)
+crons.interval("monitor de restock", { seconds: 30 }, internal.monitor.verificarTodosOsProdutos)
 
 export default crons
 ```
@@ -171,11 +170,14 @@ Se o estado estiver vazio (primeira execução do bot pra esse SKU), assumir que
 ### 3. Idempotência
 
 A tabela `notifications` registra o evento. Se quiser deduplicar, dá pra checar antes de enviar:
+
 ```ts
-const ultima = await ctx.db.query("notifications")
-  .withIndex("by_user_recent", q => q.eq("userId", uid))
-  .filter(q => q.eq(q.field("sku"), sku))
-  .order("desc").first()
+const ultima = await ctx.db
+  .query("notifications")
+  .withIndex("by_user_recent", (q) => q.eq("userId", uid))
+  .filter((q) => q.eq(q.field("sku"), sku))
+  .order("desc")
+  .first()
 if (ultima && Date.now() - ultima.enviadoEm < 5 * 60 * 1000) return // já notifiquei nos últimos 5min
 ```
 

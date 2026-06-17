@@ -15,19 +15,19 @@ Sistema de monitoramento de restock da **Eletro Club** com notificação Telegra
 
 Os MDs estão numerados na **ordem de implementação**. Leia em sequência ao construir, ou pule pro tópico que precisa.
 
-| # | Doc | O que tem |
-|---|---|---|
-| 00 | [Overview](./00-overview.md) | Visão geral, stack, fluxo end-to-end, estrutura de pastas |
-| 01 | [Setup](./01-setup.md) | Inicialização do projeto, dependências, env vars |
-| 02 | [Clerk Auth](./02-clerk-auth.md) | Configuração do login + integração Convex |
-| 03 | [Schema Convex](./03-convex-schema.md) | Tabelas do banco e índices |
-| 04 | [Cliente VTEX](./04-convex-vtex-client.md) | Função que consulta a API da Eletro Club |
-| 05 | [Pix Generator](./05-pix-generator.md) | Gerador de BR Code (EMV) sem dependências |
-| 06 | [Telegram](./06-convex-telegram.md) | Envio de notificações |
-| 07 | [Monitor + Cron](./07-convex-monitor-cron.md) | Loop de detecção de restock |
-| 08 | [Dashboard](./08-frontend-dashboard.md) | UI: lista, adicionar SKU, settings, histórico |
-| 09 | [Testes](./09-testing-strategy.md) | Estratégia Vitest + casos de teste |
-| 10 | [Deploy](./10-deploy.md) | Vercel + Convex prod + Clerk prod |
+| #   | Doc                                           | O que tem                                                 |
+| --- | --------------------------------------------- | --------------------------------------------------------- |
+| 00  | [Overview](./00-overview.md)                  | Visão geral, stack, fluxo end-to-end, estrutura de pastas |
+| 01  | [Setup](./01-setup.md)                        | Inicialização do projeto, dependências, env vars          |
+| 02  | [Clerk Auth](./02-clerk-auth.md)              | Configuração do login + integração Convex                 |
+| 03  | [Schema Convex](./03-convex-schema.md)        | Tabelas do banco e índices                                |
+| 04  | [Cliente VTEX](./04-convex-vtex-client.md)    | Função que consulta a API da Eletro Club                  |
+| 05  | [Pix Generator](./05-pix-generator.md)        | Gerador de BR Code (EMV) sem dependências                 |
+| 06  | [Telegram](./06-convex-telegram.md)           | Envio de notificações                                     |
+| 07  | [Monitor + Cron](./07-convex-monitor-cron.md) | Loop de detecção de restock                               |
+| 08  | [Dashboard](./08-frontend-dashboard.md)       | UI: lista, adicionar SKU, settings, histórico             |
+| 09  | [Testes](./09-testing-strategy.md)            | Estratégia Vitest + casos de teste                        |
+| 10  | [Deploy](./10-deploy.md)                      | Vercel + Convex prod + Clerk prod                         |
 
 ## Como usar com Cursor / Claude Code / IA
 

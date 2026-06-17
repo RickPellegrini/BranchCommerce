@@ -7,10 +7,12 @@ Modelar as tabelas do banco com tipagem forte e índices eficientes.
 ## Decisões de modelagem
 
 **Por que separar `products` e `priceHistory` (e não armazenar tudo num doc só):**
+
 - Produto muda raro (nome, SKU)
 - Preço/disponibilidade mudam toda checagem (se acumular num array vai estourar 1MB)
 
 **Por que `notifications` é tabela separada:**
+
 - Auditoria — saber quando enviou e o que enviou
 - Idempotência — não notificar duas vezes o mesmo evento
 - UI: mostra histórico de notificações no dashboard
@@ -24,12 +26,12 @@ import { v } from "convex/values"
 export default defineSchema({
   // Produtos sendo monitorados
   products: defineTable({
-    userId: v.string(),               // Clerk user ID dono do monitor
-    sku: v.string(),                   // SKU da Eletro Club (ex: "25463")
-    nome: v.string(),                  // Nome amigável (ex: "Air Fryer Philco 8L")
-    quantidade: v.number(),            // Quantas unidades quer comprar
+    userId: v.string(), // Clerk user ID dono do monitor
+    sku: v.string(), // SKU da Eletro Club (ex: "25463")
+    nome: v.string(), // Nome amigável (ex: "Air Fryer Philco 8L")
+    quantidade: v.number(), // Quantas unidades quer comprar
     precoMaximo: v.optional(v.number()), // Não notificar se preço acima disso
-    ativo: v.boolean(),                // Pode pausar sem deletar
+    ativo: v.boolean(), // Pode pausar sem deletar
     createdAt: v.number(),
   })
     .index("by_user", ["userId"])
@@ -41,7 +43,7 @@ export default defineSchema({
     sku: v.string(),
     disponivel: v.boolean(),
     preco: v.number(),
-    precoOriginal: v.number(),         // ListPrice
+    precoOriginal: v.number(), // ListPrice
     imagemUrl: v.optional(v.string()),
     link: v.optional(v.string()),
     nomeProduto: v.optional(v.string()), // Nome oficial vindo da VTEX
@@ -55,8 +57,8 @@ export default defineSchema({
     sku: v.string(),
     nome: v.string(),
     preco: v.number(),
-    precoPix: v.number(),               // Com 5% desconto
-    pixCode: v.string(),                // BR Code gerado
+    precoPix: v.number(), // Com 5% desconto
+    pixCode: v.string(), // BR Code gerado
     enviadoEm: v.number(),
     sucesso: v.boolean(),
     erro: v.optional(v.string()),
@@ -100,13 +102,13 @@ const notifs = await ctx.db
 
 ## Validações no banco
 
-| Campo | Validação | Onde |
-|---|---|---|
-| `sku` | Apenas dígitos, 3-10 chars | Mutation `addProduct` |
-| `quantidade` | >= 1 e <= 99 | Mutation `addProduct` |
-| `precoMaximo` | >= 0 | Mutation `addProduct` |
-| `pixChave` | CPF/email/telefone/UUID válido | Mutation `updateSettings` |
-| `telegramChatId` | Numérico, com sinal opcional | Mutation `updateSettings` |
+| Campo            | Validação                      | Onde                      |
+| ---------------- | ------------------------------ | ------------------------- |
+| `sku`            | Apenas dígitos, 3-10 chars     | Mutation `addProduct`     |
+| `quantidade`     | >= 1 e <= 99                   | Mutation `addProduct`     |
+| `precoMaximo`    | >= 0                           | Mutation `addProduct`     |
+| `pixChave`       | CPF/email/telefone/UUID válido | Mutation `updateSettings` |
+| `telegramChatId` | Numérico, com sinal opcional   | Mutation `updateSettings` |
 
 ## Critério de aceite
 

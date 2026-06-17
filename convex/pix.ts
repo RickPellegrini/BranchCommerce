@@ -12,7 +12,7 @@ function crc16(data: string): string {
   for (const char of data) {
     crc ^= char.charCodeAt(0) << 8
     for (let i = 0; i < 8; i++) {
-      crc = (crc & 0x8000) ? ((crc << 1) ^ 0x1021) : (crc << 1)
+      crc = crc & 0x8000 ? (crc << 1) ^ 0x1021 : crc << 1
       crc &= 0xffff
     }
   }
@@ -25,8 +25,14 @@ function tlv(tag: string, value: string): string {
 }
 
 export function gerarPix({ chave, nome, cidade, valor, txid = "***" }: PixInput): string {
-  const nomeSafe = nome.normalize("NFD").replace(/[\u0300-\u036f]/g, "").slice(0, 25)
-  const cidadeSafe = cidade.normalize("NFD").replace(/[\u0300-\u036f]/g, "").slice(0, 15)
+  const nomeSafe = nome
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .slice(0, 25)
+  const cidadeSafe = cidade
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .slice(0, 15)
   const valorSafe = valor.toFixed(2)
   const txidSafe = txid.slice(0, 25)
 

@@ -42,8 +42,13 @@ export type VtexProductState = {
 // PURO — testável sem mocks de rede
 export function parseVtexResponse(sku: string, data: unknown): VtexProductState {
   const empty: VtexProductState = {
-    sku, disponivel: false, preco: 0, precoOriginal: 0,
-    nomeProduto: `SKU ${sku}`, imagemUrl: null, link: "",
+    sku,
+    disponivel: false,
+    preco: 0,
+    precoOriginal: 0,
+    nomeProduto: `SKU ${sku}`,
+    imagemUrl: null,
+    link: "",
   }
 
   if (!Array.isArray(data) || data.length === 0) return empty
@@ -77,7 +82,7 @@ export const consultarSku = internalAction({
       const res = await fetch(url, {
         headers: {
           "User-Agent": "Mozilla/5.0 (compatible; restock-bot/1.0)",
-          "Accept": "application/json",
+          Accept: "application/json",
         },
       })
       if (!res.ok) {
@@ -96,14 +101,14 @@ export const consultarSku = internalAction({
 
 ## Casos especiais (cobrir em teste)
 
-| Cenário | Retorno esperado |
-|---|---|
-| Array vazio (produto oculto/sem estoque) | `disponivel: false`, todos zeros |
+| Cenário                                        | Retorno esperado                  |
+| ---------------------------------------------- | --------------------------------- |
+| Array vazio (produto oculto/sem estoque)       | `disponivel: false`, todos zeros  |
 | `IsAvailable: true` mas `AvailableQuantity: 0` | `disponivel: true` (segue a flag) |
-| Múltiplos sellers | Pega o primeiro |
-| Sem imagens | `imagemUrl: null` |
-| `ListPrice` ausente | Cai pra `Price` |
-| Erro de rede / timeout | `null` (não derruba o cron) |
+| Múltiplos sellers                              | Pega o primeiro                   |
+| Sem imagens                                    | `imagemUrl: null`                 |
+| `ListPrice` ausente                            | Cai pra `Price`                   |
+| Erro de rede / timeout                         | `null` (não derruba o cron)       |
 
 ## Anti-detecção (importante!)
 

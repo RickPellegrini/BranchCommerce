@@ -3,6 +3,7 @@
 ## Objetivo
 
 Interface mínima e funcional pra:
+
 1. Ver lista de SKUs sendo monitorados (com estado em tempo real graças ao Convex reativo)
 2. Adicionar novo SKU
 3. Pausar/remover SKU
@@ -115,9 +116,7 @@ export function ProductCard({ produto, onTogglePause, onRemove }: any) {
         <div className="flex items-baseline gap-2">
           <span className="text-2xl font-medium">R$ {preco.toFixed(2)}</span>
           {produto.precoMaximo && (
-            <span className="text-xs text-muted-foreground">
-              máx R$ {produto.precoMaximo}
-            </span>
+            <span className="text-xs text-muted-foreground">máx R$ {produto.precoMaximo}</span>
           )}
         </div>
         <div className="flex gap-2">
@@ -145,7 +144,13 @@ export function ProductCard({ produto, onTogglePause, onRemove }: any) {
 
 ```tsx
 "use client"
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog"
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogFooter,
+} from "@/components/ui/dialog"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
@@ -167,7 +172,10 @@ export function AddProductDialog({ open, onOpenChange }: any) {
       quantidade: Number(qtd),
       precoMaximo: precoMax ? Number(precoMax) : undefined,
     })
-    setSku(""); setNome(""); setQtd("1"); setPrecoMax("")
+    setSku("")
+    setNome("")
+    setQtd("1")
+    setPrecoMax("")
     onOpenChange(false)
   }
 
@@ -180,26 +188,52 @@ export function AddProductDialog({ open, onOpenChange }: any) {
         <div className="space-y-4">
           <div className="space-y-2">
             <Label htmlFor="sku">SKU (número que aparece em ?sku= na URL)</Label>
-            <Input id="sku" value={sku} onChange={(e) => setSku(e.target.value)} placeholder="25463" />
+            <Input
+              id="sku"
+              value={sku}
+              onChange={(e) => setSku(e.target.value)}
+              placeholder="25463"
+            />
           </div>
           <div className="space-y-2">
             <Label htmlFor="nome">Nome amigável</Label>
-            <Input id="nome" value={nome} onChange={(e) => setNome(e.target.value)} placeholder="Air Fryer 8L" />
+            <Input
+              id="nome"
+              value={nome}
+              onChange={(e) => setNome(e.target.value)}
+              placeholder="Air Fryer 8L"
+            />
           </div>
           <div className="grid grid-cols-2 gap-4">
             <div className="space-y-2">
               <Label htmlFor="qtd">Quantidade</Label>
-              <Input id="qtd" type="number" min="1" value={qtd} onChange={(e) => setQtd(e.target.value)} />
+              <Input
+                id="qtd"
+                type="number"
+                min="1"
+                value={qtd}
+                onChange={(e) => setQtd(e.target.value)}
+              />
             </div>
             <div className="space-y-2">
               <Label htmlFor="precoMax">Preço máx (opcional)</Label>
-              <Input id="precoMax" type="number" step="0.01" value={precoMax} onChange={(e) => setPrecoMax(e.target.value)} />
+              <Input
+                id="precoMax"
+                type="number"
+                step="0.01"
+                value={precoMax}
+                onChange={(e) => setPrecoMax(e.target.value)}
+              />
             </div>
           </div>
         </div>
         <DialogFooter>
-          <Button variant="ghost" onClick={() => onOpenChange(false)}>Cancelar</Button>
-          <Button onClick={handleSubmit} disabled={!sku || !nome}>Adicionar</Button>
+          <Button variant="ghost" onClick={() => onOpenChange(false)}>
+            Cancelar
+          </Button>
+          <Button onClick={handleSubmit} disabled={!sku || !nome}>
+            Adicionar
+          </Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>
@@ -210,6 +244,7 @@ export function AddProductDialog({ open, onOpenChange }: any) {
 ## Página de settings: `app/dashboard/settings/page.tsx`
 
 Form simples com 4 campos:
+
 - Telegram Chat ID (com botão "Como descobrir?" abrindo dialog explicativo)
 - Chave Pix (CPF/email/celular/aleatória)
 - Nome (max 25)
@@ -220,6 +255,7 @@ Validações no client antes de salvar.
 ## Página de notificações: `app/dashboard/notifications/page.tsx`
 
 Tabela shadcn com colunas:
+
 - Data/hora
 - Produto
 - Preço
@@ -230,11 +266,11 @@ Limita às últimas 50.
 
 ## Estado vazio (empty states)
 
-| Tela | Quando | O que mostrar |
-|---|---|---|
-| Dashboard sem produtos | `produtos.length === 0` | Card grande com `Package` + texto "Você ainda não monitora nenhum produto" + botão "Adicionar primeiro SKU" |
-| Settings incompletas | `!chatId \|\| !pixChave` | Banner amarelo no topo do dashboard avisando que monitor não vai notificar até completar |
-| Sem notificações | `notifs.length === 0` | "Nenhuma notificação ainda. Quando algum produto entrar em estoque, aparecerá aqui." |
+| Tela                   | Quando                   | O que mostrar                                                                                               |
+| ---------------------- | ------------------------ | ----------------------------------------------------------------------------------------------------------- |
+| Dashboard sem produtos | `produtos.length === 0`  | Card grande com `Package` + texto "Você ainda não monitora nenhum produto" + botão "Adicionar primeiro SKU" |
+| Settings incompletas   | `!chatId \|\| !pixChave` | Banner amarelo no topo do dashboard avisando que monitor não vai notificar até completar                    |
+| Sem notificações       | `notifs.length === 0`    | "Nenhuma notificação ainda. Quando algum produto entrar em estoque, aparecerá aqui."                        |
 
 ## Reatividade — vantagem do Convex
 

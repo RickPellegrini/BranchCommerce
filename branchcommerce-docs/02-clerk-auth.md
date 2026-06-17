@@ -102,6 +102,7 @@ export default function Page() {
 ## Configurar Clerk JWT Template para Convex
 
 No dashboard do Clerk:
+
 1. Vá em **JWT Templates**
 2. Clique em **New Template** → escolha **Convex**
 3. Salve o **Issuer Domain** que aparece (algo como `https://xxx.clerk.accounts.dev`)
