@@ -20,13 +20,45 @@ const defaultSettings = {
   },
 }
 
+const supplierState = {
+  rows: [],
+  results: [],
+}
+
 function parseNumber(value) {
   const num = Number(value)
   return Number.isFinite(num) ? num : 0
 }
 
+function parseLocaleNumber(value) {
+  const sanitized = String(value ?? "")
+    .trim()
+    .replace(/\s/g, "")
+    .replace(/[R$r$]/gi, "")
+  if (!sanitized) return null
+  const normalized = sanitized.includes(",")
+    ? sanitized.replace(/\./g, "").replace(",", ".")
+    : sanitized
+  const num = Number(normalized)
+  return Number.isFinite(num) ? num : null
+}
+
+function normalizeHeader(value) {
+  return String(value ?? "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .trim()
+    .toLowerCase()
+}
+
 function setStatus(message, success = true) {
   const status = document.getElementById("status-message")
+  status.textContent = message
+  status.style.color = success ? "#065f46" : "#b91c1c"
+}
+
+function setSupplierStatus(message, success = true) {
+  const status = document.getElementById("supplier-status")
   status.textContent = message
   status.style.color = success ? "#065f46" : "#b91c1c"
 }
@@ -107,6 +139,217 @@ function resetSettings() {
   })
 }
 
+function activateTab(tabName) {
+  const isSupplier = tabName === "supplier"
+  document.getElementById("tab-settings").classList.toggle("is-active", !isSupplier)
+  document.getElementById("tab-supplier").classList.toggle("is-active", isSupplier)
+  document.getElementById("panel-settings").classList.toggle("is-active", !isSupplier)
+  document.getElementById("panel-supplier").classList.toggle("is-active", isSupplier)
+}
+
+function splitLine(line, delimiter) {
+  return line
+    .split(delimiter)
+    .map((value) => value.trim())
+    .filter((value, index, arr) => index < arr.length)
+}
+
+function detectDelimiter(text) {
+  const sample = text.split(/\r?\n/).find((line) => line.trim()) || ""
+  if (sample.includes("\t")) return "\t"
+  if (sample.includes(";")) return ";"
+  return ","
+}
+
+function parseSupplierTable(text) {
+  const trimmed = String(text ?? "").trim()
+  if (!trimmed) return []
+
+  const delimiter = detectDelimiter(trimmed)
+  const lines = trimmed.split(/\r?\n/).filter((line) => line.trim())
+  if (lines.length < 2) return []
+
+  const headers = splitLine(lines[0], delimiter).map(normalizeHeader)
+  const codeIndex = headers.findIndex((header) => ["codigo", "cod", "sku"].includes(header))
+  const nameIndex = headers.findIndex((header) =>
+    ["descricao", "descricao", "produto", "nome"].includes(header),
+  )
+  const gtinIndex = headers.findIndex((header) =>
+    ["gtin", "ean", "codigo de barras", "codigo universal de produto"].includes(header),
+  )
+  const costIndex = headers.findIndex((header) =>
+    ["r$ unit.", "r$ unit", "r$ unitario", "unitario", "custo", "preco", "preco custo"].includes(
+      header,
+    ),
+  )
+
+  if (nameIndex === -1 || gtinIndex === -1 || costIndex === -1) return []
+
+  return lines
+    .slice(1)
+    .map((line) => splitLine(line, delimiter))
+    .map((cols) => ({
+      code: codeIndex >= 0 ? (cols[codeIndex] ?? "") : "",
+      name: cols[nameIndex] ?? "",
+      gtin: (cols[gtinIndex] ?? "").replace(/\D/g, ""),
+      cost: parseLocaleNumber(cols[costIndex]),
+    }))
+    .filter((row) => row.name && row.gtin && row.cost !== null)
+}
+
+function formatCurrency(value) {
+  return new Intl.NumberFormat("pt-BR", {
+    style: "currency",
+    currency: "BRL",
+  }).format(Number(value || 0))
+}
+
+function formatPercent(value) {
+  return `${Number(value || 0).toFixed(1)}%`
+}
+
+function renderSupplierResults(rows) {
+  const container = document.getElementById("supplier-results")
+  const card = document.getElementById("supplier-results-card")
+  const summary = document.getElementById("supplier-results-summary")
+
+  supplierState.results = rows
+
+  if (!rows.length) {
+    card.classList.add("hidden")
+    container.innerHTML = ""
+    summary.textContent = "0 produtos"
+    return
+  }
+
+  card.classList.remove("hidden")
+  summary.textContent = `${rows.length} produtos com margem boa`
+  container.innerHTML = rows
+    .map(
+      (row) => `
+        <article class="supplier-result-item">
+          <div class="supplier-result-head">
+            <h3>${row.supplierName}</h3>
+            <span class="supplier-margin">${formatPercent(row.netMargin)}</span>
+          </div>
+          <p class="supplier-catalog-name">${row.catalogName}</p>
+          <div class="supplier-metrics">
+            <span>Custo ${formatCurrency(row.supplierCost)}</span>
+            <span>Venda ${formatCurrency(row.salePrice)}</span>
+            <span>Taxa ${row.feePercent}%</span>
+          </div>
+          <div class="supplier-links">
+            <a href="${row.catalogLink}" target="_blank" rel="noreferrer">Catalogo</a>
+            <a href="${row.itemLink}" target="_blank" rel="noreferrer">Anuncio</a>
+          </div>
+        </article>
+      `,
+    )
+    .join("")
+}
+
+function buildSupplierSummary(rows) {
+  return rows
+    .map(
+      (row) =>
+        `${row.supplierName} | custo ${formatCurrency(row.supplierCost)} | venda ${formatCurrency(row.salePrice)} | margem ${formatPercent(row.netMargin)} | ${row.catalogLink}`,
+    )
+    .join("\n")
+}
+
+async function loadSupplierFile(event) {
+  const file = event.target.files?.[0]
+  if (!file) return
+  const text = await file.text()
+  document.getElementById("supplier-paste").value = text
+  setSupplierStatus("Arquivo carregado. Agora clique em Buscar catalogos.")
+}
+
+async function runSupplierScan() {
+  const payloadText = document.getElementById("supplier-paste").value
+  const rows = parseSupplierTable(payloadText)
+  supplierState.rows = rows
+
+  if (!rows.length) {
+    renderSupplierResults([])
+    setSupplierStatus(
+      "Nao consegui ler a planilha. Use CSV/TSV com colunas codigo, descricao, gtin e custo.",
+      false,
+    )
+    return
+  }
+
+  const settings = await new Promise((resolve) => {
+    chrome.storage.local.get([SETTINGS_KEY], (data) => {
+      const persisted = data[SETTINGS_KEY] || {}
+      resolve({
+        ...defaultSettings,
+        ...persisted,
+        sync: {
+          ...defaultSettings.sync,
+          ...(persisted.sync || {}),
+        },
+      })
+    })
+  })
+
+  if (!settings.sync.apiBaseUrl || !settings.sync.apiKey) {
+    setSupplierStatus(
+      "Configure a URL da plataforma e a chave de sincronizacao na aba Calculadora.",
+      false,
+    )
+    return
+  }
+
+  const minMargin = parseLocaleNumber(document.getElementById("supplier-min-margin").value) ?? 15
+  setSupplierStatus(`Buscando ${rows.length} produtos no catalogo do Mercado Livre...`)
+  renderSupplierResults([])
+
+  try {
+    const response = await fetch(
+      `${settings.sync.apiBaseUrl.replace(/\/$/, "")}/api/branch-hunter/supplier-scan`,
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "x-branch-hunter-key": settings.sync.apiKey,
+        },
+        body: JSON.stringify({
+          rows,
+          minMargin,
+        }),
+      },
+    )
+
+    const payload = await response.json()
+    if (!response.ok || !payload?.ok) {
+      throw new Error(payload?.error || "Falha ao consultar o catalogo.")
+    }
+
+    const winners = Array.isArray(payload.data?.winners) ? payload.data.winners : []
+    renderSupplierResults(winners)
+    setSupplierStatus(
+      `${payload.data.scanned} itens lidos, ${payload.data.matched} bateram no catalogo e ${winners.length} ficaram acima de ${formatPercent(minMargin)}.`,
+    )
+  } catch (error) {
+    renderSupplierResults([])
+    setSupplierStatus(
+      error instanceof Error ? error.message : "Erro ao buscar produtos do fornecedor.",
+      false,
+    )
+  }
+}
+
+async function copySupplierResults() {
+  if (!supplierState.results.length) {
+    setSupplierStatus("Nao ha resultados para copiar.", false)
+    return
+  }
+  const text = buildSupplierSummary(supplierState.results)
+  await navigator.clipboard.writeText(text)
+  setSupplierStatus("Resumo copiado para a area de transferencia.")
+}
+
 function boot() {
   chrome.storage.local.get([SETTINGS_KEY], (data) => {
     const persisted = data[SETTINGS_KEY] || {}
@@ -126,8 +369,13 @@ function boot() {
     })
   })
 
+  document.getElementById("tab-settings").addEventListener("click", () => activateTab("settings"))
+  document.getElementById("tab-supplier").addEventListener("click", () => activateTab("supplier"))
   document.getElementById("save-settings").addEventListener("click", saveSettings)
   document.getElementById("reset-settings").addEventListener("click", resetSettings)
+  document.getElementById("supplier-file").addEventListener("change", loadSupplierFile)
+  document.getElementById("run-supplier-scan").addEventListener("click", runSupplierScan)
+  document.getElementById("copy-supplier-results").addEventListener("click", copySupplierResults)
 }
 
 boot()

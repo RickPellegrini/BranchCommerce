@@ -1,6 +1,6 @@
 import { jsonError, jsonOk } from "@/lib/mercadolivre/http"
 import { normalizeMercadoLibreItemId } from "@/lib/mercadolivre/item-id"
-import { fetchMlApi, requestMlApi } from "@/lib/mercadolivre/storage"
+import { fetchMlApi, getAnyValidMlConnection, requestMlApi } from "@/lib/mercadolivre/storage"
 import { requireMlConnection } from "@/lib/mercadolivre/server"
 import { searchUserItemsIncludingPaused } from "@/lib/mercadolivre/user-items-search"
 
@@ -105,9 +105,21 @@ async function loadSellerListings(accessToken: string, mlUserId: string, limit =
   return [...uniqueById.values()]
 }
 
+async function getCatalogConnection() {
+  try {
+    const { connection } = await requireMlConnection()
+    return connection
+  } catch (error) {
+    if (error instanceof Error && error.message.includes("nao conectada")) {
+      return getAnyValidMlConnection()
+    }
+    throw error
+  }
+}
+
 async function handleGet(url: URL) {
   const action = getParam(url, "action")
-  const { connection } = await requireMlConnection()
+  const connection = await getCatalogConnection()
   const accessToken = connection.accessToken
   const siteId = getParam(url, "siteId") || "MLB"
 
@@ -365,7 +377,7 @@ async function handleGet(url: URL) {
 
 async function handlePost(request: Request, url: URL) {
   const action = getParam(url, "action")
-  const { connection } = await requireMlConnection()
+  const connection = await getCatalogConnection()
   const body = (await request.json()) as Record<string, unknown>
 
   if (action === "listing_direct") {
@@ -432,7 +444,7 @@ async function handlePost(request: Request, url: URL) {
 
 async function handlePut(request: Request, url: URL) {
   const action = getParam(url, "action")
-  const { connection } = await requireMlConnection()
+  const connection = await getCatalogConnection()
   const body = (await request.json()) as Record<string, unknown>
 
   if (action === "brand_update_suggestion") {
