@@ -111,6 +111,8 @@ type SupplierImportResponse = {
 
 type LoadingPhase = "idle" | "importing" | "scanning"
 
+const SUPPLIER_IMPORT_MAX_FILE_BYTES = 4 * 1024 * 1024
+
 function parseJsonResponse<T>(rawResponse: string) {
   try {
     return JSON.parse(rawResponse) as T
@@ -123,6 +125,9 @@ function buildApiErrorMessage(response: Response, fallbackMessage: string, rawRe
   const preview = rawResponse.trim().slice(0, 120)
   if (preview.startsWith("<")) {
     return `${fallbackMessage} A API respondeu HTML em vez de JSON (HTTP ${response.status}).`
+  }
+  if (response.status === 413) {
+    return `${fallbackMessage} O arquivo excede o limite aceito pelo deploy (HTTP 413).`
   }
   return `${fallbackMessage} HTTP ${response.status}.`
 }
@@ -354,6 +359,23 @@ export function SupplierAnalysisPanel() {
   async function handleFileChange(event: React.ChangeEvent<HTMLInputElement>) {
     const file = event.target.files?.[0]
     if (!file) return
+
+    if (file.size > SUPPLIER_IMPORT_MAX_FILE_BYTES) {
+      setImportedFileName(file.name)
+      setImportedRows([])
+      setRawTable("")
+      setResults([])
+      setAllResults([])
+      setSummary(null)
+      setAnalysisSettings(null)
+      setServerSettingsUsed(null)
+      setLoadingPhase("idle")
+      setStatus(
+        `Arquivo muito grande para a extracao online (${(file.size / (1024 * 1024)).toFixed(1)} MB). Limite atual: 4 MB para evitar HTTP 413 no deploy.`,
+      )
+      event.target.value = ""
+      return
+    }
 
     setImportedFileName(file.name)
     setImportedRows([])

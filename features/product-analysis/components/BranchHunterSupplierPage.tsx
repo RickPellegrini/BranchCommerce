@@ -7,7 +7,7 @@ import { SupplierAnalysisPanel } from "./SupplierAnalysisPanel"
 
 export function BranchHunterSupplierPage() {
   return (
-    <div className="space-y-6">
+    <div className="theme-light-surface space-y-6 rounded-3xl bg-background p-4 text-foreground sm:p-6">
       <div className="flex items-center gap-2 text-sm text-muted-foreground">
         <span>Dashboard</span>
         <span>&rsaquo;</span>
