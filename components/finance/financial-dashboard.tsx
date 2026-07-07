@@ -21,6 +21,8 @@ import {
   EyeOff,
   FileText,
   CircleDollarSign,
+  ChevronDown,
+  ChevronUp,
   Copy,
   Home,
   ArrowRight,
@@ -154,6 +156,14 @@ type FinanceSourceFilter = "all" | "mercado_livre" | "mercado_pago" | "manual"
 type FinanceTypeFilter = "all" | "income" | "expense"
 type FinanceInsightKey = "profit" | "revenue" | "costs" | "sales" | "margin" | "ticket"
 type HistorySummaryFilter = "entries" | "fixed" | "operational" | "recurring"
+type HistorySortKey =
+  | "date"
+  | "description"
+  | "category"
+  | "kind"
+  | "origin"
+  | "periodicity"
+  | "amount"
 type StockSection = "overview" | "history"
 type MlSection = "overview" | "anuncios" | "catalogo" | "orders" | "intelligence"
 type HunterSection =
@@ -1623,6 +1633,10 @@ export function FinancialDashboard({
   >("all")
   const [historyStartDate, setHistoryStartDate] = useState("")
   const [historyEndDate, setHistoryEndDate] = useState("")
+  const [historySort, setHistorySort] = useState<{
+    key: HistorySortKey
+    direction: "asc" | "desc"
+  }>({ key: "date", direction: "desc" })
   const [historySummaryFilter, setHistorySummaryFilter] = useState<HistorySummaryFilter | null>(
     null,
   )
@@ -2334,6 +2348,9 @@ export function FinancialDashboard({
     const extraCards = stockKanbanCards.flatMap((card) => {
       const p = byProductId.get(card.productId)
       if (!p) return []
+      if (card.kanbanStatus === (p.kanbanStatus ?? (p.quantity > 0 ? "in_stock" : "purchased"))) {
+        return []
+      }
       return [
         {
           id: `kanban-card:${card.id}`,
@@ -2504,33 +2521,31 @@ export function FinancialDashboard({
   )
   const baseHistoryTransactions = useMemo(() => {
     const search = historySearch.trim().toLowerCase()
-    return transactions
-      .filter((transaction) => {
-        if (historyStartDate && transaction.date < historyStartDate) return false
-        if (historyEndDate && transaction.date > historyEndDate) return false
-        if (historyKindFilter !== "all" && transaction.kind !== historyKindFilter) return false
-        if (
-          historyExpenseTypeFilter !== "all" &&
-          transaction.kind === "expense" &&
-          (transaction.expenseType ?? "variable") !== historyExpenseTypeFilter
-        ) {
-          return false
-        }
-        if (
-          historyPeriodicityFilter !== "all" &&
-          (transaction.periodicity ?? "one_time") !== historyPeriodicityFilter
-        ) {
-          return false
-        }
-        if (!search) return true
-        const categoryName = categoryMap.get(transaction.categoryId)?.name?.toLowerCase() ?? ""
-        return (
-          transaction.description.toLowerCase().includes(search) ||
-          (transaction.origin ?? "").toLowerCase().includes(search) ||
-          categoryName.includes(search)
-        )
-      })
-      .sort((a, b) => b.date.localeCompare(a.date))
+    return transactions.filter((transaction) => {
+      if (historyStartDate && transaction.date < historyStartDate) return false
+      if (historyEndDate && transaction.date > historyEndDate) return false
+      if (historyKindFilter !== "all" && transaction.kind !== historyKindFilter) return false
+      if (
+        historyExpenseTypeFilter !== "all" &&
+        transaction.kind === "expense" &&
+        (transaction.expenseType ?? "variable") !== historyExpenseTypeFilter
+      ) {
+        return false
+      }
+      if (
+        historyPeriodicityFilter !== "all" &&
+        (transaction.periodicity ?? "one_time") !== historyPeriodicityFilter
+      ) {
+        return false
+      }
+      if (!search) return true
+      const categoryName = categoryMap.get(transaction.categoryId)?.name?.toLowerCase() ?? ""
+      return (
+        transaction.description.toLowerCase().includes(search) ||
+        (transaction.origin ?? "").toLowerCase().includes(search) ||
+        categoryName.includes(search)
+      )
+    })
   }, [
     categoryMap,
     historyEndDate,
@@ -2542,19 +2557,60 @@ export function FinancialDashboard({
     transactions,
   ])
   const historyTransactions = useMemo(() => {
-    if (!historySummaryFilter) return baseHistoryTransactions
+    const filtered = !historySummaryFilter
+      ? baseHistoryTransactions
+      : baseHistoryTransactions.filter((transaction) => {
+          if (historySummaryFilter === "entries") return transaction.kind === "income"
+          if (historySummaryFilter === "fixed") {
+            return transaction.kind === "expense" && transaction.expenseType === "fixed"
+          }
+          if (historySummaryFilter === "operational") {
+            return transaction.kind === "expense" && transaction.expenseType !== "fixed"
+          }
+          return (transaction.periodicity ?? "one_time") !== "one_time"
+        })
 
-    return baseHistoryTransactions.filter((transaction) => {
-      if (historySummaryFilter === "entries") return transaction.kind === "income"
-      if (historySummaryFilter === "fixed") {
-        return transaction.kind === "expense" && transaction.expenseType === "fixed"
+    const directionMultiplier = historySort.direction === "asc" ? 1 : -1
+    const getValue = (transaction: FinancialTransaction) => {
+      switch (historySort.key) {
+        case "amount":
+          return transaction.amount
+        case "category":
+          return categoryMap.get(transaction.categoryId)?.name?.toLowerCase() ?? ""
+        case "date":
+          return transaction.date
+        case "description":
+          return transaction.description.toLowerCase()
+        case "kind":
+          return transaction.kind === "income" ? "entrada" : "despesa"
+        case "origin":
+          return (transaction.origin ?? "").toLowerCase()
+        case "periodicity":
+          return periodicityLabel(transaction.periodicity).toLowerCase()
       }
-      if (historySummaryFilter === "operational") {
-        return transaction.kind === "expense" && transaction.expenseType !== "fixed"
+    }
+
+    return [...filtered].sort((a, b) => {
+      const aValue = getValue(a)
+      const bValue = getValue(b)
+      let comparison = 0
+
+      if (typeof aValue === "number" && typeof bValue === "number") {
+        comparison = aValue - bValue
+      } else {
+        comparison = String(aValue).localeCompare(String(bValue), "pt-BR")
       }
-      return (transaction.periodicity ?? "one_time") !== "one_time"
+
+      if (comparison !== 0) return comparison * directionMultiplier
+      return b.date.localeCompare(a.date)
     })
-  }, [baseHistoryTransactions, historySummaryFilter])
+  }, [
+    baseHistoryTransactions,
+    categoryMap,
+    historySort.direction,
+    historySort.key,
+    historySummaryFilter,
+  ])
   const historySummary = useMemo(() => {
     const entries = baseHistoryTransactions
       .filter((transaction) => transaction.kind === "income")
@@ -2595,6 +2651,21 @@ export function FinancialDashboard({
       event.preventDefault()
       openHistorySummaryDetails(filter)
     }
+  }
+  function toggleHistorySort(key: HistorySortKey) {
+    setHistorySort((current) =>
+      current.key === key
+        ? { key, direction: current.direction === "asc" ? "desc" : "asc" }
+        : { key, direction: key === "date" || key === "amount" ? "desc" : "asc" },
+    )
+  }
+  function renderHistorySortIcon(key: HistorySortKey) {
+    if (historySort.key !== key) return <span className="text-muted-foreground/70">↕</span>
+    return historySort.direction === "asc" ? (
+      <ChevronUp className="size-4" aria-hidden="true" />
+    ) : (
+      <ChevronDown className="size-4" aria-hidden="true" />
+    )
   }
   const summary = useMemo(() => summarizeTransactions(filteredTransactions), [filteredTransactions])
   const evolutionReport = useMemo(
@@ -8763,13 +8834,76 @@ export function FinancialDashboard({
                       <Table>
                         <TableHeader>
                           <TableRow>
-                            <TableHead>Data</TableHead>
-                            <TableHead>Descricao</TableHead>
-                            <TableHead>Categoria</TableHead>
-                            <TableHead>Tipo</TableHead>
-                            <TableHead>Origem</TableHead>
-                            <TableHead>Periodicidade</TableHead>
-                            <TableHead className="text-right">Valor</TableHead>
+                            <TableHead>
+                              <button
+                                type="button"
+                                className="inline-flex items-center gap-1 font-medium"
+                                onClick={() => toggleHistorySort("date")}
+                              >
+                                Data
+                                {renderHistorySortIcon("date")}
+                              </button>
+                            </TableHead>
+                            <TableHead>
+                              <button
+                                type="button"
+                                className="inline-flex items-center gap-1 font-medium"
+                                onClick={() => toggleHistorySort("description")}
+                              >
+                                Descricao
+                                {renderHistorySortIcon("description")}
+                              </button>
+                            </TableHead>
+                            <TableHead>
+                              <button
+                                type="button"
+                                className="inline-flex items-center gap-1 font-medium"
+                                onClick={() => toggleHistorySort("category")}
+                              >
+                                Categoria
+                                {renderHistorySortIcon("category")}
+                              </button>
+                            </TableHead>
+                            <TableHead>
+                              <button
+                                type="button"
+                                className="inline-flex items-center gap-1 font-medium"
+                                onClick={() => toggleHistorySort("kind")}
+                              >
+                                Tipo
+                                {renderHistorySortIcon("kind")}
+                              </button>
+                            </TableHead>
+                            <TableHead>
+                              <button
+                                type="button"
+                                className="inline-flex items-center gap-1 font-medium"
+                                onClick={() => toggleHistorySort("origin")}
+                              >
+                                Origem
+                                {renderHistorySortIcon("origin")}
+                              </button>
+                            </TableHead>
+                            <TableHead>
+                              <button
+                                type="button"
+                                className="inline-flex items-center gap-1 font-medium"
+                                onClick={() => toggleHistorySort("periodicity")}
+                              >
+                                Periodicidade
+                                {renderHistorySortIcon("periodicity")}
+                              </button>
+                            </TableHead>
+                            <TableHead className="text-right">
+                              <button
+                                type="button"
+                                className="inline-flex items-center gap-1 font-medium"
+                                onClick={() => toggleHistorySort("amount")}
+                              >
+                                Valor
+                                {renderHistorySortIcon("amount")}
+                              </button>
+                            </TableHead>
                             <TableHead className="w-[140px]">Anexos</TableHead>
                             <TableHead>Acoes</TableHead>
                           </TableRow>

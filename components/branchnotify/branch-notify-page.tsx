@@ -184,7 +184,9 @@ export function BranchNotifyPage({ userId }: BranchNotifyPageProps) {
       const r = await runMonitorNow({ userId })
       setTickMessage(
         r.ok
-          ? `Ciclo executado (cobre todos os utilizadores). ~${r.produtos} activo(s) teu(s). A lista abaixo actualiza em segundos.`
+          ? `Ciclo executado para ${r.produtos} activo(s) teus. ${r.checked} SKU(s) processado(s)${
+              r.failed > 0 ? `, ${r.failed} com falha` : ""
+            }. A lista abaixo actualiza em segundos.`
           : null,
       )
     } catch (e) {

@@ -12,37 +12,57 @@ type ListWithStateRow = {
   state: Doc<"productState"> | null
 }
 
+type MonitorTickResult = {
+  checked: number
+  failed: number
+}
+
 const CONC = 5
 
 /**
  * Polling: lista produtos activos, consulta VTEX em lotes, aplica regras em mutação.
  * Partilhado pelo cron e por `runMonitorNow` (teste manual).
  */
-export async function executeMonitorTickCore(ctx: ActionCtx) {
-  const prods: Doc<"products">[] = await ctx.runQuery(internal.products.listarTodosAtivos, {})
+export async function executeMonitorTickCore(
+  ctx: ActionCtx,
+  products?: Doc<"products">[],
+): Promise<MonitorTickResult> {
+  const prods: Doc<"products">[] =
+    products ?? (await ctx.runQuery(internal.products.listarTodosAtivos, {}))
+  let checked = 0
+  let failed = 0
   for (let i = 0; i < prods.length; i += CONC) {
     const batch = prods.slice(i, i + CONC)
-    await Promise.all(
+    const results = await Promise.all(
       batch.map(async (p: Doc<"products">) => {
-        const vtex = await fetchVtexProductState(p.sku)
-        if (!vtex) {
-          return
+        try {
+          const vtex = await fetchVtexProductState(p.sku)
+          if (!vtex) {
+            failed += 1
+            return
+          }
+          await ctx.runMutation(internal.monitor.applyProductTick, {
+            productId: p._id as Id<"products">,
+            vtex: {
+              sku: vtex.sku,
+              disponivel: vtex.disponivel,
+              preco: vtex.preco,
+              precoOriginal: vtex.precoOriginal,
+              nomeProduto: vtex.nomeProduto,
+              imagemUrl: vtex.imagemUrl,
+              link: vtex.link,
+            },
+          })
+          checked += 1
+        } catch (error) {
+          failed += 1
+          console.error(`[monitorRun] Falha ao processar SKU ${p.sku}:`, error)
         }
-        await ctx.runMutation(internal.monitor.applyProductTick, {
-          productId: p._id as Id<"products">,
-          vtex: {
-            sku: vtex.sku,
-            disponivel: vtex.disponivel,
-            preco: vtex.preco,
-            precoOriginal: vtex.precoOriginal,
-            nomeProduto: vtex.nomeProduto,
-            imagemUrl: vtex.imagemUrl,
-            link: vtex.link,
-          },
-        })
       }),
     )
+    void results
   }
+  return { checked, failed }
 }
 
 /**
@@ -61,7 +81,10 @@ export const runTick = internalAction({
  */
 export const runMonitorNow = action({
   args: { userId: v.string() },
-  handler: async (ctx, { userId }): Promise<{ ok: true; produtos: number }> => {
+  handler: async (
+    ctx,
+    { userId },
+  ): Promise<{ ok: true; produtos: number; checked: number; failed: number }> => {
     if (!userId.trim()) {
       throw new Error("Sessao invalida.")
     }
@@ -75,7 +98,10 @@ export const runMonitorNow = action({
     if (ativos.length === 0) {
       throw new Error("Ligue o monitor (Activo) em ao menos um produto.")
     }
-    await executeMonitorTickCore(ctx)
-    return { ok: true, produtos: ativos.length }
+    const result = await executeMonitorTickCore(
+      ctx,
+      ativos.map((row: ListWithStateRow) => row.product),
+    )
+    return { ok: true, produtos: ativos.length, checked: result.checked, failed: result.failed }
   },
 })

@@ -42,12 +42,31 @@ export const getDashboardData = query({
       .withIndex("by_user", (queryBuilder) => queryBuilder.eq("userId", args.userId))
       .collect()
 
+    const latestKanbanCardByProductStatus = new Map<string, (typeof kanbanCards)[number]>()
+    for (const card of kanbanCards) {
+      const key = `${card.productId}:${card.kanbanStatus}`
+      const current = latestKanbanCardByProductStatus.get(key)
+      if (
+        !current ||
+        card.updatedAt > current.updatedAt ||
+        (card.updatedAt === current.updatedAt && card._creationTime > current._creationTime)
+      ) {
+        latestKanbanCardByProductStatus.set(key, card)
+      }
+    }
+
     const preferences = await ctx.db
       .query("stockUserPreferences")
       .withIndex("by_user", (queryBuilder) => queryBuilder.eq("userId", args.userId))
       .first()
 
-    return { products, movements, kanbanEvents, kanbanCards, preferences }
+    return {
+      products,
+      movements,
+      kanbanEvents,
+      kanbanCards: [...latestKanbanCardByProductStatus.values()],
+      preferences,
+    }
   },
 })
 
@@ -341,17 +360,20 @@ export const addKanbanCard = mutation({
       throw new Error("Quantidade deve ser zero ou positiva.")
     }
 
-    const now = Date.now()
-    const cardId = await ctx.db.insert("stockKanbanCards", {
+    const cardId = await upsertKanbanCardForStatus(ctx, {
       userId: args.userId,
       productId: args.productId,
       kanbanStatus: args.kanbanStatus,
       quantity: args.quantity,
       note: args.note?.trim() || undefined,
-      estimatedArrival: args.estimatedArrival,
-      createdAt: now,
-      updatedAt: now,
     })
+
+    if (args.estimatedArrival !== undefined) {
+      await ctx.db.patch(cardId, {
+        estimatedArrival: args.estimatedArrival,
+        updatedAt: Date.now(),
+      })
+    }
 
     await logKanbanTransition(ctx, {
       userId: args.userId,
