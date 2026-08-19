@@ -1,9 +1,16 @@
-import { NativeAwareSignIn } from "@/components/mobile/native-aware-sign-in"
+import { SignIn } from "@clerk/nextjs"
 
 export default function SignInPage() {
   return (
     <main className="flex min-h-screen items-center justify-center p-6">
-      <NativeAwareSignIn />
+      <SignIn
+        routing="path"
+        path="/sign-in"
+        signUpUrl="/sign-up"
+        oauthFlow="redirect"
+        oidcPrompt="select_account"
+        fallbackRedirectUrl="/dashboard"
+      />
     </main>
   )
 }

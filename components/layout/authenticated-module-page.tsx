@@ -1,9 +1,6 @@
-import { auth, currentUser } from "@clerk/nextjs/server"
-import { redirect } from "next/navigation"
-
 import { FinancialDashboard, type ModuleKey } from "@/components/finance/financial-dashboard"
-import { isAdminEmail } from "@/lib/auth/admin"
 import type { AdminDocumentCategory } from "@/lib/administrativo/documents"
+import { requireAdminAppUserOrRedirect } from "@/lib/auth/server"
 
 export async function AuthenticatedModulePage({
   module,
@@ -12,20 +9,7 @@ export async function AuthenticatedModulePage({
   module: ModuleKey
   administrativeCategory?: AdminDocumentCategory
 }) {
-  const { userId } = await auth()
-  if (!userId) {
-    redirect("/sign-in")
-  }
-
-  const user = await currentUser()
-  const primaryEmail = user?.emailAddresses.find(
-    (emailAddress) => emailAddress.id === user.primaryEmailAddressId,
-  )?.emailAddress
-
-  if (!isAdminEmail(primaryEmail)) {
-    redirect("/sign-in")
-  }
-
+  await requireAdminAppUserOrRedirect()
   return (
     <FinancialDashboard initialModule={module} administrativeCategory={administrativeCategory} />
   )
