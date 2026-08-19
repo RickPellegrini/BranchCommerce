@@ -14,7 +14,7 @@ export default async function MobileLayout({ children }: { children: React.React
   const primaryEmail = user?.emailAddresses.find(
     (emailAddress) => emailAddress.id === user.primaryEmailAddressId,
   )?.emailAddress
-  if (!isAdminEmail(primaryEmail)) redirect("/unauthorized")
+  if (!isAdminEmail(primaryEmail)) redirect("/sign-in?redirect_url=/mobile")
 
   return <MobileAppShell>{children}</MobileAppShell>
 }

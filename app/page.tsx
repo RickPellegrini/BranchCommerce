@@ -16,7 +16,7 @@ export default async function Home() {
   )?.emailAddress
 
   if (!isAdminEmail(primaryEmail)) {
-    redirect("/unauthorized")
+    redirect("/sign-in")
   }
 
   redirect("/dashboard")

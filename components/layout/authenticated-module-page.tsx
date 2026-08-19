@@ -23,7 +23,7 @@ export async function AuthenticatedModulePage({
   )?.emailAddress
 
   if (!isAdminEmail(primaryEmail)) {
-    redirect("/unauthorized")
+    redirect("/sign-in")
   }
 
   return (

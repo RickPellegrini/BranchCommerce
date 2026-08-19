@@ -13,7 +13,7 @@ export default async function DashboardStorePage() {
     (emailAddress) => emailAddress.id === user.primaryEmailAddressId,
   )?.emailAddress
 
-  if (!isAdminEmail(primaryEmail)) redirect("/unauthorized")
+  if (!isAdminEmail(primaryEmail)) redirect("/sign-in")
 
   return <StoreAdminPage />
 }
