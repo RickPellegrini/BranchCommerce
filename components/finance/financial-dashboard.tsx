@@ -7718,96 +7718,35 @@ export function FinancialDashboard({
               <section className="space-y-4">
                 <FinanceReconciliationAlert issues={financeReconciliation.issues} />
                 <Card>
-                  <CardHeader className="flex flex-row items-start justify-between">
+                  <CardHeader className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
                     <div>
                       <CardTitle>DRE - Demonstracao de Resultados</CardTitle>
                       <CardDescription>
-                        Analise completa de receitas, custos e resultados do periodo.
+                        Analise completa de receitas, custos e resultados conforme os filtros
+                        financeiros acima.
                       </CardDescription>
                     </div>
-                    <Button size="sm" variant="outline">
-                      Exportar
-                    </Button>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <Button
+                        size="sm"
+                        variant={dreComparePrevious ? "secondary" : "outline"}
+                        onClick={() => setDreComparePrevious((prev) => !prev)}
+                      >
+                        Comparar com periodo anterior
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant={dreIncludeMovements ? "secondary" : "outline"}
+                        onClick={() => setDreIncludeMovements((prev) => !prev)}
+                      >
+                        Movimentacoes incluidas
+                      </Button>
+                      <Button size="sm" variant="outline">
+                        Exportar
+                      </Button>
+                    </div>
                   </CardHeader>
                   <CardContent className="space-y-4">
-                    <div className="grid gap-3 rounded-none border bg-muted/20 p-3 md:grid-cols-2 xl:grid-cols-4">
-                      <div className="space-y-1 xl:col-span-2">
-                        <p className="text-xs text-muted-foreground">Periodo da DRE</p>
-                        <div className="rounded-md border bg-background px-3 py-2">
-                          <p className="text-sm font-medium">
-                            {formatPeriodLabel(dreRange.start, dreRange.end)}
-                          </p>
-                          <p className="mt-1 text-xs text-muted-foreground">
-                            A DRE usa os filtros financeiros acima. Para puxar varios meses, informe
-                            data inicial e final, por exemplo 01/03 ate 31/08.
-                          </p>
-                        </div>
-                      </div>
-                      <div className="space-y-1">
-                        <p className="text-xs text-muted-foreground">Atalhos</p>
-                        <div className="flex flex-wrap gap-2">
-                          <Button
-                            variant="outline"
-                            className="flex-1"
-                            onClick={() => {
-                              const currentRange = currentMonthDateRange()
-                              setFilters((prev) => ({
-                                ...prev,
-                                startDate: currentRange.start,
-                                endDate: currentRange.end,
-                              }))
-                            }}
-                          >
-                            Mes atual
-                          </Button>
-                          <Button
-                            variant="ghost"
-                            className="flex-1"
-                            onClick={() =>
-                              setFilters((prev) => ({
-                                ...prev,
-                                startDate: undefined,
-                                endDate: undefined,
-                              }))
-                            }
-                          >
-                            Limpar
-                          </Button>
-                        </div>
-                      </div>
-                      <div className="space-y-1">
-                        <p className="text-xs text-muted-foreground">Contas</p>
-                        <Select value="all-accounts" onValueChange={() => undefined}>
-                          <SelectTrigger>
-                            <SelectValue placeholder="Todas as contas" />
-                          </SelectTrigger>
-                          <SelectContent>
-                            <SelectItem value="all-accounts">Todas as contas</SelectItem>
-                            <SelectItem value={financeAccountLabel}>
-                              {financeAccountLabel}
-                            </SelectItem>
-                          </SelectContent>
-                        </Select>
-                      </div>
-                      <div className="space-y-1 xl:col-span-4">
-                        <p className="text-xs text-muted-foreground">Opcoes</p>
-                        <div className="flex flex-wrap items-center gap-2">
-                          <Button
-                            variant={dreComparePrevious ? "secondary" : "outline"}
-                            onClick={() => setDreComparePrevious((prev) => !prev)}
-                          >
-                            Comparar com periodo anterior
-                          </Button>
-                          <Button
-                            variant={dreIncludeMovements ? "secondary" : "outline"}
-                            onClick={() => setDreIncludeMovements((prev) => !prev)}
-                          >
-                            Movimentacoes incluidas
-                          </Button>
-                        </div>
-                      </div>
-                    </div>
-
                     <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
                       <Card className="border-blue-200/70 bg-blue-50/40 dark:border-blue-800/50 dark:bg-blue-950/30">
                         <CardHeader className="pb-2">
