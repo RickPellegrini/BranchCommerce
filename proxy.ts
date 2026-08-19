@@ -21,16 +21,20 @@ const isPublicRoute = createRouteMatcher([
   "/api/branch-hunter/(.*)",
 ])
 
+const DEFAULT_STORE_HOSTS = ["loja.branchcommercehub.com"]
+
 function getStoreHosts() {
-  return (process.env.STORE_HOSTS ?? "")
+  const envHosts = (process.env.STORE_HOSTS ?? "")
     .split(",")
     .map((host) => host.trim().toLowerCase())
     .filter(Boolean)
+
+  return new Set([...DEFAULT_STORE_HOSTS, ...envHosts])
 }
 
 export default clerkMiddleware(async (auth, req: NextRequest) => {
   const host = req.headers.get("host")?.split(":")[0]?.toLowerCase()
-  const isStoreHost = Boolean(host && getStoreHosts().includes(host))
+  const isStoreHost = Boolean(host && getStoreHosts().has(host))
 
   if (isStoreHost && !req.nextUrl.pathname.startsWith("/api/")) {
     const url = req.nextUrl.clone()
