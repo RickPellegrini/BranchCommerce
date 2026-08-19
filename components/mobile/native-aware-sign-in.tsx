@@ -1,11 +1,11 @@
 "use client"
 
+import { SignIn } from "@clerk/nextjs"
 import { Browser } from "@capacitor/browser"
 import { Capacitor, registerPlugin } from "@capacitor/core"
 import { ExternalLink, LoaderCircle, ShieldCheck } from "lucide-react"
 import { useEffect, useState } from "react"
 
-import { GoogleAccountPickerSignIn } from "@/components/auth/google-account-picker-sign-in"
 import { Button } from "@/components/ui/button"
 
 interface ExternalBrowserPlugin {
@@ -115,5 +115,14 @@ export function NativeAwareSignIn() {
     )
   }
 
-  return <GoogleAccountPickerSignIn />
+  return (
+    <SignIn
+      routing="path"
+      path="/sign-in"
+      signUpUrl="/sign-up"
+      oauthFlow="redirect"
+      oidcPrompt="select_account"
+      fallbackRedirectUrl="/branch-hunter"
+    />
+  )
 }
