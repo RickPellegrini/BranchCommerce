@@ -585,28 +585,58 @@ function monthDateRange(year: number, month1to12: number) {
   return { start, end }
 }
 
-function previousMonth(year: number, month1to12: number) {
-  if (month1to12 === 1) return { year: year - 1, month: 12 }
-  return { year, month: month1to12 - 1 }
+function monthDateRangeFromIso(isoDate: string) {
+  const [year, month] = isoDate.split("-").map(Number)
+  return monthDateRange(year, month)
+}
+
+function currentMonthDateRange() {
+  const now = new Date()
+  return monthDateRange(now.getFullYear(), now.getMonth() + 1)
+}
+
+function resolveDreRange(filterStart?: string, filterEnd?: string) {
+  if (filterStart && filterEnd) {
+    return filterStart <= filterEnd
+      ? { start: filterStart, end: filterEnd }
+      : { start: filterEnd, end: filterStart }
+  }
+
+  if (filterStart) {
+    return { start: filterStart, end: monthDateRangeFromIso(filterStart).end }
+  }
+
+  if (filterEnd) {
+    return { start: monthDateRangeFromIso(filterEnd).start, end: filterEnd }
+  }
+
+  return currentMonthDateRange()
+}
+
+function previousComparableRange(range: { start: string; end: string }) {
+  const start = new Date(`${range.start}T00:00:00`)
+  const end = new Date(`${range.end}T00:00:00`)
+  const days = Math.max(1, Math.round((end.getTime() - start.getTime()) / 86400000) + 1)
+  const previousEnd = addDays(start, -1)
+  const previousStart = addDays(previousEnd, 1 - days)
+  return { start: toIsoDate(previousStart), end: toIsoDate(previousEnd) }
 }
 
 /** Intervalo de pedidos ML: DRE, filtro do financeiro e últimos 12 meses dos relatórios. */
 function computeMlOrdersFetchRange(
-  dreYear: number,
-  dreMonth: number,
+  dreRange: { start: string; end: string },
   filterStart?: string,
   filterEnd?: string,
 ) {
-  const dre = monthDateRange(dreYear, dreMonth)
   const now = new Date()
   const reportStart = toIsoDate(new Date(now.getFullYear(), now.getMonth() - 11, 1))
   const todayEnd = toIsoDate(endOfMonth(now))
 
-  let start = dre.start
+  let start = dreRange.start
   if (filterStart && filterStart < start) start = filterStart
   if (reportStart < start) start = reportStart
 
-  let end = dre.end
+  let end = dreRange.end
   if (filterEnd && filterEnd > end) end = filterEnd
   if (todayEnd > end) end = todayEnd
 
@@ -1681,8 +1711,6 @@ export function FinancialDashboard({
     productId: "" as Id<"stockProducts"> | "",
     creditAmount: "",
   })
-  const [dreMonth, setDreMonth] = useState(new Date().getMonth() + 1)
-  const [dreYear, setDreYear] = useState(new Date().getFullYear())
   const [dreIncludeMovements, setDreIncludeMovements] = useState(true)
   const [dreComparePrevious, setDreComparePrevious] = useState(false)
 
@@ -2236,7 +2264,11 @@ export function FinancialDashboard({
         }
 
         await loadMlOrders(
-          computeMlOrdersFetchRange(dreYear, dreMonth, filters.startDate, filters.endDate),
+          computeMlOrdersFetchRange(
+            resolveDreRange(filters.startDate, filters.endDate),
+            filters.startDate,
+            filters.endDate,
+          ),
         )
       } catch {
         // Keep financial module resilient when ML integration is unavailable.
@@ -2245,7 +2277,7 @@ export function FinancialDashboard({
 
     void loadOrdersForFinancial()
     // eslint-disable-next-line react-hooks/exhaustive-deps -- loadMlOrders is a local fetch helper; reload is driven by module/user/date range.
-  }, [activeModule, dreMonth, dreYear, filters.endDate, filters.startDate, userId])
+  }, [activeModule, filters.endDate, filters.startDate, userId])
 
   const categories = useMemo<FinancialCategory[]>(
     () =>
@@ -4027,7 +4059,10 @@ export function FinancialDashboard({
     }
     return byClass
   }, [abcRowsFiltered])
-  const dreRange = useMemo(() => monthDateRange(dreYear, dreMonth), [dreMonth, dreYear])
+  const dreRange = useMemo(
+    () => resolveDreRange(filters.startDate, filters.endDate),
+    [filters.endDate, filters.startDate],
+  )
   const dreSnapshot = useMemo(
     () =>
       calculateDreSnapshot({
@@ -4041,8 +4076,7 @@ export function FinancialDashboard({
     [dreIncludeMovements, dreRange, mlOrders, productMapByMlItemId, productMapBySku, transactions],
   )
   const drePreviousSnapshot = useMemo(() => {
-    const previous = previousMonth(dreYear, dreMonth)
-    const previousRange = monthDateRange(previous.year, previous.month)
+    const previousRange = previousComparableRange(dreRange)
     return calculateDreSnapshot({
       orders: mlOrders,
       productByMlItemId: productMapByMlItemId,
@@ -4051,15 +4085,7 @@ export function FinancialDashboard({
       range: previousRange,
       includeMovements: dreIncludeMovements,
     })
-  }, [
-    dreIncludeMovements,
-    dreMonth,
-    dreYear,
-    mlOrders,
-    productMapByMlItemId,
-    productMapBySku,
-    transactions,
-  ])
+  }, [dreIncludeMovements, dreRange, mlOrders, productMapByMlItemId, productMapBySku, transactions])
   const dreRevenueBase = Math.max(1, dreSnapshot.revenueConfirmed)
   const dreRows = useMemo(
     () => [
@@ -4106,17 +4132,10 @@ export function FinancialDashboard({
     ],
     [dreSnapshot],
   )
-  const dreMonthOptions = useMemo(
-    () =>
-      Array.from({ length: 12 }, (_, index) => ({
-        value: index + 1,
-        label: new Date(2000, index, 1).toLocaleDateString("pt-BR", { month: "long" }),
-      })),
-    [],
-  )
   const drePeriodsAlignedWithFilters = useMemo(() => {
     if (!filters.startDate || !filters.endDate) return true
-    return dreRange.start === filters.startDate && dreRange.end === filters.endDate
+    const filterRange = resolveDreRange(filters.startDate, filters.endDate)
+    return dreRange.start === filterRange.start && dreRange.end === filterRange.end
   }, [dreRange.end, dreRange.start, filters.endDate, filters.startDate])
   const financeReconciliation = useMemo(() => {
     const commerceFlowSales = commerceFlowData.reduce((sum, row) => sum + row.salesIncome, 0)
@@ -7711,69 +7730,50 @@ export function FinancialDashboard({
                     </Button>
                   </CardHeader>
                   <CardContent className="space-y-4">
-                    <div className="grid gap-3 rounded-none border bg-muted/20 p-3 md:grid-cols-2 xl:grid-cols-5">
-                      <div className="space-y-1">
-                        <p className="text-xs text-muted-foreground">Periodo</p>
-                        <div className="grid grid-cols-[32px_1fr_80px_32px] gap-1">
-                          <Button
-                            size="icon"
-                            variant="outline"
-                            onClick={() => {
-                              const prev = previousMonth(dreYear, dreMonth)
-                              setDreMonth(prev.month)
-                              setDreYear(prev.year)
-                            }}
-                          >
-                            {"<"}
-                          </Button>
-                          <Select
-                            value={String(dreMonth)}
-                            onValueChange={(value) => setDreMonth(Number(value))}
-                          >
-                            <SelectTrigger>
-                              <SelectValue />
-                            </SelectTrigger>
-                            <SelectContent>
-                              {dreMonthOptions.map((item) => (
-                                <SelectItem key={item.value} value={String(item.value)}>
-                                  {item.label}
-                                </SelectItem>
-                              ))}
-                            </SelectContent>
-                          </Select>
-                          <Input
-                            value={String(dreYear)}
-                            onChange={(event) => setDreYear(Number(event.target.value) || dreYear)}
-                          />
-                          <Button
-                            size="icon"
-                            variant="outline"
-                            onClick={() => {
-                              if (dreMonth === 12) {
-                                setDreMonth(1)
-                                setDreYear((prev) => prev + 1)
-                                return
-                              }
-                              setDreMonth((prev) => prev + 1)
-                            }}
-                          >
-                            {">"}
-                          </Button>
+                    <div className="grid gap-3 rounded-none border bg-muted/20 p-3 md:grid-cols-2 xl:grid-cols-4">
+                      <div className="space-y-1 xl:col-span-2">
+                        <p className="text-xs text-muted-foreground">Periodo da DRE</p>
+                        <div className="rounded-md border bg-background px-3 py-2">
+                          <p className="text-sm font-medium">
+                            {formatPeriodLabel(dreRange.start, dreRange.end)}
+                          </p>
+                          <p className="mt-1 text-xs text-muted-foreground">
+                            A DRE usa os filtros financeiros acima. Para puxar varios meses, informe
+                            data inicial e final, por exemplo 01/03 ate 31/08.
+                          </p>
                         </div>
                       </div>
                       <div className="space-y-1">
-                        <p className="text-xs text-muted-foreground">Referencia</p>
-                        <Button
-                          variant="outline"
-                          className="w-full"
-                          onClick={() => {
-                            const now = new Date()
-                            setDreMonth(now.getMonth() + 1)
-                            setDreYear(now.getFullYear())
-                          }}
-                        >
-                          Mes Atual
-                        </Button>
+                        <p className="text-xs text-muted-foreground">Atalhos</p>
+                        <div className="flex flex-wrap gap-2">
+                          <Button
+                            variant="outline"
+                            className="flex-1"
+                            onClick={() => {
+                              const currentRange = currentMonthDateRange()
+                              setFilters((prev) => ({
+                                ...prev,
+                                startDate: currentRange.start,
+                                endDate: currentRange.end,
+                              }))
+                            }}
+                          >
+                            Mes atual
+                          </Button>
+                          <Button
+                            variant="ghost"
+                            className="flex-1"
+                            onClick={() =>
+                              setFilters((prev) => ({
+                                ...prev,
+                                startDate: undefined,
+                                endDate: undefined,
+                              }))
+                            }
+                          >
+                            Limpar
+                          </Button>
+                        </div>
                       </div>
                       <div className="space-y-1">
                         <p className="text-xs text-muted-foreground">Contas</p>
@@ -7789,14 +7789,14 @@ export function FinancialDashboard({
                           </SelectContent>
                         </Select>
                       </div>
-                      <div className="space-y-1 xl:col-span-2">
+                      <div className="space-y-1 xl:col-span-4">
                         <p className="text-xs text-muted-foreground">Opcoes</p>
                         <div className="flex flex-wrap items-center gap-2">
                           <Button
                             variant={dreComparePrevious ? "secondary" : "outline"}
                             onClick={() => setDreComparePrevious((prev) => !prev)}
                           >
-                            Comparar com mes anterior
+                            Comparar com periodo anterior
                           </Button>
                           <Button
                             variant={dreIncludeMovements ? "secondary" : "outline"}
@@ -7870,7 +7870,9 @@ export function FinancialDashboard({
 
                     {dreComparePrevious && (
                       <div className="rounded-none border bg-muted/20 px-3 py-2 text-sm">
-                        <span className="text-muted-foreground">Variacao vs mes anterior:</span>{" "}
+                        <span className="text-muted-foreground">
+                          Variacao vs periodo anterior equivalente:
+                        </span>{" "}
                         <span
                           className={cn(
                             "font-semibold",
@@ -7920,7 +7922,7 @@ export function FinancialDashboard({
                     </Card>
 
                     <p className="text-right text-xs text-muted-foreground">
-                      Periodo: {String(dreMonth).padStart(2, "0")}/{dreYear} •{" "}
+                      Periodo: {formatPeriodLabel(dreRange.start, dreRange.end)} •{" "}
                       {dreSnapshot.ordersCount} pedidos.
                     </p>
                   </CardContent>
