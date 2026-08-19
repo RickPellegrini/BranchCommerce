@@ -10,3 +10,6 @@ yarn.lock
 convex/_generated
 *.min.js
 extensions/branch-hunter/node_modules
+mobile/android
+mobile/ios
+mobile/node_modules

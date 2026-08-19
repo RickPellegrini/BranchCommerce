@@ -99,6 +99,40 @@ body {
   font-family: var(--font-geist-sans), Arial, Helvetica, sans-serif;
 }
 
+html[data-native-app] {
+  overscroll-behavior-y: none;
+  padding-top: var(--safe-area-inset-top, env(safe-area-inset-top, 0px));
+  padding-right: var(--safe-area-inset-right, env(safe-area-inset-right, 0px));
+  padding-bottom: var(--safe-area-inset-bottom, env(safe-area-inset-bottom, 0px));
+  padding-left: var(--safe-area-inset-left, env(safe-area-inset-left, 0px));
+}
+
+html[data-native-app] body {
+  min-height: calc(
+    100dvh - var(--safe-area-inset-top, env(safe-area-inset-top, 0px)) -
+      var(--safe-area-inset-bottom, env(safe-area-inset-bottom, 0px))
+  );
+  -webkit-tap-highlight-color: transparent;
+  -webkit-touch-callout: none;
+}
+
+.mobile-offline-banner {
+  position: fixed;
+  z-index: 100;
+  top: var(--safe-area-inset-top, env(safe-area-inset-top, 0px));
+  right: 12px;
+  left: 12px;
+  border: 1px solid color-mix(in oklab, var(--warning), transparent 45%);
+  border-radius: 12px;
+  padding: 10px 14px;
+  background: color-mix(in oklab, var(--warning), var(--background) 82%);
+  box-shadow: 0 8px 28px rgb(0 0 0 / 12%);
+  color: var(--foreground);
+  font-size: 0.8125rem;
+  font-weight: 650;
+  text-align: center;
+}
+
 .dark {
   --background: oklch(0.153 0.006 107.1);
   --foreground: oklch(0.988 0.003 106.5);
@@ -189,5 +223,122 @@ body {
   }
   html {
     @apply font-sans;
+  }
+}
+
+.mobile-app {
+  --mobile-ink: #17352a;
+  --mobile-surface: #f3f1e9;
+  --mobile-card: #fffdf8;
+  --mobile-accent: #d6f05d;
+  --mobile-coral: #ff8d6b;
+  min-height: 100dvh;
+  max-width: 100vw;
+  overflow-x: clip;
+  background:
+    radial-gradient(circle at 92% 2%, rgb(214 240 93 / 30%), transparent 28%),
+    radial-gradient(circle at 0% 38%, rgb(255 141 107 / 12%), transparent 24%),
+    var(--mobile-surface);
+  color: var(--mobile-ink);
+  font-family: var(--font-geist-sans), sans-serif;
+}
+
+.dark .mobile-app {
+  --mobile-ink: #eff6ec;
+  --mobile-surface: #101d17;
+  --mobile-card: #182a21;
+  --mobile-accent: #cbe957;
+  --mobile-coral: #ff9e80;
+  background:
+    radial-gradient(circle at 92% 2%, rgb(203 233 87 / 14%), transparent 28%),
+    radial-gradient(circle at 0% 38%, rgb(255 158 128 / 8%), transparent 24%), var(--mobile-surface);
+}
+
+.mobile-display {
+  font-family: var(--font-mobile-display), sans-serif;
+}
+
+.mobile-scrollbar-none {
+  scrollbar-width: none;
+}
+
+.mobile-scrollbar-none::-webkit-scrollbar {
+  display: none;
+}
+
+.mobile-safe-bottom {
+  padding-bottom: max(1rem, env(safe-area-inset-bottom, 0px));
+}
+
+.mobile-sheet-content {
+  --mobile-ink: #17352a;
+  --mobile-surface: #f3f1e9;
+  --mobile-card: #fffdf8;
+  --mobile-accent: #d6f05d;
+}
+
+.dark .mobile-sheet-content {
+  --mobile-ink: #eff6ec;
+  --mobile-surface: #101d17;
+  --mobile-card: #182a21;
+  --mobile-accent: #cbe957;
+}
+
+.mobile-tap {
+  min-height: 48px;
+  touch-action: manipulation;
+}
+
+.mobile-app :is(button, a, input, select, textarea):focus-visible {
+  outline: 3px solid color-mix(in srgb, var(--mobile-accent) 80%, transparent);
+  outline-offset: 2px;
+}
+
+.mobile-app :is(input, select, textarea) {
+  font-size: 16px;
+}
+
+.mobile-hunter [role="tabpanel"] {
+  min-width: 0;
+  overflow-x: clip;
+}
+
+.mobile-hunter [data-slot="table-container"] {
+  -webkit-overflow-scrolling: touch;
+}
+
+.mobile-administrative {
+  min-width: 0;
+  overflow-x: clip;
+}
+
+.mobile-administrative :is(section, [data-slot="card"], [data-slot="card-content"]) {
+  min-width: 0;
+}
+
+.mobile-administrative [data-slot="card"] {
+  border-radius: 1.25rem;
+}
+
+.mobile-administrative .admin-summary-grid > [data-slot="card"],
+.mobile-administrative .admin-folder-grid > a,
+.mobile-administrative .admin-folder-grid > a > [data-slot="card"] {
+  height: 100%;
+}
+
+@media (max-width: 360px) {
+  .mobile-administrative .admin-summary-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .mobile-app *,
+  .mobile-app *::before,
+  .mobile-app *::after {
+    scroll-behavior: auto !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
   }
 }

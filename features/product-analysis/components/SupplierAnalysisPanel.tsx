@@ -656,7 +656,7 @@ export function SupplierAnalysisPanel() {
                   {hasPendingSettingsChange && (
                     <p className="mt-1 text-xs font-medium text-amber-700">
                       Os filtros/custos foram alterados depois do ultimo processamento. Clique em
-                      "Reprocessar analise" para atualizar os valores.
+                      &quot;Reprocessar analise&quot; para atualizar os valores.
                     </p>
                   )}
                 </div>

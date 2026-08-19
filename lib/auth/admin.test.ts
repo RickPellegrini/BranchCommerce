@@ -1,11 +1,23 @@
-import { describe, expect, it } from "vitest"
+import { afterEach, describe, expect, it, vi } from "vitest"
 
 import { isAdminEmail } from "./admin"
 
 describe("isAdminEmail", () => {
+  afterEach(() => {
+    vi.unstubAllEnvs()
+  })
+
   it("recognizes admin emails", () => {
     expect(isAdminEmail("branchcommerce77@gmail.com")).toBe(true)
     expect(isAdminEmail("guinucleog3@hotmail.com")).toBe(true)
+  })
+
+  it("recognizes admins configured through ADMIN_EMAILS", () => {
+    vi.stubEnv("ADMIN_EMAILS", "rick@example.com, socio@example.com")
+
+    expect(isAdminEmail("rick@example.com")).toBe(true)
+    expect(isAdminEmail("SOCIO@example.com")).toBe(true)
+    expect(isAdminEmail("branchcommerce77@gmail.com")).toBe(false)
   })
 
   it("rejects non-admin email", () => {

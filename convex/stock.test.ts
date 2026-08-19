@@ -494,10 +494,52 @@ describe("stock", () => {
         unitPrice: 50,
       })
       const finData = await t.query(api.finance.getDashboardData, { userId: "user1" })
+      const stockData = await t.query(api.stock.getDashboardData, { userId: "user1" })
       const saleTx = finData.transactions.find((tx) => tx.origin === "Venda online")
+      expect(stockData.products[0].quantity).toBe(8)
       expect(saleTx).toBeTruthy()
       expect(saleTx!.amount).toBe(100) // 2 * 50
       expect(saleTx!.kind).toBe("income")
+    })
+
+    it("rejects zero or negative movement quantities", async () => {
+      const t = convexTest(schema, modules)
+      const productId = await setupProduct(t)
+
+      for (const quantity of [0, -1]) {
+        await expect(
+          t.mutation(api.stock.addMovement, {
+            userId: "user1",
+            productId,
+            type: "out",
+            quantity,
+            date: "2025-06-15",
+          }),
+        ).rejects.toThrow("Quantidade")
+      }
+    })
+
+    it("requires a valid price when a sale has no product selling price", async () => {
+      const t = convexTest(schema, modules)
+      const productId = await t.mutation(api.stock.addProduct, {
+        userId: "user1",
+        name: "Sem preço",
+        mlItemId: "MLB555000",
+        category: "Teste",
+        quantity: 2,
+        minStock: 0,
+        unitCost: 10,
+      })
+
+      await expect(
+        t.mutation(api.stock.addMovement, {
+          userId: "user1",
+          productId,
+          type: "sale",
+          quantity: 1,
+          date: "2025-06-15",
+        }),
+      ).rejects.toThrow("valor unitario")
     })
 
     it("sale creates 'Vendas de produtos' category if not exists", async () => {

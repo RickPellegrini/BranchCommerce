@@ -1,0 +1,6 @@
+/mobile
+.tools
+coverage
+coverage-jest
+extensions/branch-hunter/node_modules
+services/docling-extractor/.venv

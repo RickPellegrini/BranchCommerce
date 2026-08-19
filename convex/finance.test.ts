@@ -133,6 +133,36 @@ describe("finance", () => {
       })
       expect(txId).toBeTruthy()
     })
+
+    it("rejects non-positive values and empty descriptions", async () => {
+      const t = convexTest(schema, modules)
+      const catId = await t.mutation(api.finance.addCategory, {
+        userId: "user1",
+        name: "Vendas",
+        kind: "income",
+      })
+
+      await expect(
+        t.mutation(api.finance.addTransaction, {
+          userId: "user1",
+          kind: "income",
+          amount: 0,
+          date: "2025-06-15",
+          description: "Venda",
+          categoryId: catId,
+        }),
+      ).rejects.toThrow("maior que zero")
+      await expect(
+        t.mutation(api.finance.addTransaction, {
+          userId: "user1",
+          kind: "income",
+          amount: 10,
+          date: "2025-06-15",
+          description: "   ",
+          categoryId: catId,
+        }),
+      ).rejects.toThrow("Descricao")
+    })
   })
 
   // ── addExpenseWithPayment ────────────────────────────────────────
@@ -163,6 +193,30 @@ describe("finance", () => {
         .map((transaction) => transaction.date)
 
       expect(dates).toEqual(["2025-07-01", "2025-08-01", "2025-09-01"])
+    })
+
+    it("keeps the exact total when cents do not divide evenly", async () => {
+      const t = convexTest(schema, modules)
+      const catId = await t.mutation(api.finance.addCategory, {
+        userId: "user1",
+        name: "Compras",
+        kind: "expense",
+      })
+
+      await t.mutation(api.finance.addExpenseWithPayment, {
+        userId: "user1",
+        amount: 100,
+        date: "2025-06-18",
+        description: "Compra em três vezes",
+        categoryId: catId,
+        paymentMethod: "credit",
+        installmentCount: 3,
+      })
+
+      const data = await t.query(api.finance.getDashboardData, { userId: "user1" })
+      expect(data.transactions.reduce((total, transaction) => total + transaction.amount, 0)).toBe(
+        100,
+      )
     })
   })
 

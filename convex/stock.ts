@@ -267,7 +267,6 @@ export const updateProduct = mutation({
     if (!product || product.userId !== args.userId) {
       throw new Error("Produto nao encontrado.")
     }
-
     const normalizedName = args.name.trim()
     const normalizedCategory = args.category.trim()
 
@@ -1971,6 +1970,21 @@ export const addMovement = mutation({
     if (!product || product.userId !== args.userId) {
       throw new Error("Produto nao encontrado.")
     }
+    if (
+      !Number.isFinite(args.quantity) ||
+      args.quantity < 0 ||
+      (args.type !== "adjustment" && args.quantity === 0)
+    ) {
+      throw new Error("Quantidade de movimentacao invalida.")
+    }
+    if (args.unitPrice !== undefined && (!Number.isFinite(args.unitPrice) || args.unitPrice <= 0)) {
+      throw new Error("Valor unitario invalido.")
+    }
+
+    const saleUnitPrice = args.type === "sale" ? (args.unitPrice ?? product.sellingPrice ?? 0) : 0
+    if (args.type === "sale" && saleUnitPrice <= 0) {
+      throw new Error("Informe o valor unitario para registrar a venda.")
+    }
 
     let nextQuantity = product.quantity
 
@@ -2041,7 +2055,7 @@ export const addMovement = mutation({
         })
       }
 
-      const totalSale = (args.unitPrice ?? product.sellingPrice ?? 0) * args.quantity
+      const totalSale = saleUnitPrice * args.quantity
       if (salesCategoryId && totalSale > 0) {
         await ctx.db.insert("transactions", {
           userId: args.userId,

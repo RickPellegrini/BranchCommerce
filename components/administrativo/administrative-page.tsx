@@ -20,6 +20,7 @@ import {
   SelectValue,
 } from "@/components/ui/select"
 import { Textarea } from "@/components/ui/textarea"
+import { AdminDownloadCenter } from "./admin-download-center"
 import { CategoryFilter } from "./category-filter"
 import { DocumentPreviewModal } from "./document-preview-modal"
 import { DocumentUploadDialog, type DocumentUploadPayload } from "./document-upload-dialog"
@@ -61,8 +62,12 @@ function matchesFileType(document: AdministrativeDocument, filter: FileTypeFilte
 
 export function AdministrativePage({
   initialCategory = null,
+  basePath = "/administrativo",
+  compactHeader = false,
 }: {
   initialCategory?: AdminDocumentCategory | null
+  basePath?: string
+  compactHeader?: boolean
 }) {
   const { user, isLoaded } = useUser()
   const userId = user?.id
@@ -249,46 +254,54 @@ export function AdministrativePage({
   const isFolderRoute = Boolean(initialCategory)
 
   return (
-    <section className="space-y-5 pb-8">
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-        <div>
-          {initialCategory ? (
-            <div className="mb-2 flex flex-wrap items-center gap-2 text-sm text-muted-foreground">
-              <Button type="button" asChild variant="ghost" size="sm" className="h-8 px-2">
-                <Link href="/administrativo">
-                  <ArrowLeft className="mr-1 size-4" />
-                  Administrativo
-                </Link>
-              </Button>
-              <span>/</span>
-              <span className="font-medium text-foreground">{initialCategory}</span>
-            </div>
-          ) : null}
-          <h1 className="text-2xl font-semibold tracking-tight">
-            {initialCategory ?? "Administrativo"}
-          </h1>
-          <p className="text-sm text-muted-foreground">
-            {initialCategory
-              ? "Documentos filtrados por pasta, salvos no Convex Storage."
-              : "Centralize contratos, documentos da empresa, certificados e políticas internas."}
-          </p>
-        </div>
-        <Button onClick={() => setUploadOpen(true)}>
+    <section className="min-w-0 space-y-5 pb-8">
+      <div
+        className={
+          compactHeader
+            ? "flex justify-end"
+            : "flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between"
+        }
+      >
+        {!compactHeader && (
+          <div>
+            {initialCategory ? (
+              <div className="mb-2 flex flex-wrap items-center gap-2 text-sm text-muted-foreground">
+                <Button type="button" asChild variant="ghost" size="sm" className="h-8 px-2">
+                  <Link href={basePath}>
+                    <ArrowLeft className="mr-1 size-4" />
+                    Administrativo
+                  </Link>
+                </Button>
+                <span>/</span>
+                <span className="font-medium text-foreground">{initialCategory}</span>
+              </div>
+            ) : null}
+            <h1 className="text-2xl font-semibold tracking-tight">
+              {initialCategory ?? "Administrativo"}
+            </h1>
+            <p className="text-sm text-muted-foreground">
+              {initialCategory
+                ? "Documentos filtrados por pasta, salvos no Convex Storage."
+                : "Centralize contratos, documentos da empresa, certificados e políticas internas."}
+            </p>
+          </div>
+        )}
+        <Button className="w-full sm:w-auto" onClick={() => setUploadOpen(true)}>
           <Upload className="mr-2 size-4" />
           Enviar documento
         </Button>
       </div>
 
       {feedback && (
-        <div className="flex items-center justify-between gap-3 border bg-muted/30 px-3 py-2 text-sm text-muted-foreground">
-          <span>{feedback}</span>
+        <div className="flex min-w-0 items-center justify-between gap-3 border bg-muted/30 px-3 py-2 text-sm text-muted-foreground">
+          <span className="min-w-0 break-words">{feedback}</span>
           <Button type="button" variant="ghost" size="icon-xs" onClick={() => setFeedback(null)}>
             <X className="size-3" />
           </Button>
         </div>
       )}
 
-      <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+      <div className="admin-summary-grid grid grid-cols-2 items-stretch gap-3 xl:grid-cols-4">
         <SummaryCard icon={FileText} label="Total de documentos" value={documents?.length ?? 0} />
         <SummaryCard
           icon={Briefcase}
@@ -303,21 +316,25 @@ export function AdministrativePage({
         />
       </div>
 
+      {!isFolderRoute && <AdminDownloadCenter />}
+
       {!isFolderRoute && (
-        <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
+        <div className="admin-folder-grid grid items-stretch gap-3 sm:grid-cols-2 xl:grid-cols-5">
           {folderSummaries.map((folder) => (
             <Link
               key={folder.category}
-              href={`/administrativo/${adminDocumentCategoryToSlug(folder.category)}`}
-              className="group block focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              href={`${basePath}/${adminDocumentCategoryToSlug(folder.category)}`}
+              className="group block min-w-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
             >
-              <Card className="h-full transition hover:border-primary/50 hover:bg-muted/25">
-                <CardHeader className="pb-2">
+              <Card className="h-full min-w-0 transition hover:border-primary/50 hover:bg-muted/25">
+                <CardHeader className="min-w-0 pb-2">
                   <CardDescription className="inline-flex items-center gap-2">
-                    <FolderArchive className="size-4 text-primary" />
+                    <FolderArchive className="size-4 shrink-0 text-primary" />
                     Pasta
                   </CardDescription>
-                  <CardTitle className="truncate text-base">{folder.category}</CardTitle>
+                  <CardTitle className="line-clamp-2 min-h-10 break-words text-base leading-5">
+                    {folder.category}
+                  </CardTitle>
                 </CardHeader>
                 <CardContent className="space-y-1 text-sm text-muted-foreground">
                   <p>{folder.count} documento(s)</p>
@@ -330,14 +347,14 @@ export function AdministrativePage({
         </div>
       )}
 
-      <Card>
+      <Card className="min-w-0">
         <CardHeader className="pb-3">
           <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
-            <div>
+            <div className="min-w-0">
               <CardTitle>Documentos</CardTitle>
               <CardDescription>Arquivos salvos no Convex Storage.</CardDescription>
             </div>
-            <div className="flex flex-col gap-2 sm:flex-row">
+            <div className="flex min-w-0 flex-col gap-2 sm:flex-row">
               <Input
                 value={search}
                 onChange={(event) => setSearch(event.target.value)}
@@ -366,7 +383,7 @@ export function AdministrativePage({
             </div>
           </div>
         </CardHeader>
-        <CardContent>
+        <CardContent className="min-w-0">
           <DocumentsTable
             documents={visibleDocuments}
             loading={loading}
@@ -423,13 +440,13 @@ function SummaryCard({
   value: string | number
 }) {
   return (
-    <Card>
-      <CardHeader className="pb-2">
-        <CardDescription className="inline-flex items-center gap-2">
-          <Icon className="size-4" />
-          {label}
+    <Card className="h-full min-w-0">
+      <CardHeader className="h-full min-w-0 grid-rows-[minmax(2.25rem,auto)_auto] pb-2">
+        <CardDescription className="flex min-w-0 items-start gap-2 leading-tight">
+          <Icon className="size-4 shrink-0" />
+          <span className="min-w-0 break-words">{label}</span>
         </CardDescription>
-        <CardTitle className="text-lg">{value}</CardTitle>
+        <CardTitle className="min-w-0 break-words text-lg leading-tight">{value}</CardTitle>
       </CardHeader>
     </Card>
   )

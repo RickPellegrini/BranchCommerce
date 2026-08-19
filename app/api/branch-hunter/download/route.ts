@@ -4,6 +4,8 @@ import path from "path"
 import { NextResponse } from "next/server"
 import { zipSync } from "fflate"
 
+import { requireAdminAppUser } from "@/lib/auth/server"
+
 async function collectFiles(
   rootDir: string,
   currentDir: string,
@@ -27,6 +29,8 @@ async function collectFiles(
 
 export async function GET() {
   try {
+    await requireAdminAppUser()
+
     const extensionRoot = path.join(process.cwd(), "extensions", "branch-hunter")
     const zipFiles: Record<string, Uint8Array> = {}
     await collectFiles(extensionRoot, extensionRoot, zipFiles)
@@ -40,6 +44,16 @@ export async function GET() {
       },
     })
   } catch (error) {
+    if (error instanceof Error && error.message.includes("nao autenticado")) {
+      return NextResponse.json({ ok: false, error: "Usuario nao autenticado." }, { status: 401 })
+    }
+    if (error instanceof Error && error.message.includes("acesso administrativo")) {
+      return NextResponse.json(
+        { ok: false, error: "Usuario sem acesso administrativo." },
+        { status: 403 },
+      )
+    }
+
     return NextResponse.json(
       {
         ok: false,

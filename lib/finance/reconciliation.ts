@@ -56,6 +56,15 @@ export function buildFinancialReconciliation(input: FinancialReconciliationInput
     }
   }
 
+  if (input.abcProfitTotal !== 0 || input.ordersNetProfit !== 0) {
+    if (Math.abs(input.abcProfitTotal - input.ordersNetProfit) > TOLERANCE) {
+      issues.push({
+        code: "profit_abc_orders",
+        message: `Lucro ABC somado ${fmt(input.abcProfitTotal)} vs lucro operacional ML ${fmt(input.ordersNetProfit)}.`,
+      })
+    }
+  }
+
   if (
     input.commerceFlowSales != null &&
     input.revenueFromOrders > 0 &&

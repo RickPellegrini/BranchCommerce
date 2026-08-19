@@ -2,6 +2,10 @@
 
 # dependencies
 /node_modules
+/mobile/node_modules
+/mobile/.signing
+/mobile/dist
+/mobile/android/keystore.properties
 /.pnp
 .pnp.*
 .yarn/*
@@ -20,10 +24,16 @@
 
 # production
 /build
+/mobile/android/.gradle
+/mobile/android/app/build
+/mobile/android/build
+/mobile/ios/App/DerivedData
+/.tools
 
 # misc
 .DS_Store
 *.pem
+/tmp/
 
 # debug
 npm-debug.log*

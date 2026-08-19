@@ -48,6 +48,19 @@ export type BranchHunterProfitResult = {
   netMarginPercent: number
 }
 
+function normalizeOperationMode(operation: BranchHunterOperationSettings) {
+  if (operation.fullEnabled) {
+    return {
+      ...operation,
+      centralizeEnabled: false,
+    }
+  }
+  return {
+    ...operation,
+    fullEnabled: false,
+  }
+}
+
 function toNumberOrZero(value: unknown) {
   const number = Number(value)
   return Number.isFinite(number) ? number : 0
@@ -140,23 +153,25 @@ export function calculateBranchHunterProfit(
   marketplace: BranchHunterMarketplaceContext,
   operation: BranchHunterOperationSettings,
 ): BranchHunterProfitResult {
+  const normalizedOperation = normalizeOperationMode(operation)
   const grossRevenue = Math.max(0, toNumberOrZero(marketplace.salePrice))
   const feePercent =
     marketplace.saleFeePercent != null
       ? Math.max(0, toNumberOrZero(marketplace.saleFeePercent))
-      : listingTypeFeePercent(operation.listingType)
+      : listingTypeFeePercent(normalizedOperation.listingType)
 
   const marketplaceFeeAmount = grossRevenue * (feePercent / 100)
-  const adsAmount = grossRevenue * toPercentValue(operation.adsPercent)
-  const riskAmount = grossRevenue * toPercentValue(operation.riskPercent)
-  const shippingCostUsed = resolveShippingCost(grossRevenue, operation)
-  const productCost = Math.max(0, toNumberOrZero(operation.productCost))
-  const packagingCost = Math.max(0, toNumberOrZero(operation.packagingCost))
-  const otherFixedCosts = Math.max(0, toNumberOrZero(operation.otherFixedCosts))
-  const centralizeFixedCosts = operation.centralizeEnabled
+  const adsAmount = grossRevenue * toPercentValue(normalizedOperation.adsPercent)
+  const riskAmount = grossRevenue * toPercentValue(normalizedOperation.riskPercent)
+  const shippingCostUsed = resolveShippingCost(grossRevenue, normalizedOperation)
+  const productCost = Math.max(0, toNumberOrZero(normalizedOperation.productCost))
+  const packagingCost = Math.max(0, toNumberOrZero(normalizedOperation.packagingCost))
+  const otherFixedCosts = Math.max(0, toNumberOrZero(normalizedOperation.otherFixedCosts))
+  const centralizeFixedCosts = normalizedOperation.centralizeEnabled
     ? CENTRALIZE_FIXED_SHIPPING + CENTRALIZE_FIXED_PACKAGING
     : 0
-  const { fullUnitCost, fullCollectionUnitCost, fullCosts } = resolveFullUnitCost(operation)
+  const { fullUnitCost, fullCollectionUnitCost, fullCosts } =
+    resolveFullUnitCost(normalizedOperation)
 
   const totalCosts =
     marketplaceFeeAmount +

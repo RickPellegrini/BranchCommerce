@@ -139,8 +139,14 @@ export const addTransaction = mutation({
     linkedSourceTransactionId: v.optional(v.id("transactions")),
   },
   handler: async (ctx, args) => {
+    if (!Number.isFinite(args.amount) || args.amount <= 0) {
+      throw new Error("Valor deve ser maior que zero.")
+    }
+    if (!args.description.trim()) {
+      throw new Error("Descricao obrigatoria.")
+    }
     const category = await ctx.db.get(args.categoryId)
-    if (!category || category.userId !== args.userId) {
+    if (!category || category.userId !== args.userId || category.kind !== args.kind) {
       throw new Error("Categoria invalida para esta operacao.")
     }
 
@@ -150,7 +156,7 @@ export const addTransaction = mutation({
       kind: args.kind,
       amount: args.amount,
       date: args.date,
-      description: args.description,
+      description: args.description.trim(),
       categoryId: args.categoryId,
       origin: args.origin,
       expenseType: args.expenseType,
@@ -196,13 +202,19 @@ export const updateTransaction = mutation({
     payStatus: v.optional(payStatusValidator),
   },
   handler: async (ctx, args) => {
+    if (!Number.isFinite(args.amount) || args.amount <= 0) {
+      throw new Error("Valor deve ser maior que zero.")
+    }
+    if (!args.description.trim()) {
+      throw new Error("Descricao obrigatoria.")
+    }
     const transaction = await ctx.db.get(args.transactionId)
     if (!transaction || transaction.userId !== args.userId) {
       throw new Error("Lancamento nao encontrado.")
     }
 
     const category = await ctx.db.get(args.categoryId)
-    if (!category || category.userId !== args.userId) {
+    if (!category || category.userId !== args.userId || category.kind !== args.kind) {
       throw new Error("Categoria invalida para o lancamento.")
     }
 
@@ -210,7 +222,7 @@ export const updateTransaction = mutation({
       kind: args.kind,
       amount: args.amount,
       date: args.date,
-      description: args.description,
+      description: args.description.trim(),
       categoryId: args.categoryId,
       origin: args.origin,
       expenseType: args.expenseType,
@@ -526,8 +538,11 @@ export const addExpenseWithPayment = mutation({
     if (!category || category.userId !== args.userId || category.kind !== "expense") {
       throw new Error("Categoria de despesa invalida.")
     }
-    if (args.amount <= 0) {
+    if (!Number.isFinite(args.amount) || args.amount <= 0) {
       throw new Error("Valor deve ser maior que zero.")
+    }
+    if (!args.description.trim()) {
+      throw new Error("Descricao obrigatoria.")
     }
 
     const now = Date.now()
@@ -537,7 +552,9 @@ export const addExpenseWithPayment = mutation({
       const first = firstDayOfIsoMonth(args.firstChargeDate ?? args.date)
       const desc = args.description.trim()
       const planId = `credit_${args.userId}_${args.categoryId}_${args.amount}_${first}_${count}_${desc}`
-      const per = Math.round((args.amount / count) * 100) / 100
+      const totalCents = Math.round(args.amount * 100)
+      const baseCents = Math.floor(totalCents / count)
+      const remainderCents = totalCents % count
       const ids: Id<"transactions">[] = []
 
       for (let i = 1; i <= count; i += 1) {
@@ -556,7 +573,7 @@ export const addExpenseWithPayment = mutation({
         const id = await ctx.db.insert("transactions", {
           userId: args.userId,
           kind: "expense",
-          amount: per,
+          amount: (baseCents + (i <= remainderCents ? 1 : 0)) / 100,
           date: due,
           description: `${desc} — Parcela ${i} de ${count}`,
           categoryId: args.categoryId,

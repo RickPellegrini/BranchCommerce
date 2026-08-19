@@ -52,17 +52,32 @@ gh repo create branchcommerce --private --source=. --push
 3. Framework: **Next.js** (auto-detectado)
 4. Adicionar env vars:
 
-| Variable                              | Valor                            | Onde pegar                                       |
-| ------------------------------------- | -------------------------------- | ------------------------------------------------ |
-| `NEXT_PUBLIC_CONVEX_URL`              | `https://xxx-prod.convex.cloud`  | Convex Dashboard → Settings                      |
-| `CONVEX_DEPLOY_KEY`                   | `prod:xxx\|...`                  | Convex Dashboard → Settings → Deploy Keys        |
-| `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY`   | `pk_live_...`                    | Clerk Dashboard (criar instância **Production**) |
-| `CLERK_SECRET_KEY`                    | `sk_live_...`                    | Clerk Dashboard                                  |
-| `NEXT_PUBLIC_CLERK_SIGN_IN_URL`       | `/sign-in`                       | constante                                        |
-| `NEXT_PUBLIC_CLERK_SIGN_UP_URL`       | `/sign-up`                       | constante                                        |
-| `NEXT_PUBLIC_CLERK_AFTER_SIGN_IN_URL` | `/dashboard`                     | constante                                        |
-| `NEXT_PUBLIC_CLERK_AFTER_SIGN_UP_URL` | `/dashboard`                     | constante                                        |
-| `CLERK_JWT_ISSUER_DOMAIN`             | `https://xxx.clerk.accounts.dev` | Clerk JWT Templates → convex                     |
+| Variable                              | Valor                                 | Onde pegar                                       |
+| ------------------------------------- | ------------------------------------- | ------------------------------------------------ |
+| `NEXT_PUBLIC_CONVEX_URL`              | `https://xxx-prod.convex.cloud`       | Convex Dashboard → Settings                      |
+| `CONVEX_DEPLOY_KEY`                   | `prod:xxx\|...`                       | Convex Dashboard → Settings → Deploy Keys        |
+| `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY`   | `pk_live_...`                         | Clerk Dashboard (criar instância **Production**) |
+| `CLERK_SECRET_KEY`                    | `sk_live_...`                         | Clerk Dashboard                                  |
+| `NEXT_PUBLIC_CLERK_SIGN_IN_URL`       | `/sign-in`                            | constante                                        |
+| `NEXT_PUBLIC_CLERK_SIGN_UP_URL`       | `/sign-up`                            | constante                                        |
+| `NEXT_PUBLIC_CLERK_AFTER_SIGN_IN_URL` | `/dashboard`                          | constante                                        |
+| `NEXT_PUBLIC_CLERK_AFTER_SIGN_UP_URL` | `/dashboard`                          | constante                                        |
+| `CLERK_JWT_ISSUER_DOMAIN`             | `https://xxx.clerk.accounts.dev`      | Clerk JWT Templates → convex                     |
+| `ADMIN_EMAILS`                        | `admin@dominio.com,outro@dominio.com` | emails autorizados a acessar o backoffice        |
+
+Variaveis extras da loja propria:
+
+| Variable                              | Valor                                       | Onde pegar                                                                                      |
+| ------------------------------------- | ------------------------------------------- | ----------------------------------------------------------------------------------------------- |
+| `TOKEN_ENCRYPTION_KEY`                | 64+ chars aleatorios                        | segredo compartilhado servidor/Convex                                                           |
+| `STORE_SERVER_KEY`                    | opcional                                    | se definido, substitui `TOKEN_ENCRYPTION_KEY` nas chamadas server-side da loja                  |
+| `STORE_HOSTS`                         | opcional, ex: `loja.seudominio.com`         | hosts que devem reescrever `/` para `/loja`; deixe vazio para usar `/loja` no dominio principal |
+| `MERCADO_PAGO_STORE_ACCESS_TOKEN`     | `APP_USR-...`                               | Mercado Pago da loja; fallback: `MERCADO_PAGO_ACCESS_TOKEN`                                     |
+| `MERCADO_PAGO_STORE_NOTIFICATION_URL` | `https://.../api/store/payments/mp-webhook` | webhook Mercado Pago da loja; fallback automatico pelo host                                     |
+
+As variaveis `TOKEN_ENCRYPTION_KEY` ou `STORE_SERVER_KEY` tambem precisam existir no ambiente Convex. Elas protegem as mutations que anexam preference e confirmam pagamento da loja propria.
+
+Sem dominio comprado, use a loja em `https://seu-projeto.vercel.app/loja`. Configure `STORE_HOSTS` apenas quando existir um dominio/subdominio apontado para a Vercel.
 
 5. **Build Command:** `npx convex deploy --cmd 'pnpm build'`
    Esse comando garante que o Convex faz deploy **antes** do Next.js buildar (necessário pra `_generated` estar atualizado).

@@ -212,6 +212,12 @@ function normalizeOperationSettings(
   input: SupplierScanSettingsInput | undefined,
 ): BranchHunterOperationSettings {
   const defaults = createDefaultBranchHunterOperationSettings()
+  const fullEnabled = Boolean(input?.fullEnabled)
+  const centralizeEnabled = fullEnabled
+    ? false
+    : input?.centralizeEnabled === undefined
+      ? defaults.centralizeEnabled
+      : Boolean(input.centralizeEnabled)
 
   return {
     listingType: input?.listingType === "premium" ? "premium" : defaults.listingType,
@@ -226,11 +232,8 @@ function normalizeOperationSettings(
     freeShippingSubsidyPercent:
       parseNumber(input?.freeShippingSubsidyPercent) ?? defaults.freeShippingSubsidyPercent,
     defaultShippingCost: parseNumber(input?.defaultShippingCost) ?? defaults.defaultShippingCost,
-    centralizeEnabled:
-      input?.centralizeEnabled === undefined
-        ? defaults.centralizeEnabled
-        : Boolean(input.centralizeEnabled),
-    fullEnabled: Boolean(input?.fullEnabled),
+    centralizeEnabled,
+    fullEnabled,
     fullShipmentUnits: parseNumber(input?.fullShipmentUnits) ?? defaults.fullShipmentUnits,
     fullCollectionCost: parseNumber(input?.fullCollectionCost) ?? defaults.fullCollectionCost,
     packagingCost: parseNumber(input?.packagingCost) ?? defaults.packagingCost,

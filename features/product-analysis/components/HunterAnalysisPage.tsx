@@ -236,15 +236,11 @@ export function HunterAnalysisPage() {
               do vendedor e desempenho.
             </p>
           </div>
-          <Button
-            variant="outline"
-            className="shrink-0 gap-2"
-            onClick={() => {
-              window.location.href = "/api/branch-hunter/download"
-            }}
-          >
-            <Download className="size-4" />
-            Baixar extensao
+          <Button asChild variant="outline" className="shrink-0 gap-2">
+            <a href="/api/branch-hunter/download">
+              <Download className="size-4" />
+              Baixar extensao
+            </a>
           </Button>
         </div>
       )}

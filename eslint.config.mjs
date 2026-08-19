@@ -18,6 +18,10 @@ const eslintConfig = defineConfig([
     "out/**",
     "build/**",
     "coverage/**",
+    "mobile/android/**",
+    "mobile/ios/**",
+    "mobile/node_modules/**",
+    ".tools/**",
     "next-env.d.ts",
     // Convex codegen — `/* eslint-disable */` no topo dispara "unused directive" com --max-warnings 0
     "convex/_generated/**",

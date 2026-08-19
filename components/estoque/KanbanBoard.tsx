@@ -362,6 +362,9 @@ export function KanbanBoard({
   }, [displayProducts, search, urgencyFilter, categoryFilter, showHidden])
 
   const activeProduct = activeId ? displayProducts.find((p) => p.id === activeId) : null
+  const liveSelectedProduct = selectedProduct
+    ? (displayProducts.find((product) => product.id === selectedProduct.id) ?? null)
+    : null
   const inTransitCount = displayProducts.filter((p) => getKanbanColumnId(p) === "in_transit").length
   const compradoCount = displayProducts.filter((p) => getKanbanColumnId(p) === "purchased").length
   const fulfillmentCount = displayProducts.filter(
@@ -622,29 +625,29 @@ export function KanbanBoard({
       </DndContext>
 
       {/* Detail modal */}
-      {selectedProduct && (
+      {liveSelectedProduct && (
         <ProductDetailModal
-          product={selectedProduct}
+          product={liveSelectedProduct}
           movements={movements}
           kanbanEvents={kanbanTimelineEvents.filter(
-            (e) => e.productId === selectedProduct.stockProductId,
+            (e) => e.productId === liveSelectedProduct.stockProductId,
           )}
           onClose={() => setSelectedProduct(null)}
           onMoveTo={async (target, note, arrival) => {
             await onUpdateKanbanStatus(
-              selectedProduct.stockProductId,
+              liveSelectedProduct.stockProductId,
               target,
               note,
               arrival,
-              selectedProduct.kanbanCardId,
+              liveSelectedProduct.kanbanCardId,
             )
             setSelectedProduct(null)
           }}
           onSaveEdits={async (updates) => {
             await onSaveProductEdits(
-              selectedProduct.stockProductId,
+              liveSelectedProduct.stockProductId,
               updates,
-              selectedProduct.kanbanCardId,
+              liveSelectedProduct.kanbanCardId,
             )
             setSelectedProduct(null)
           }}
@@ -652,7 +655,7 @@ export function KanbanBoard({
             onAddKanbanCard
               ? async (target, quantity, note, arrival) => {
                   await onAddKanbanCard(
-                    selectedProduct.stockProductId,
+                    liveSelectedProduct.stockProductId,
                     target,
                     quantity,
                     note,

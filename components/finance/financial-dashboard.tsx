@@ -57,6 +57,7 @@ import {
 } from "lucide-react"
 import Image from "next/image"
 import Link from "next/link"
+import { useRouter } from "next/navigation"
 import { ThemeToggle } from "@/components/theme-toggle"
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 
@@ -445,15 +446,34 @@ function centralizePackagingPerItem(product?: Pick<StockProduct, "name"> | null,
     : HUB_CENTRALIZE_PACKAGING_PER_ITEM
 }
 
-function centralizeFulfillmentCostForItem(
-  product: Pick<StockProduct, "name"> | undefined,
+function isMlFullStockProduct(product?: Pick<StockProduct, "stockSource" | "kanbanStatus"> | null) {
+  return product?.stockSource === "ml_full" || product?.kanbanStatus === "fulfillment"
+}
+
+function centralizeFulfillmentBreakdownForItem(
+  product: Pick<StockProduct, "name" | "stockSource" | "kanbanStatus"> | undefined,
   quantity: number,
   title = "",
 ) {
+  if (!isMlFullStockProduct(product)) {
+    return { shipping: 0, packaging: 0, total: 0 }
+  }
   const safeQuantity = Math.max(0, quantity)
-  return (
-    safeQuantity * (HUB_CENTRALIZE_SHIPPING_PER_ITEM + centralizePackagingPerItem(product, title))
-  )
+  const packaging = safeQuantity * centralizePackagingPerItem(product, title)
+  const shipping = safeQuantity * HUB_CENTRALIZE_SHIPPING_PER_ITEM
+  return {
+    shipping,
+    packaging,
+    total: shipping + packaging,
+  }
+}
+
+function centralizeFulfillmentCostForItem(
+  product: Pick<StockProduct, "name" | "stockSource" | "kanbanStatus"> | undefined,
+  quantity: number,
+  title = "",
+) {
+  return centralizeFulfillmentBreakdownForItem(product, quantity, title).total
 }
 
 function movementLabel(type: StockMovement["type"]) {
@@ -1438,6 +1458,7 @@ export function FinancialDashboard({
   initialModule?: ModuleKey
   administrativeCategory?: AdminDocumentCategory | null
 }) {
+  const router = useRouter()
   const { user, isLoaded } = useUser()
   const userId = user?.id
 
@@ -2507,6 +2528,89 @@ export function FinancialDashboard({
       return undefined
     },
     [productMapByMlItemId, productMapBySku, productTokenIndex],
+  )
+
+  const buildOrderCostAnalysis = useCallback(
+    (order: MlOrder): OrderCostAnalysis => {
+      const lineItems = order.items.map((item) => {
+        const product = findProductByOrderItem({
+          id: item.id,
+          title: item.title,
+          sku: item.sku,
+        })
+        const quantity = Math.max(0, item.quantity)
+        const centralize = centralizeFulfillmentBreakdownForItem(product, quantity, item.title)
+        return {
+          item,
+          product,
+          quantity,
+          centralize,
+        }
+      })
+
+      const title =
+        order.items.length <= 1
+          ? (order.items[0]?.title ?? "Item sem titulo")
+          : `${order.items[0]?.title ?? "Item sem titulo"} + ${order.items.length - 1} item(ns)`
+      const revenueTotal = order.totalAmount
+      const receivedAmount = order.totalPaidAmount
+      const productCost = lineItems.reduce(
+        (sum, entry) => sum + (entry.product?.unitCost ?? 0) * entry.quantity,
+        0,
+      )
+      const shippingCost = Math.max(0, order.shippingCostAmount)
+      const centralizeShipping = lineItems.reduce(
+        (sum, entry) => sum + entry.centralize.shipping,
+        0,
+      )
+      const centralizePackaging = lineItems.reduce(
+        (sum, entry) => sum + entry.centralize.packaging,
+        0,
+      )
+      const taxes = Math.max(0, order.taxesAmount)
+      const shippingBonus = 0
+      const mlFee = Math.max(0, order.mlFeeAmount)
+      const totalCosts = Math.max(
+        0,
+        productCost +
+          shippingCost +
+          centralizeShipping +
+          centralizePackaging +
+          mlFee +
+          taxes -
+          shippingBonus,
+      )
+      const netProfit =
+        receivedAmount -
+        productCost -
+        shippingCost -
+        centralizeShipping -
+        centralizePackaging -
+        mlFee -
+        taxes
+      const contributionMargin = revenueTotal > 0 ? (netProfit / revenueTotal) * 100 : 0
+      const roi = productCost > 0 ? (netProfit / productCost) * 100 : 0
+
+      return {
+        orderId: order.id,
+        title,
+        revenueTotal,
+        receivedAmount,
+        netProfit,
+        productCost,
+        shippingCost,
+        centralizeShipping,
+        centralizePackaging,
+        mlFee,
+        taxes,
+        shippingBonus,
+        totalCosts,
+        contributionMargin,
+        roi,
+        source: "ml_api",
+      }
+    },
+    [findProductByOrderItem],
   )
   const expenseCategories = categories.filter((category) => category.kind === "expense")
   const incomeCategories = categories.filter((category) => category.kind === "income")
@@ -3757,38 +3861,27 @@ export function FinancialDashboard({
         return true
       })
       .map((order) => {
-        const productCost = order.items.reduce((total, item) => {
-          const byItem = item.id ? productMapByMlItemId.get(item.id) : undefined
-          const bySku = item.sku ? productMapBySku.get(item.sku.toLowerCase()) : undefined
-          const mapped = byItem ?? bySku
-          return total + (mapped?.unitCost ?? 0) * Math.max(0, item.quantity)
-        }, 0)
-        const shipping = Math.max(0, order.shippingCostAmount)
-        const mlFee = Math.max(0, order.mlFeeAmount)
-        const taxes = Math.max(0, order.taxesAmount)
-        const profit = order.totalAmount - productCost - shipping - mlFee - taxes
-        const margin = order.totalAmount > 0 ? (profit / order.totalAmount) * 100 : 0
+        const analysis = buildOrderCostAnalysis(order)
         return {
           id: order.id,
           orderDate: order.dateCreated,
           status: order.status,
           totalAmount: order.totalAmount,
-          profit,
-          margin,
-          title: order.items[0]?.title ?? "Item sem titulo",
+          profit: analysis.netProfit,
+          margin: analysis.contributionMargin,
+          title: analysis.title,
           sku: order.items[0]?.sku ?? "",
         }
       })
       .sort((a, b) => b.orderDate.localeCompare(a.orderDate))
   }, [
+    buildOrderCostAnalysis,
     filters.endDate,
     filters.startDate,
     financeOrdersSkuFilter,
     financeOrdersStatusFilter,
     financeOrdersTitleFilter,
     mlOrders,
-    productMapByMlItemId,
-    productMapBySku,
   ])
 
   const filteredCatalogCompetitionRows = useMemo(() => {
@@ -3851,8 +3944,7 @@ export function FinancialDashboard({
         row.price -
         unitCost -
         estimatedFees -
-        HUB_CENTRALIZE_SHIPPING_PER_ITEM -
-        centralizePackagingPerItem(product, row.title)
+        centralizeFulfillmentCostForItem(product, 1, row.title)
       return [
         row.itemId,
         row.title.replace(/"/g, '""'),
@@ -5326,63 +5418,8 @@ export function FinancialDashboard({
     }
   }
 
-  const openOrderCostAnalysis = (
-    order: MlOrder,
-    product: Pick<StockProduct, "name" | "unitCost"> | undefined,
-    quantity: number,
-    title = "",
-  ) => {
-    const revenueTotal = order.totalAmount
-    const receivedAmount = order.totalPaidAmount
-    const unitCost = product?.unitCost ?? 0
-    const packagingPerItem = centralizePackagingPerItem(product, title || order.items[0]?.title)
-    const productCost = Math.max(0, unitCost * quantity)
-    const shippingCost = Math.max(0, order.shippingCostAmount)
-    const centralizeShipping = Math.max(0, quantity * HUB_CENTRALIZE_SHIPPING_PER_ITEM)
-    const centralizePackaging = Math.max(0, quantity * packagingPerItem)
-    const taxes = Math.max(0, order.taxesAmount)
-    const shippingBonus = 0
-    const mlFee = Math.max(0, order.mlFeeAmount)
-
-    const totalCosts = Math.max(
-      0,
-      productCost +
-        shippingCost +
-        centralizeShipping +
-        centralizePackaging +
-        mlFee +
-        taxes -
-        shippingBonus,
-    )
-    const netProfit =
-      receivedAmount -
-      productCost -
-      shippingCost -
-      centralizeShipping -
-      centralizePackaging -
-      mlFee -
-      taxes
-    const contributionMargin = revenueTotal > 0 ? (netProfit / revenueTotal) * 100 : 0
-    const roi = productCost > 0 ? (netProfit / productCost) * 100 : 0
-
-    setMlOrderCostAnalysis({
-      orderId: order.id,
-      title: order.items[0]?.title ?? "Item sem titulo",
-      revenueTotal,
-      receivedAmount,
-      netProfit,
-      productCost,
-      shippingCost,
-      centralizeShipping,
-      centralizePackaging,
-      mlFee,
-      taxes,
-      shippingBonus,
-      totalCosts,
-      contributionMargin,
-      roi,
-      source: "ml_api",
-    })
+  const openOrderCostAnalysis = (order: MlOrder) => {
+    setMlOrderCostAnalysis(buildOrderCostAnalysis(order))
   }
 
   useEffect(() => {
@@ -5608,6 +5645,12 @@ export function FinancialDashboard({
           </Button>
         </div>
         <Separator />
+        <Button asChild variant="ghost" size="sm" className="justify-start">
+          <Link href="/conta">
+            <ShieldCheck className="size-4" />
+            Conta e privacidade
+          </Link>
+        </Button>
         {activeModule === "finance" && (
           <>
             <p className="text-xs text-muted-foreground">Financeiro</p>
@@ -5771,6 +5814,11 @@ export function FinancialDashboard({
               </div>
             </div>
             <div className="flex shrink-0 items-center gap-1">
+              <Button asChild variant="ghost" size="icon-sm">
+                <Link href="/conta" aria-label="Conta e privacidade">
+                  <ShieldCheck className="size-4" />
+                </Link>
+              </Button>
               <ThemeToggle />
               <UserButton />
             </div>
@@ -6342,7 +6390,7 @@ export function FinancialDashboard({
                       size="xs"
                       className="bg-warning text-warning-foreground hover:bg-warning/90"
                       onClick={() => {
-                        window.location.href = "/api/ml/connect"
+                        router.push("/api/ml/connect")
                       }}
                     >
                       Conectar
@@ -6371,7 +6419,7 @@ export function FinancialDashboard({
                       size="xs"
                       variant="outline"
                       onClick={() => {
-                        window.location.href = "/api/mp/connect"
+                        router.push("/api/mp/connect")
                       }}
                     >
                       Conectar
@@ -7334,20 +7382,7 @@ export function FinancialDashboard({
                                 const handleRowClick = () => {
                                   const fullOrder = mlOrders.find((o) => o.id === order.id)
                                   if (!fullOrder) return
-                                  const firstItem = fullOrder.items[0]
-                                  const stockProduct = firstItem
-                                    ? findProductByOrderItem({
-                                        id: firstItem.id,
-                                        title: firstItem.title,
-                                        sku: firstItem.sku,
-                                      })
-                                    : undefined
-                                  openOrderCostAnalysis(
-                                    fullOrder,
-                                    stockProduct,
-                                    firstItem?.quantity ?? 0,
-                                    firstItem?.title ?? "",
-                                  )
+                                  openOrderCostAnalysis(fullOrder)
                                 }
                                 return (
                                   <TableRow
@@ -10740,8 +10775,7 @@ export function FinancialDashboard({
                               row.price -
                               unitCost -
                               estimatedFees -
-                              HUB_CENTRALIZE_SHIPPING_PER_ITEM -
-                              centralizePackagingPerItem(product, row.title)
+                              centralizeFulfillmentCostForItem(product, 1, row.title)
                             return (
                               <Card key={row.itemId} className="rounded-none border">
                                 <CardContent className="pt-4">
@@ -10917,8 +10951,7 @@ export function FinancialDashboard({
                               listing.price -
                               unitCostAnuncio -
                               estimatedFeesAnuncio -
-                              HUB_CENTRALIZE_SHIPPING_PER_ITEM -
-                              centralizePackagingPerItem(stockProduct, listing.title)
+                              centralizeFulfillmentCostForItem(stockProduct, 1, listing.title)
                             return (
                               <Card key={listing.id} className="rounded-none border">
                                 <CardContent className="pt-4">
@@ -11153,24 +11186,9 @@ export function FinancialDashboard({
                       filteredMlOrders.map((order) => {
                         const step = mlShippingStep(order.shippingStatus)
                         const firstItem = order.items[0]
-                        const stockProduct = firstItem?.id
-                          ? productMapByMlItemId.get(firstItem.id)
-                          : undefined
-                        const quantity = firstItem?.quantity ?? 0
-                        const productCost = (stockProduct?.unitCost ?? 0) * quantity
-                        const orderFees = Math.max(0, order.mlFeeAmount)
-                        const orderShipping = Math.max(0, order.shippingCostAmount)
-                        const orderTaxes = Math.max(0, order.taxesAmount)
-                        const orderCentralize = centralizeFulfillmentCostForItem(
-                          stockProduct,
-                          quantity,
-                          firstItem?.title ?? "",
-                        )
-                        const orderTotalCost =
-                          productCost + orderFees + orderShipping + orderTaxes + orderCentralize
-                        const payout = order.totalPaidAmount
-                        const profit = payout - orderTotalCost
-                        const margin = payout > 0 ? (profit / payout) * 100 : 0
+                        const orderAnalysis = buildOrderCostAnalysis(order)
+                        const profit = orderAnalysis.netProfit
+                        const margin = orderAnalysis.contributionMargin
                         return (
                           <Card key={order.id} className="rounded-none">
                             <CardContent className="space-y-4 pt-6">
@@ -11335,14 +11353,7 @@ export function FinancialDashboard({
                                   <Button
                                     size="sm"
                                     variant="outline"
-                                    onClick={() =>
-                                      openOrderCostAnalysis(
-                                        order,
-                                        stockProduct,
-                                        firstItem?.quantity ?? 0,
-                                        firstItem?.title ?? "",
-                                      )
-                                    }
+                                    onClick={() => openOrderCostAnalysis(order)}
                                   >
                                     <BarChart3 className="size-3.5" />
                                     Custos da venda
@@ -11485,13 +11496,10 @@ export function FinancialDashboard({
                 Baixe o pacote da extensao para instalar no Chrome/Edge e usar a calculadora
                 diretamente na pagina do anuncio.
               </p>
-              <Button
-                className="bg-emerald-600 text-white hover:bg-emerald-700"
-                onClick={() => {
-                  window.location.href = `/api/branch-hunter/download?v=${Date.now()}`
-                }}
-              >
-                Baixar extensao Branch Hunter (.zip)
+              <Button asChild className="bg-emerald-600 text-white hover:bg-emerald-700">
+                <a href={`/api/branch-hunter/download?v=${Date.now()}`}>
+                  Baixar extensao Branch Hunter (.zip)
+                </a>
               </Button>
             </CardContent>
           </Card>

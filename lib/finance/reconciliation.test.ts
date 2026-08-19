@@ -42,4 +42,12 @@ describe("buildFinancialReconciliation", () => {
     })
     expect(result.issues.some((i) => i.code === "revenue_abc_orders")).toBe(true)
   })
+
+  it("flags profit drift between ABC and orders", () => {
+    const result = buildFinancialReconciliation({
+      ...base,
+      abcProfitTotal: 42,
+    })
+    expect(result.issues.some((i) => i.code === "profit_abc_orders")).toBe(true)
+  })
 })

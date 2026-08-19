@@ -8,5 +8,11 @@ crons.cron("mercado pago report sync daily", "0 10 * * *", internal.mpCron.syncM
   reason: "daily",
 })
 crons.interval("branchnotify vtex", { seconds: 30 }, internal.monitorRun.runTick, {})
+crons.interval(
+  "store reservations release",
+  { minutes: 5 },
+  internal.storeReservations.releaseExpired,
+  {},
+)
 
 export default crons

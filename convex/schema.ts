@@ -10,6 +10,53 @@ const paymentMethodValidator = v.union(
 
 const payStatusValidator = v.union(v.literal("none"), v.literal("pending"), v.literal("paid"))
 
+const storeProductStatusValidator = v.union(
+  v.literal("draft"),
+  v.literal("published"),
+  v.literal("archived"),
+)
+
+const storeCartStatusValidator = v.union(
+  v.literal("active"),
+  v.literal("ordered"),
+  v.literal("expired"),
+)
+
+const storeOrderStatusValidator = v.union(
+  v.literal("pending"),
+  v.literal("confirmed"),
+  v.literal("cancelled"),
+  v.literal("payment_expired"),
+)
+
+const storePaymentStatusValidator = v.union(
+  v.literal("pending"),
+  v.literal("paid"),
+  v.literal("failed"),
+  v.literal("cancelled"),
+  v.literal("expired"),
+)
+
+const storeFulfillmentStatusValidator = v.union(
+  v.literal("unfulfilled"),
+  v.literal("reserved"),
+  v.literal("processing"),
+  v.literal("shipped"),
+  v.literal("delivered"),
+  v.literal("cancelled"),
+)
+
+const storeReservationStatusValidator = v.union(
+  v.literal("active"),
+  v.literal("consumed"),
+  v.literal("released"),
+  v.literal("expired"),
+)
+
+const storeShippingRuleStatusValidator = v.union(v.literal("active"), v.literal("inactive"))
+
+const storePaymentProviderValidator = v.union(v.literal("mercado_pago"))
+
 export default defineSchema({
   categories: defineTable({
     userId: v.string(),
@@ -356,6 +403,179 @@ export default defineSchema({
     .index("by_user_created_at", ["userId", "createdAt"])
     .index("by_user_item", ["userId", "itemId"])
     .index("by_user_catalog", ["userId", "catalogProductId"]),
+
+  storeProducts: defineTable({
+    stockProductId: v.id("stockProducts"),
+    slug: v.string(),
+    title: v.string(),
+    subtitle: v.optional(v.string()),
+    description: v.optional(v.string()),
+    seoTitle: v.optional(v.string()),
+    seoDescription: v.optional(v.string()),
+    price: v.number(),
+    compareAtPrice: v.optional(v.number()),
+    status: storeProductStatusValidator,
+    publishedAt: v.optional(v.number()),
+    featured: v.boolean(),
+    sortOrder: v.number(),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index("by_slug", ["slug"])
+    .index("by_status", ["status"])
+    .index("by_featured", ["featured"])
+    .index("by_stock_product", ["stockProductId"]),
+
+  storeProductImages: defineTable({
+    storeProductId: v.id("storeProducts"),
+    url: v.string(),
+    alt: v.string(),
+    sortOrder: v.number(),
+  }).index("by_product", ["storeProductId"]),
+
+  storeCategories: defineTable({
+    slug: v.string(),
+    name: v.string(),
+    description: v.optional(v.string()),
+    status: storeProductStatusValidator,
+    sortOrder: v.number(),
+  })
+    .index("by_slug", ["slug"])
+    .index("by_status", ["status"]),
+
+  storeProductCategories: defineTable({
+    storeProductId: v.id("storeProducts"),
+    categoryId: v.id("storeCategories"),
+  })
+    .index("by_product", ["storeProductId"])
+    .index("by_category", ["categoryId"]),
+
+  storeCarts: defineTable({
+    cartTokenHash: v.string(),
+    clerkUserId: v.optional(v.string()),
+    customerEmail: v.optional(v.string()),
+    status: storeCartStatusValidator,
+    expiresAt: v.number(),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index("by_token", ["cartTokenHash"])
+    .index("by_user", ["clerkUserId"])
+    .index("by_status_expires", ["status", "expiresAt"]),
+
+  storeCartItems: defineTable({
+    cartId: v.id("storeCarts"),
+    storeProductId: v.id("storeProducts"),
+    quantity: v.number(),
+    unitPriceSnapshot: v.number(),
+  })
+    .index("by_cart", ["cartId"])
+    .index("by_cart_product", ["cartId", "storeProductId"]),
+
+  storeCustomers: defineTable({
+    clerkUserId: v.optional(v.string()),
+    email: v.string(),
+    name: v.string(),
+    phone: v.optional(v.string()),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index("by_email", ["email"])
+    .index("by_clerk_user", ["clerkUserId"]),
+
+  storeAddresses: defineTable({
+    customerId: v.optional(v.id("storeCustomers")),
+    name: v.string(),
+    phone: v.optional(v.string()),
+    zipCode: v.string(),
+    street: v.string(),
+    number: v.string(),
+    complement: v.optional(v.string()),
+    district: v.string(),
+    city: v.string(),
+    state: v.string(),
+  }).index("by_customer", ["customerId"]),
+
+  storeOrders: defineTable({
+    orderNumber: v.string(),
+    cartId: v.id("storeCarts"),
+    customerId: v.optional(v.id("storeCustomers")),
+    clerkUserId: v.optional(v.string()),
+    email: v.string(),
+    status: storeOrderStatusValidator,
+    paymentStatus: storePaymentStatusValidator,
+    fulfillmentStatus: storeFulfillmentStatusValidator,
+    subtotal: v.number(),
+    shippingTotal: v.number(),
+    discountTotal: v.number(),
+    grandTotal: v.number(),
+    shippingAddressId: v.id("storeAddresses"),
+    mpPreferenceId: v.optional(v.string()),
+    mpPaymentId: v.optional(v.string()),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index("by_order_number", ["orderNumber"])
+    .index("by_email", ["email"])
+    .index("by_user", ["clerkUserId"])
+    .index("by_cart", ["cartId"])
+    .index("by_status", ["status"])
+    .index("by_payment", ["mpPreferenceId"]),
+
+  storeOrderItems: defineTable({
+    orderId: v.id("storeOrders"),
+    storeProductId: v.id("storeProducts"),
+    stockProductId: v.id("stockProducts"),
+    titleSnapshot: v.string(),
+    skuSnapshot: v.string(),
+    quantity: v.number(),
+    unitPrice: v.number(),
+    total: v.number(),
+  })
+    .index("by_order", ["orderId"])
+    .index("by_stock_product", ["stockProductId"]),
+
+  storeInventoryReservations: defineTable({
+    orderId: v.optional(v.id("storeOrders")),
+    cartId: v.id("storeCarts"),
+    stockProductId: v.id("stockProducts"),
+    quantity: v.number(),
+    status: storeReservationStatusValidator,
+    expiresAt: v.number(),
+    createdAt: v.number(),
+  })
+    .index("by_cart", ["cartId"])
+    .index("by_order", ["orderId"])
+    .index("by_stock_product_status", ["stockProductId", "status"])
+    .index("by_status_expires", ["status", "expiresAt"]),
+
+  storeShippingRules: defineTable({
+    name: v.string(),
+    state: v.optional(v.string()),
+    minSubtotal: v.optional(v.number()),
+    maxSubtotal: v.optional(v.number()),
+    price: v.number(),
+    estimatedDaysMin: v.number(),
+    estimatedDaysMax: v.number(),
+    status: storeShippingRuleStatusValidator,
+  })
+    .index("by_status", ["status"])
+    .index("by_state_status", ["state", "status"]),
+
+  storePaymentAttempts: defineTable({
+    orderId: v.id("storeOrders"),
+    provider: storePaymentProviderValidator,
+    providerPreferenceId: v.optional(v.string()),
+    providerPaymentId: v.optional(v.string()),
+    status: storePaymentStatusValidator,
+    amount: v.number(),
+    rawStatus: v.optional(v.string()),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index("by_order", ["orderId"])
+    .index("by_provider_payment", ["provider", "providerPaymentId"])
+    .index("by_status", ["status"]),
   /** BranchNotify (Eletro Club / VTEX) — doc branchcommerce-docs/03 */
   products: defineTable({
     userId: v.string(),
