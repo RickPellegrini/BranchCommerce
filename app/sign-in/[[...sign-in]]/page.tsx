@@ -1,16 +1,13 @@
-import { SignIn } from "@clerk/nextjs"
+import { Suspense } from "react"
+
+import { ClerkSignIn } from "@/components/auth/clerk-sign-in"
 
 export default function SignInPage() {
   return (
     <main className="flex min-h-screen items-center justify-center p-6">
-      <SignIn
-        routing="path"
-        path="/sign-in"
-        signUpUrl="/sign-up"
-        oauthFlow="redirect"
-        oidcPrompt="select_account"
-        fallbackRedirectUrl="/dashboard"
-      />
+      <Suspense fallback={null}>
+        <ClerkSignIn />
+      </Suspense>
     </main>
   )
 }

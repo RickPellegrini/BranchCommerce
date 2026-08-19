@@ -5,6 +5,12 @@ import { isAdminEmail } from "@/lib/auth/admin"
 
 type ClerkUser = NonNullable<Awaited<ReturnType<typeof currentUser>>>
 
+function getSwitchAccountSignInUrl(signInUrl: string) {
+  const url = new URL(signInUrl, "https://branchcommercehub.com")
+  url.searchParams.set("switch_account", "1")
+  return `${url.pathname}${url.search}`
+}
+
 export function getPrimaryEmailFromUser(user: ClerkUser | null) {
   return (
     user?.emailAddresses.find((emailAddress) => emailAddress.id === user.primaryEmailAddressId)
@@ -48,7 +54,7 @@ export async function requireAdminAppUserOrRedirect(signInUrl = "/sign-in") {
   const user = await currentUser()
   const email = getPrimaryEmailFromUser(user)
   if (!user || !isAdminEmail(email)) {
-    redirect(signInUrl)
+    redirect(getSwitchAccountSignInUrl(signInUrl))
   }
 
   return { userId, email }
